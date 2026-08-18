@@ -1,0 +1,63 @@
+# The configuration of git-cliff. It builds CHANGELOG.md from the commit history.
+# A group name carries a hidden HTML comment. The comment sorts the groups and the
+# striptags filter removes it from the output.
+#
+# CAUTION: no template here writes an em dash. The commit hook refuses a message that
+# holds one, and a changelog is the text that a later reader copies.
+
+[changelog]
+header = """
+# Changelog
+
+Every notable change to better-omarchy. Commits follow Conventional Commits, and
+versions follow SemVer: a breaking change to the unit format or the bo interface
+is a major, a new unit or command is a minor, a fix is a patch.
+
+A unit carries its own version in its unit.toml, bumped on its own schedule.
+This file is about bo and the marketplace itself.
+
+"""
+body = """
+{% if version %}\
+## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
+{% else %}\
+## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+
+{% for commit in commits %}\
+- {% if commit.breaking %}**Breaking:** {% endif %}\
+{% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+{{ commit.message | upper_first }}
+{% endfor %}\
+{% endfor %}\n
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+protect_breaking_commits = true
+split_commits = false
+filter_commits = false
+topo_order = false
+sort_commits = "oldest"
+tag_pattern = "v[0-9]*"
+
+commit_parsers = [
+  { message = "^feat", group = "<!-- 1 -->Features" },
+  { message = "^fix", group = "<!-- 2 -->Fixes" },
+  { message = "^perf", group = "<!-- 3 -->Performance" },
+  { message = "^refactor", group = "<!-- 4 -->Refactors" },
+  { message = "^docs", group = "<!-- 5 -->Documentation" },
+  { message = "^test", group = "<!-- 6 -->Tests" },
+  { message = "^build", group = "<!-- 7 -->Build and dependencies" },
+  { message = "^ci", group = "<!-- 8 -->Continuous integration" },
+  { message = "^revert", group = "<!-- 9 -->Reverts" },
+  { message = "^(chore|style)(\\(.+\\))?!", group = "<!-- 0 -->Breaking changes" },
+  { footer = "^BREAKING[ -]CHANGE", group = "<!-- 0 -->Breaking changes" },
+  { message = "^chore", skip = true },
+  { message = "^style", skip = true },
+]
