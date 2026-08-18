@@ -1,0 +1,80 @@
+#!/bin/bash
+# Copy the path of whatever is selected in the file manager.
+#
+# Bound to Ctrl+Shift+G. Select a file or folder in Nautilus, press it, and the
+# path is on the clipboard as plain text.
+#
+# How, since Hyprland cannot ask Nautilus what is selected: send Ctrl+C to the
+# focused window, which every file manager answers by putting a `text/uri-list`
+# on the clipboard, then rewrite that list as paths. The clipboard is saved
+# first and put back afterwards when nothing was selected, so a misfire does not
+# cost you whatever you had copied.
+#
+#   copy-file-path            the path
+#   copy-file-path --name     just the file name
+#   copy-file-path --dir      the folder holding it
+
+set -uo pipefail
+
+# wl-copy forks a server that owns the clipboard until something else claims it,
+# and that child inherits this script's stdout. Anything waiting on this script
+# would then be waiting on the clipboard server too, which never exits on its
+# own, so its file descriptors are closed here.
+copy() { wl-copy >/dev/null 2>&1; }
+
+mode="${1:-path}"
+
+# What the clipboard held before, so a misfire can be undone.
+previous=$(wl-paste --no-newline 2>/dev/null)
+
+wtype -M ctrl -k c -m ctrl 2>/dev/null
+
+# Nautilus writes the clipboard asynchronously. A tenth of a second is enough
+# locally and nothing here is worth a longer stall.
+sleep 0.12
+
+uris=$(wl-paste --type text/uri-list --no-newline 2>/dev/null)
+
+# Nautilus prefixes its own list with a line saying "copy" or "cut", and GNOME
+# writes it under x-special/nautilus-clipboard rather than text/uri-list.
+if [[ -z $uris ]]; then
+  uris=$(wl-paste --type x-special/nautilus-clipboard --no-newline 2>/dev/null |
+    grep '^file://')
+fi
+
+if [[ -z $uris ]]; then
+  # Nothing was selected, or the focused window is not a file manager. Put back
+  # what was there rather than leaving it holding a copy of nothing.
+  [[ -n $previous ]] && printf '%s' "$previous" | copy
+  notify-send -u low "Copy path" "Nothing selected." 2>/dev/null
+  exit 0
+fi
+
+# One path per line, percent-decoded, since a URI escapes spaces and anything
+# non-ASCII and a path with %20 in it is not a path.
+paths=$(printf '%s\n' "$uris" |
+  grep '^file://' |
+  sed 's|^file://||' |
+  python3 -c 'import sys, urllib.parse
+for line in sys.stdin:
+    line = line.strip()
+    if line:
+        print(urllib.parse.unquote(line))')
+
+[[ -z $paths ]] && exit 0
+
+case "$mode" in
+--name) paths=$(printf '%s\n' "$paths" | sed 's|.*/||') ;;
+--dir) paths=$(printf '%s\n' "$paths" | sed 's|/[^/]*$||' | sort -u) ;;
+esac
+
+printf '%s' "$paths" | copy
+
+count=$(printf '%s\n' "$paths" | grep -c .)
+first=$(printf '%s\n' "$paths" | head -1)
+
+if ((count > 1)); then
+  notify-send -u low "Copied $count paths" "$first" 2>/dev/null
+else
+  notify-send -u low "Copied path" "${first/#$HOME/\~}" 2>/dev/null
+fi

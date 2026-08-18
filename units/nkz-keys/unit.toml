@@ -6,4 +6,4 @@ tags     = ["hyprland","keybindings"]
 author   = "pehcastro"
 kind     = "hypr"
 needs    = []
-keys     = ["ALT+F4", "SUPER+E", "SUPER+B", "SUPER+R"]
+keys     = ["ALT+F4", "SUPER+E", "SUPER+B", "SUPER+R", "CTRL+SHIFT+G"]
