@@ -11,8 +11,8 @@ like; probably not what you want turned on.
 | `Super+E` | open the file manager |
 | `Super+B` | open the browser |
 | `Super+R` | open the app menu |
-| `Ctrl+Shift+G` | copy the path of the file selected in the file manager |
-| `Ctrl+Shift+Alt+G` | copy just its name |
+| `Ctrl+B` | copy the path of the selected file, in the file manager only |
+| `Ctrl+Shift+B` | copy just its name |
 
 None replaces an Omarchy default. `Super+W` still closes a window and
 `Super+Shift+B` still opens a browser.
@@ -29,9 +29,16 @@ held first and puts it back when nothing was selected, so a misfire does not
 cost you what you had copied. Paths are percent-decoded, because a URI escapes
 spaces and a path with `%20` in it is not a path.
 
-`Ctrl+Shift+G` rather than a bare `Ctrl+G`: Hyprland takes a binding from every
-application at once, so a bare one would stop `Ctrl+G` working in the terminal,
-the editor and the browser too.
+`Ctrl+B` is a bare `Ctrl+letter`, which Hyprland would normally take from every
+application at once. It does not here: the binding is created when a file
+manager takes focus and destroyed when it loses it, so `Ctrl+B` still belongs to
+your terminal, your editor and your browser.
+
+Not `Ctrl+C`, because the script sends `Ctrl+C` to the file manager to find out
+what is selected, so it cannot also be the trigger.
+
+`hypr/bindings.lua` lists the classes that count as a file manager. Add yours to
+`file_managers` if it is not there.
 
 ## Monitors
 
