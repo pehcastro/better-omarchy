@@ -1,5 +1,9 @@
-name    = "reopen"
-summary = "SUPER+Z reopens the window you closed last"
-kind    = "hypr"
-needs   = ["hyprctl", "socat", "jq"]
-keys    = ["SUPER+Z"]
+name     = "reopen"
+summary  = "SUPER+Z reopens the window you closed last"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["hyprland","windows"]
+author   = "pehcastro"
+kind     = "hypr"
+needs    = ["hyprctl", "socat", "jq"]
+keys     = ["SUPER+Z"]

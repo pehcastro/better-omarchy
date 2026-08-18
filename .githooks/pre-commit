@@ -1,0 +1,12 @@
+#!/bin/sh
+# registry.json is generated. A commit that touches units/ but leaves the
+# registry stale publishes a change no client can see, so rebuild and stage it.
+
+if git diff --cached --name-only | grep -q '^units/'; then
+    if [ -x ./tools/build-registry ]; then
+        ./tools/build-registry >/dev/null || exit 1
+        git add registry.json
+    fi
+fi
+
+exit 0

@@ -1,0 +1,201 @@
+{
+  "schema": 1,
+  "name": "better-omarchy",
+  "title": "better-omarchy",
+  "description": "Omarchy customizations, one switchable unit at a time",
+  "homepage": "https://github.com/pehcastro/better-omarchy",
+  "maintainer": "pehcastro",
+  "generated_at_commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+  "units": {
+    "cpu": {
+      "name": "cpu",
+      "summary": "CPU load in the bar, opens btop on click",
+      "version": "0.1.0",
+      "kind": "plugin",
+      "category": "System",
+      "tags": [
+        "bar",
+        "monitoring"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "btop"
+      ],
+      "keys": [],
+      "pluginId": "bo.cpu",
+      "path": "units/cpu",
+      "files": 3,
+      "hash": "66bd9a3d8f46639fe59520d8d4f2db5e63f4fc92ba12a55cb2310d295d8b6fcb",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "keyboard-intl": {
+      "name": "keyboard-intl",
+      "summary": "US keyboard with AltGr accents (altgr-intl)",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Hardware",
+      "tags": [
+        "hyprland",
+        "keyboard"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/keyboard-intl",
+      "files": 2,
+      "hash": "a752a8c57dd93a5366304dd24814b9bf9aa5ecce1dc653d901ba1664b47aab29",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "my-apps": {
+      "name": "my-apps",
+      "summary": "App bindings that differ from Omarchy's defaults",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "hyprland",
+        "keybindings"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [
+        "SUPER+SHIFT+W"
+      ],
+      "pluginId": "",
+      "path": "units/my-apps",
+      "files": 2,
+      "hash": "dfa34aab5e0c361fb9fcd6f0247726bc90916ca850cdd86caa186c2046582faa",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "no-idle-lock": {
+      "name": "no-idle-lock",
+      "summary": "Never lock or start the screensaver on idle",
+      "version": "0.1.0",
+      "kind": "setting",
+      "category": "System",
+      "tags": [
+        "idle",
+        "power"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "omarchy"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/no-idle-lock",
+      "files": 3,
+      "hash": "9de5c9d872d24942377fe4650be470f2fda935b66c49c42a048b42a54a0cfe7d",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "reopen": {
+      "name": "reopen",
+      "summary": "SUPER+Z reopens the window you closed last",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "hyprland",
+        "windows"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "hyprctl",
+        "socat",
+        "jq"
+      ],
+      "keys": [
+        "SUPER+Z"
+      ],
+      "pluginId": "",
+      "path": "units/reopen",
+      "files": 4,
+      "hash": "c658e30a83e41a93c07014925b740f4ad96e838f43571134d58b83db71696cca",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "single-window-zen": {
+      "name": "single-window-zen",
+      "summary": "One tiled window drops its gaps, border and rounding",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Appearance",
+      "tags": [
+        "hyprland",
+        "layout"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/single-window-zen",
+      "files": 2,
+      "hash": "c21e0833f197c4e73e78e5b6d1d9b39598c0a7e5928111a5cc0695298d5714bc",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "windows-keys": {
+      "name": "windows-keys",
+      "summary": "Windows habits: ALT+F4 closes, SUPER+E files, SUPER+B browser",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "hyprland",
+        "keybindings"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [
+        "ALT+F4",
+        "SUPER+E",
+        "SUPER+B",
+        "SUPER+R"
+      ],
+      "pluginId": "",
+      "path": "units/windows-keys",
+      "files": 2,
+      "hash": "05559c74c93015350b620117626fcbba0c773f1f7ed403b6a6aa403d0539221c",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "workspaces": {
+      "name": "workspaces",
+      "summary": "Workspace names in the bar, with an inline rename panel",
+      "version": "0.1.0",
+      "kind": "plugin",
+      "category": "Compositor",
+      "tags": [
+        "bar",
+        "workspaces",
+        "hyprland"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "hyprctl"
+      ],
+      "keys": [
+        "SUPER+F2"
+      ],
+      "pluginId": "bo.workspaces",
+      "path": "units/workspaces",
+      "files": 4,
+      "hash": "225073f34b485e0e9e0ef1c622dde3f3e1df02d74ff8e032e64179f507bc6d33",
+      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+      "updated": "2026-08-18T17:21:52-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    }
+  }
+}

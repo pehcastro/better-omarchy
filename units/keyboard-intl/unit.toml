@@ -1,5 +1,9 @@
-name    = "keyboard-intl"
-summary = "US keyboard with AltGr accents (altgr-intl)"
-kind    = "hypr"
-needs   = []
-keys    = []
+name     = "keyboard-intl"
+summary  = "US keyboard with AltGr accents (altgr-intl)"
+version  = "0.1.0"
+category = "Hardware"
+tags     = ["hyprland","keyboard"]
+author   = "pehcastro"
+kind     = "hypr"
+needs    = []
+keys     = []

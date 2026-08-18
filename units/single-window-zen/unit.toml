@@ -1,5 +1,9 @@
-name    = "single-window-zen"
-summary = "One tiled window drops its gaps, border and rounding"
-kind    = "hypr"
-needs   = []
-keys    = []
+name     = "single-window-zen"
+summary  = "One tiled window drops its gaps, border and rounding"
+version  = "0.1.0"
+category = "Appearance"
+tags     = ["hyprland","layout"]
+author   = "pehcastro"
+kind     = "hypr"
+needs    = []
+keys     = []

@@ -1,15 +1,24 @@
 #!/bin/bash
-# better-omarchy: turn customizations on and off one unit at a time.
+# bo: install and manage Omarchy customizations from one or more marketplaces.
 #
-# A unit is one folder under units/ with a unit.toml. Nothing in here knows the
-# name of any particular unit; everything comes from that file.
+# A marketplace is a git repo with a registry.json at its root and a units/
+# folder beside it. This repo is one, and ships as the default. Anyone can host
+# another and point bo at it; nothing in here is specific to ours.
+#
+# A unit is one folder with a unit.toml saying what it touches, what it needs,
+# and which keys it claims. A unit reference is `marketplace/unit`, and the
+# marketplace half can be dropped when the name is unambiguous.
 
 set -uo pipefail
 
-BO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-UNITS_DIR="$BO_ROOT/units"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/better-omarchy"
+MARKETS_DIR="$DATA_DIR/marketplaces"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/better-omarchy"
 LINKED_FILE="$STATE_DIR/linked"
+INSTALLED="$STATE_DIR/installed.json"
+
+DEFAULT_MARKET_NAME="better-omarchy"
+DEFAULT_MARKET_URL="https://github.com/pehcastro/better-omarchy.git"
 
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 HYPR_DIR="$CONFIG_HOME/hypr"
@@ -17,8 +26,14 @@ HYPR_MODULES="$HYPR_DIR/modules.d"
 PLUGINS_DIR="$CONFIG_HOME/omarchy/plugins"
 BIN_DIR="$HOME/.local/bin"
 
-mkdir -p "$STATE_DIR"
+# Where this script actually lives. A marketplace checkout that carries bo (ours
+# does) is registered from here, so a developer working in their own clone gets
+# that clone as a marketplace rather than a second copy under DATA_DIR.
+SELF_ROOT="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+mkdir -p "$STATE_DIR" "$MARKETS_DIR"
 touch "$LINKED_FILE"
+[[ -f $INSTALLED ]] || echo '{}' >"$INSTALLED"
 
 # ---------------------------------------------------------------- output
 
@@ -27,6 +42,7 @@ dim() { printf '\033[2m%s\033[0m' "$1"; }
 red() { printf '\033[31m%s\033[0m' "$1"; }
 green() { printf '\033[32m%s\033[0m' "$1"; }
 yellow() { printf '\033[33m%s\033[0m' "$1"; }
+cyan() { printf '\033[36m%s\033[0m' "$1"; }
 
 say() { printf '%s\n' "$*"; }
 warn() { printf '%s %s\n' "$(yellow WARN)" "$*" >&2; }
@@ -35,42 +51,161 @@ die() {
   exit 1
 }
 
-# ---------------------------------------------------------------- unit.toml
-#
-# The format is deliberately a strict subset of TOML so a shell script can read
-# it without a parser: `key = "value"` and `key = ["a", "b"]`, one per line, no
-# tables, no multi-line values.
+# ---------------------------------------------------------------- marketplaces
 
-# meta <unit> <key> -> the scalar value, or empty
-meta() {
-  local unit="$1" key="$2" file="$UNITS_DIR/$1/unit.toml"
-  [[ -f $file ]] || return 1
+# Every marketplace root, one per line. A checkout carrying this script counts
+# even when it is not under MARKETS_DIR.
+market_roots() {
+  local dir
+  [[ -f "$SELF_ROOT/registry.json" ]] && printf '%s\n' "$SELF_ROOT"
+  for dir in "$MARKETS_DIR"/*/; do
+    [[ -f "$dir/registry.json" ]] || continue
+    dir="${dir%/}"
+    [[ $(readlink -f "$dir") == "$(readlink -f "$SELF_ROOT")" ]] && continue
+    printf '%s\n' "$dir"
+  done
+}
+
+market_name() {
+  local root="$1" name
+  name=$(json_get "$root/registry.json" name)
+  printf '%s' "${name:-$(basename "$root")}"
+}
+
+market_root() {
+  local want="$1" root
+  while read -r root; do
+    [[ $(market_name "$root") == "$want" ]] && {
+      printf '%s' "$root"
+      return 0
+    }
+  done < <(market_roots)
+  return 1
+}
+
+# market_name prints without a newline so it composes inside $(). This is the
+# line-per-name form every caller that counts or joins needs.
+market_names() {
+  local root
+  while read -r root; do
+    market_name "$root"
+    printf '\n'
+  done < <(market_roots)
+}
+
+# ---------------------------------------------------------------- json / toml
+
+# json_get <file> <dotted.path> -> scalar, or a space-joined list, or empty
+json_get() {
+  [[ -f $1 ]] || return 0
+  python3 - "$1" "$2" <<'PY' 2>/dev/null
+import json, sys
+try:
+    node = json.load(open(sys.argv[1]))
+    for key in sys.argv[2].split("."):
+        node = node[key]
+except Exception:
+    sys.exit(0)
+print(" ".join(map(str, node)) if isinstance(node, list) else node)
+PY
+}
+
+# unit.toml is a strict subset of TOML so sed can read it: `key = "value"` and
+# `key = ["a", "b"]`, one per line, no tables, no multi-line values.
+toml_get() {
+  local file="$1" key="$2"
+  [[ -f $file ]] || return 0
   sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*$/\1/p" "$file" | head -1
 }
 
-# meta_list <unit> <key> -> one element per line
-meta_list() {
-  local unit="$1" key="$2" file="$UNITS_DIR/$1/unit.toml" raw
-  [[ -f $file ]] || return 1
+# paste -sd', ' cycles through the delimiter list one character at a time, so it
+# joins with a comma, then a space, then a comma. Join here instead.
+join_lines() { paste -sd, - | sed 's/,/, /g'; }
+
+toml_list() {
+  local file="$1" key="$2" raw
+  [[ -f $file ]] || return 0
   raw=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p" "$file" | head -1)
   [[ -z $raw ]] && return 0
   printf '%s' "$raw" | tr ',' '\n' | sed 's/^[[:space:]]*"\?//; s/"\?[[:space:]]*$//' | grep -v '^$'
 }
 
-all_units() {
-  [[ -d $UNITS_DIR ]] || return 0
-  for dir in "$UNITS_DIR"/*/; do
-    [[ -f "$dir/unit.toml" ]] || continue
-    basename "$dir"
-  done
+# ---------------------------------------------------------------- units
+#
+# A ref is `marketplace/unit`. Everything below takes a full ref; resolve_ref
+# turns whatever the user typed into one.
+
+ref_market() { printf '%s' "${1%%/*}"; }
+ref_unit() { printf '%s' "${1##*/}"; }
+
+ref_dir() {
+  local root
+  root=$(market_root "$(ref_market "$1")") || return 1
+  printf '%s/units/%s' "$root" "$(ref_unit "$1")"
 }
 
-unit_exists() { [[ -f "$UNITS_DIR/$1/unit.toml" ]]; }
+ref_exists() {
+  local dir
+  dir=$(ref_dir "$1") || return 1
+  [[ -f "$dir/unit.toml" ]]
+}
 
-# ---------------------------------------------------------------- linked state
+# Every ref across every marketplace.
+all_refs() {
+  local root name dir
+  while read -r root; do
+    name=$(market_name "$root")
+    for dir in "$root"/units/*/; do
+      [[ -f "$dir/unit.toml" ]] || continue
+      printf '%s/%s\n' "$name" "$(basename "$dir")"
+    done
+  done < <(market_roots)
+}
+
+resolve_ref() {
+  local q="$1" hits n
+  if [[ $q == */* ]]; then
+    ref_exists "$q" && {
+      printf '%s' "$q"
+      return 0
+    }
+    die "no unit '$q'"
+  fi
+
+  hits=$(all_refs | awk -F/ -v u="$q" '$NF == u')
+  n=$(printf '%s' "$hits" | grep -c .)
+  case "$n" in
+  1)
+    printf '%s' "$hits"
+    return 0
+    ;;
+  0) ;;
+  *) die "'$q' exists in several marketplaces: $(printf '%s' "$hits" | tr '\n' ' '). Name one." ;;
+  esac
+
+  # Nothing exact: fall back to a substring match so a half-typed name works.
+  hits=$(all_refs | grep -F "$q")
+  n=$(printf '%s' "$hits" | grep -c .)
+  case "$n" in
+  1) printf '%s' "$hits" ;;
+  0) die "no unit matching '$q'. Try: bo list" ;;
+  *) die "'$q' matches: $(printf '%s' "$hits" | tr '\n' ' ')" ;;
+  esac
+}
+
+meta() { toml_get "$(ref_dir "$1")/unit.toml" "$2"; }
+meta_list() { toml_list "$(ref_dir "$1")/unit.toml" "$2"; }
+
+# Fields only the registry knows: the content hash, the commit, the date.
+reg() {
+  local root
+  root=$(market_root "$(ref_market "$1")") || return 0
+  json_get "$root/registry.json" "units.$(ref_unit "$1").$2"
+}
+
+# ---------------------------------------------------------------- state
 
 is_linked() { grep -qxF "$1" "$LINKED_FILE"; }
-
 mark_linked() { is_linked "$1" || printf '%s\n' "$1" >>"$LINKED_FILE"; }
 
 mark_unlinked() {
@@ -80,11 +215,48 @@ mark_unlinked() {
   mv "$tmp" "$LINKED_FILE"
 }
 
-linked_units() { cat "$LINKED_FILE"; }
+linked_refs() { grep -v '^[[:space:]]*$' "$LINKED_FILE"; }
 
-# ---------------------------------------------------------------- helpers
+# What version and content hash a unit was at when it was linked, so `bo
+# outdated` compares without re-hashing the tree.
+record_installed() {
+  python3 - "$INSTALLED" "$1" "$(reg "$1" version)" "$(reg "$1" hash)" <<'PY'
+import json, sys
+path, ref, version, digest = sys.argv[1:5]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data[ref] = {"version": version, "hash": digest}
+json.dump(data, open(path, "w"), indent=2)
+PY
+}
 
-# Symlink src to dst, refusing to clobber anything we did not put there.
+forget_installed() {
+  python3 - "$INSTALLED" "$1" <<'PY'
+import json, sys
+path, ref = sys.argv[1:3]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data.pop(ref, None)
+json.dump(data, open(path, "w"), indent=2)
+PY
+}
+
+installed_field() {
+  python3 - "$INSTALLED" "$1" "$2" <<'PY' 2>/dev/null
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))[sys.argv[2]][sys.argv[3]])
+except Exception:
+    pass
+PY
+}
+
+# ---------------------------------------------------------------- link helpers
+
 link_path() {
   local src="$1" dst="$2"
 
@@ -103,14 +275,20 @@ link_path() {
   ln -s "$src" "$dst"
 }
 
-# Remove a symlink only if it points into this repo.
+# Remove a symlink only if it points into a marketplace we manage.
 unlink_path() {
-  local dst="$1"
+  local dst="$1" target root
   [[ -L $dst ]] || return 0
-  case "$(readlink -f "$dst")" in
-  "$BO_ROOT"/*) rm -f "$dst" ;;
-  *) warn "$dst does not point into the repo, leaving it alone" ;;
-  esac
+  target=$(readlink -f "$dst")
+  while read -r root; do
+    case "$target" in
+    "$(readlink -f "$root")"/*)
+      rm -f "$dst"
+      return 0
+      ;;
+    esac
+  done < <(market_roots)
+  warn "$dst points outside every marketplace, leaving it alone"
 }
 
 shell_running() { pgrep -f '[q]uickshell.*omarchy' >/dev/null; }
@@ -125,15 +303,13 @@ reload_hypr() {
   hyprctl reload >/dev/null 2>&1
 }
 
-# ---------------------------------------------------------------- link by kind
+# ---------------------------------------------------------------- linking
 
-# Is this widget already placed in the bar layout in shell.json?
 plugin_in_layout() {
   python3 - "$1" <<'PY' 2>/dev/null
 import json, os, sys
-path = os.path.expanduser("~/.config/omarchy/shell.json")
 try:
-    layout = json.load(open(path))["bar"]["layout"]
+    layout = json.load(open(os.path.expanduser("~/.config/omarchy/shell.json")))["bar"]["layout"]
 except Exception:
     sys.exit(1)
 sys.exit(0 if any(w.get("id") == sys.argv[1] for s in layout.values() for w in s) else 1)
@@ -141,12 +317,13 @@ PY
 }
 
 link_plugin() {
-  local unit="$1" id
-  id=$(meta "$unit" id) || true
-  [[ -n $id ]] || die "unit '$unit' is kind=plugin but has no id"
-  [[ -d "$UNITS_DIR/$unit/plugin" ]] || die "unit '$unit' has no plugin/ folder"
+  local ref="$1" dir id
+  dir=$(ref_dir "$ref")
+  id=$(meta "$ref" id)
+  [[ -n $id ]] || die "$ref is kind=plugin but has no id"
+  [[ -d "$dir/plugin" ]] || die "$ref has no plugin/ folder"
 
-  link_path "$UNITS_DIR/$unit/plugin" "$PLUGINS_DIR/$id"
+  link_path "$dir/plugin" "$PLUGINS_DIR/$id"
   rescan_plugins
   sleep 1
   shell_running || return 0
@@ -155,7 +332,7 @@ link_plugin() {
   # widget that is already placed would move it there and drop its settings, so
   # only enable one the layout has never seen.
   if plugin_in_layout "$id"; then
-    say "  $id is already in the bar, leaving its position and settings alone"
+    say "  $(dim "$id keeps its bar position and settings")"
     return 0
   fi
 
@@ -164,31 +341,31 @@ link_plugin() {
 }
 
 unlink_plugin() {
-  local unit="$1" id
-  id=$(meta "$unit" id) || true
+  local id
+  id=$(meta "$1" id)
   [[ -n $id ]] || return 0
 
   # Deliberately no `plugin disable`: for a bar widget that command deletes its
   # layout entry, taking its position and every setting with it. Removing the
-  # symlink is enough. The stale layout entry renders nothing and is what makes
-  # `bo add` later restore the widget exactly where it was.
+  # symlink is enough. The stale entry renders nothing while the plugin is gone,
+  # and is what makes a later `bo add` restore the widget where it was.
   unlink_path "$PLUGINS_DIR/$id"
   rescan_plugins
 }
 
-# Linked names are prefixed with the unit, so two units can ship a bindings.lua
-# without colliding, and `ls modules.d` says who owns what.
-hypr_link_name() { printf '%s-%s' "$1" "$(basename "$2")"; }
+# Linked names carry the marketplace and the unit, so two units can ship a
+# bindings.lua without colliding and `ls modules.d` says who owns what.
+hypr_link_name() { printf '%s-%s-%s' "$(ref_market "$1")" "$(ref_unit "$1")" "$(basename "$2")"; }
 
 link_hypr() {
-  local unit="$1" file found=0
+  local ref="$1" file found=0
   shopt -s nullglob
-  for file in "$UNITS_DIR/$unit"/hypr/*.lua; do
+  for file in "$(ref_dir "$ref")"/hypr/*.lua; do
     ((found++ == 0)) && {
       mkdir -p "$HYPR_MODULES"
       ensure_modules_loader
     }
-    link_path "$file" "$HYPR_MODULES/$(hypr_link_name "$unit" "$file")"
+    link_path "$file" "$HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
   done
   shopt -u nullglob
   ((found > 0)) && reload_hypr
@@ -196,10 +373,10 @@ link_hypr() {
 }
 
 unlink_hypr() {
-  local unit="$1" file found=0
+  local ref="$1" file found=0
   shopt -s nullglob
-  for file in "$UNITS_DIR/$unit"/hypr/*.lua; do
-    unlink_path "$HYPR_MODULES/$(hypr_link_name "$unit" "$file")"
+  for file in "$(ref_dir "$ref")"/hypr/*.lua; do
+    unlink_path "$HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
     ((found++))
   done
   shopt -u nullglob
@@ -208,33 +385,35 @@ unlink_hypr() {
 }
 
 link_setting() {
-  local script="$UNITS_DIR/$1/apply.sh"
-  [[ -x $script ]] || die "unit '$1' is kind=setting but has no executable apply.sh"
-  "$script" || die "apply.sh failed for '$1'"
+  local script
+  script="$(ref_dir "$1")/apply.sh"
+  [[ -x $script ]] || die "$1 is kind=setting but has no executable apply.sh"
+  "$script" || die "apply.sh failed for $1"
 }
 
 unlink_setting() {
-  local script="$UNITS_DIR/$1/revert.sh"
+  local script
+  script="$(ref_dir "$1")/revert.sh"
   [[ -x $script ]] || {
-    warn "unit '$1' has no revert.sh, leaving the setting as it is"
+    warn "$1 has no revert.sh, leaving the setting as it is"
     return 0
   }
-  "$script" || warn "revert.sh failed for '$1'"
+  "$script" || warn "revert.sh failed for $1"
 }
 
 link_bin() {
-  local unit="$1" file
+  local file
   shopt -s nullglob
-  for file in "$UNITS_DIR/$unit"/bin/*; do
+  for file in "$(ref_dir "$1")"/bin/*; do
     link_path "$file" "$BIN_DIR/$(basename "$file")"
   done
   shopt -u nullglob
 }
 
 unlink_bin() {
-  local unit="$1" file
+  local file
   shopt -s nullglob
-  for file in "$UNITS_DIR/$unit"/bin/*; do
+  for file in "$(ref_dir "$1")"/bin/*; do
     unlink_path "$BIN_DIR/$(basename "$file")"
   done
   shopt -u nullglob
@@ -250,11 +429,11 @@ ensure_modules_loader() {
 -- Loads every .lua in ~/.config/hypr/modules.d, in name order.
 -- Managed by better-omarchy. Units link their files into that directory.
 --
--- Two reasons this does not use require() or default.hypr.require_all:
+-- Two reasons this uses neither require() nor default.hypr.require_all:
 --   require() turns every dot in a module name into a path separator, so
 --     "hypr.modules.d.foo" would look for hypr/modules/d/foo.lua.
 --   require_all runs `find -type f`, which does not match a symlink, and every
---     file in here is a symlink into the better-omarchy checkout.
+--     file in here is a symlink into a marketplace checkout.
 -- dofile on an absolute path has neither problem, and always re-executes.
 
 local dir = os.getenv("HOME") .. "/.config/hypr/modules.d"
@@ -274,46 +453,135 @@ LUA
   fi
 }
 
-# ---------------------------------------------------------------- commands
+link_unit() {
+  local ref="$1" kind
+  ref_exists "$ref" || die "no unit '$ref'"
+  is_linked "$ref" && {
+    say "$ref is already on"
+    return 0
+  }
+
+  # Every unit may carry hypr/ and bin/, whatever its kind: a bar widget that
+  # also wants a keybinding is normal. kind only decides the extra step.
+  kind=$(meta "$ref" kind)
+  case "$kind" in
+  plugin) link_plugin "$ref" ;;
+  setting) link_setting "$ref" ;;
+  hypr) ;;
+  *) die "$ref has an unknown kind: '${kind:-<empty>}'" ;;
+  esac
+
+  link_hypr "$ref"
+  link_bin "$ref"
+  mark_linked "$ref"
+  record_installed "$ref"
+  say "$(green on) $ref $(dim "$(meta "$ref" version)")"
+}
+
+unlink_unit() {
+  local ref="$1" kind
+  ref_exists "$ref" || die "no unit '$ref'"
+  is_linked "$ref" || {
+    say "$ref is already off"
+    return 0
+  }
+
+  kind=$(meta "$ref" kind)
+  case "$kind" in
+  plugin) unlink_plugin "$ref" ;;
+  setting) unlink_setting "$ref" ;;
+  esac
+
+  unlink_hypr "$ref"
+  unlink_bin "$ref"
+  mark_unlinked "$ref"
+  forget_installed "$ref"
+  say "$(dim off) $ref"
+}
+
+# ---------------------------------------------------------------- browsing
 
 cmd_list() {
-  local unit kind summary state
-  printf '%-20s %-8s %-8s %s\n' UNIT KIND STATE SUMMARY
-  while read -r unit; do
-    kind=$(meta "$unit" kind)
-    summary=$(meta "$unit" summary)
-    if is_linked "$unit"; then state=$(green on); else state=$(dim off); fi
-    printf '%-20s %-8s %-17s %s\n' "$unit" "$kind" "$state" "$summary"
-  done < <(all_units)
+  local ref state multi
+  multi=$(market_names | wc -l)
+
+  printf '%-30s %-9s %-13s %-7s %s\n' UNIT KIND CATEGORY VERSION SUMMARY
+  while read -r ref; do
+    if is_linked "$ref"; then state=$(green '●'); else state=$(dim '○'); fi
+    printf '%s %-28s %-9s %-13s %-7s %s\n' \
+      "$state" "$([[ $multi -gt 1 ]] && printf '%s' "$ref" || ref_unit "$ref")" \
+      "$(meta "$ref" kind)" "$(meta "$ref" category)" \
+      "$(meta "$ref" version)" "$(meta "$ref" summary)"
+  done < <(all_refs)
+}
+
+cmd_search() {
+  (($# > 0)) || die "usage: bo search <term>"
+  local q="${*,,}" ref hay n=0
+  while read -r ref; do
+    hay="$ref $(meta "$ref" summary) $(meta "$ref" category) $(meta_list "$ref" tags | tr '\n' ' ')"
+    [[ ${hay,,} == *"$q"* ]] || continue
+    printf '%-30s %s\n' "$ref" "$(meta "$ref" summary)"
+    ((n++))
+  done < <(all_refs)
+  ((n == 0)) && say "Nothing matches '$*'."
+  return 0
+}
+
+cmd_info() {
+  (($# > 0)) || die "usage: bo info <unit>"
+  local ref
+  ref=$(resolve_ref "$1")
+
+  printf '%s %s\n' "$(bold "$ref")" "$(dim "$(meta "$ref" version)")"
+  printf '  %s\n\n' "$(meta "$ref" summary)"
+  printf '  %-11s %s\n' marketplace "$(ref_market "$ref")"
+  printf '  %-11s %s\n' kind "$(meta "$ref" kind)"
+  printf '  %-11s %s\n' category "$(meta "$ref" category)"
+  printf '  %-11s %s\n' tags "$(meta_list "$ref" tags | join_lines)"
+  printf '  %-11s %s\n' author "$(meta "$ref" author)"
+  [[ -n $(meta "$ref" id) ]] && printf '  %-11s %s\n' "plugin id" "$(meta "$ref" id)"
+  printf '  %-11s %s\n' needs "$(meta_list "$ref" needs | join_lines)"
+  printf '  %-11s %s\n' keys "$(meta_list "$ref" keys | join_lines)"
+
+  local updated
+  updated=$(reg "$ref" updated)
+  if [[ -n $updated ]]; then
+    printf '\n  %-11s %s\n' updated "$updated"
+    printf '  %-11s %s\n' commit "$(reg "$ref" commit | cut -c1-12)"
+    printf '  %-11s %s\n' hash "$(reg "$ref" hash | cut -c1-16)"
+    printf '  %-11s %s\n' files "$(reg "$ref" files)"
+  fi
+
+  printf '\n  %-11s %s\n' state "$(is_linked "$ref" && green on || dim off)"
+  printf '  %-11s %s\n' path "$(ref_dir "$ref")"
 }
 
 cmd_status() {
-  local unit key seen_keys="" dupes=""
+  local ref key seen="" dupes=""
 
   say "$(bold 'Linked units')"
-  if [[ ! -s $LINKED_FILE ]]; then
+  if [[ -z $(linked_refs) ]]; then
     say "  none"
   else
-    while read -r unit; do
-      unit_exists "$unit" || {
-        say "  $unit $(red '(no longer in the repo)')"
+    while read -r ref; do
+      ref_exists "$ref" || {
+        say "  $ref $(red '(gone from its marketplace)')"
         continue
       }
-      say "  $unit: $(meta "$unit" summary)"
-    done < <(linked_units)
+      printf '  %-30s %-7s %s\n' "$ref" "$(dim "$(meta "$ref" version)")" "$(meta "$ref" summary)"
+    done < <(linked_refs)
   fi
 
   # Two linked units claiming the same key is the failure this catches.
-  while read -r unit; do
-    unit_exists "$unit" || continue
+  while read -r ref; do
+    ref_exists "$ref" || continue
     while read -r key; do
       [[ -z $key ]] && continue
-      if printf '%s\n' "$seen_keys" | grep -qxF "$key"; then
-        dupes+="$key"$'\n'
-      fi
-      seen_keys+="$key"$'\n'
-    done < <(meta_list "$unit" keys)
-  done < <(linked_units)
+      printf '%s\n' "$seen" | grep -qxF "$key" && dupes+="$key"$'\n'
+      seen+="$key"$'\n'
+    done < <(meta_list "$ref" keys)
+  done < <(linked_refs)
 
   printf '\n%s\n' "$(bold 'Key conflicts')"
   if [[ -z $dupes ]]; then
@@ -322,91 +590,47 @@ cmd_status() {
     printf '%s' "$dupes" | sort -u | while read -r key; do
       [[ -z $key ]] && continue
       printf '  %s %s claimed by:' "$(red '!')" "$key"
-      while read -r unit; do
-        unit_exists "$unit" || continue
-        meta_list "$unit" keys | grep -qxF "$key" && printf ' %s' "$unit"
-      done < <(linked_units)
+      while read -r ref; do
+        ref_exists "$ref" || continue
+        meta_list "$ref" keys | grep -qxF "$key" && printf ' %s' "$ref"
+      done < <(linked_refs)
       printf '\n'
     done
   fi
 }
 
 cmd_doctor() {
-  local unit need missing=0
-  while read -r unit; do
-    unit_exists "$unit" || continue
+  local ref need missing=0
+  while read -r ref; do
+    ref_exists "$ref" || continue
     while read -r need; do
       [[ -z $need ]] && continue
-      if ! command -v "$need" >/dev/null; then
-        say "$(red 'missing') $need, needed by $unit"
-        missing=1
-      fi
-    done < <(meta_list "$unit" needs)
-  done < <(linked_units)
+      command -v "$need" >/dev/null && continue
+      say "$(red missing) $need, needed by $ref"
+      missing=1
+    done < <(meta_list "$ref" needs)
+  done < <(linked_refs)
 
   ((missing == 0)) && say "$(green 'All dependencies present.')"
   return $missing
 }
 
-link_unit() {
-  local unit="$1" kind
-  unit_exists "$unit" || die "no unit named '$unit'"
-  is_linked "$unit" && {
-    say "$unit is already on"
-    return 0
-  }
+# ---------------------------------------------------------------- add / remove
 
-  # Every unit may carry hypr/*.lua and bin/*, whatever its kind. A plugin that
-  # also wants a keybinding is normal, so kind only decides the extra step.
-  kind=$(meta "$unit" kind)
-  case "$kind" in
-  plugin) link_plugin "$unit" ;;
-  setting) link_setting "$unit" ;;
-  hypr) ;;
-  *) die "unit '$unit' has an unknown kind: '${kind:-<empty>}'" ;;
-  esac
-
-  link_hypr "$unit"
-  link_bin "$unit"
-  mark_linked "$unit"
-  say "$(green on) $unit"
-}
-
-unlink_unit() {
-  local unit="$1" kind
-  unit_exists "$unit" || die "no unit named '$unit'"
-  is_linked "$unit" || {
-    say "$unit is already off"
-    return 0
-  }
-
-  kind=$(meta "$unit" kind)
-  case "$kind" in
-  plugin) unlink_plugin "$unit" ;;
-  setting) unlink_setting "$unit" ;;
-  esac
-
-  unlink_hypr "$unit"
-  unlink_bin "$unit"
-  mark_unlinked "$unit"
-  say "$(dim off) $unit"
-}
-
-# A picker when called bare, so `bo add` is the marketplace.
 cmd_add() {
-  local unit
+  local arg
   if (($# > 0)); then
-    for unit in "$@"; do link_unit "$unit"; done
+    for arg in "$@"; do link_unit "$(resolve_ref "$arg")"; done
     return
   fi
 
   command -v gum >/dev/null || die "gum is not installed; pass unit names instead"
 
-  local choices=()
-  while read -r unit; do
-    is_linked "$unit" && continue
-    choices+=("$unit  ·  $(meta "$unit" summary)")
-  done < <(all_units)
+  local choices=() ref
+  while read -r ref; do
+    is_linked "$ref" && continue
+    choices+=("$ref  ·  $(meta "$ref" summary)")
+  done < <(all_refs)
 
   ((${#choices[@]} > 0)) || {
     say "Every unit is already on."
@@ -415,8 +639,6 @@ cmd_add() {
 
   local picked
   picked=$(printf '%s\n' "${choices[@]}" | gum choose --no-limit --header "Turn on which units?") || return 0
-  [[ -z $picked ]] && return 0
-
   while read -r line; do
     [[ -z $line ]] && continue
     link_unit "${line%%  ·  *}"
@@ -424,19 +646,19 @@ cmd_add() {
 }
 
 cmd_remove() {
-  local unit
+  local arg
   if (($# > 0)); then
-    for unit in "$@"; do unlink_unit "$unit"; done
+    for arg in "$@"; do unlink_unit "$(resolve_ref "$arg")"; done
     return
   fi
 
   command -v gum >/dev/null || die "gum is not installed; pass unit names instead"
 
-  local choices=()
-  while read -r unit; do
-    unit_exists "$unit" || continue
-    choices+=("$unit  ·  $(meta "$unit" summary)")
-  done < <(linked_units)
+  local choices=() ref
+  while read -r ref; do
+    ref_exists "$ref" || continue
+    choices+=("$ref  ·  $(meta "$ref" summary)")
+  done < <(linked_refs)
 
   ((${#choices[@]} > 0)) || {
     say "Nothing is on."
@@ -445,82 +667,375 @@ cmd_remove() {
 
   local picked
   picked=$(printf '%s\n' "${choices[@]}" | gum choose --no-limit --header "Turn off which units?") || return 0
-  [[ -z $picked ]] && return 0
-
   while read -r line; do
     [[ -z $line ]] && continue
     unlink_unit "${line%%  ·  *}"
   done <<<"$picked"
 }
 
+# ---------------------------------------------------------- marketplace admin
+
+market_usage() {
+  cat <<'TXT'
+  bo market list                  every marketplace bo knows
+  bo market add <git-url> [name]  clone one and start offering its units
+  bo market remove <name>         drop it (refuses while its units are on)
+  bo market update [name]         fetch and fast-forward
+  bo market info <name>           where it came from and what it holds
+TXT
+}
+
+cmd_market_list() {
+  local root name url count
+  printf '%-22s %-7s %s\n' MARKETPLACE UNITS SOURCE
+  while read -r root; do
+    name=$(market_name "$root")
+    count=$(find "$root/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)
+    url=$(git -C "$root" remote get-url origin 2>/dev/null || printf 'local')
+    printf '%-22s %-7s %s\n' "$name" "$count" "$url"
+    [[ $(readlink -f "$root") == "$(readlink -f "$SELF_ROOT")" ]] &&
+      printf '%s\n' "$(dim "  (this checkout, where bo itself lives: $root)")"
+  done < <(market_roots)
+}
+
+cmd_market_add() {
+  (($# > 0)) || die "usage: bo market add <git-url> [name]"
+  local url="$1" name="${2:-}" tmp
+
+  command -v git >/dev/null || die "git is not installed"
+
+  # Clone to a staging directory first: the registry decides the final name, and
+  # a repo with no registry.json is not a marketplace.
+  tmp="$MARKETS_DIR/.add.$$"
+  rm -rf "$tmp"
+  say "Cloning $url ..."
+  git clone --quiet --depth 50 "$url" "$tmp" || {
+    rm -rf "$tmp"
+    die "clone failed"
+  }
+
+  [[ -f "$tmp/registry.json" ]] || {
+    rm -rf "$tmp"
+    die "that repo has no registry.json at its root, so it is not a marketplace"
+  }
+
+  [[ -n $name ]] || name=$(json_get "$tmp/registry.json" name)
+  [[ -n $name ]] || {
+    rm -rf "$tmp"
+    die "its registry.json has no \"name\", so pass one: bo market add <url> <name>"
+  }
+
+  if market_root "$name" >/dev/null; then
+    rm -rf "$tmp"
+    die "a marketplace named '$name' is already here"
+  fi
+
+  mv "$tmp" "$MARKETS_DIR/$name"
+  say "$(green added) $name $(dim "$(json_get "$MARKETS_DIR/$name/registry.json" homepage)")"
+  say "$(find "$MARKETS_DIR/$name/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l) units. Run: bo list"
+
+  # Code from a marketplace runs on this machine, so say so once, plainly.
+  say ""
+  say "$(yellow 'A marketplace is code you are about to run.') Its units link scripts into"
+  say "your PATH and QML into your shell. Read what you turn on."
+}
+
+cmd_market_remove() {
+  (($# > 0)) || die "usage: bo market remove <name>"
+  local name="$1" root ref on=0
+  root=$(market_root "$name") || die "no marketplace named '$name'"
+
+  [[ $(readlink -f "$root") == "$(readlink -f "$SELF_ROOT")" ]] &&
+    die "'$name' is the checkout bo itself runs from; removing it would remove bo"
+
+  while read -r ref; do
+    [[ $(ref_market "$ref") == "$name" ]] && {
+      say "  still on: $ref"
+      on=1
+    }
+  done < <(linked_refs)
+  ((on == 1)) && die "turn those off first: bo remove <unit>"
+
+  case "$(readlink -f "$root")" in
+  "$(readlink -f "$MARKETS_DIR")"/*) ;;
+  *) die "'$name' lives outside $MARKETS_DIR; delete it yourself" ;;
+  esac
+
+  rm -rf "$root"
+  say "$(dim removed) $name"
+}
+
+cmd_market_info() {
+  (($# > 0)) || die "usage: bo market info <name>"
+  local root
+  root=$(market_root "$1") || die "no marketplace named '$1'"
+
+  printf '%s\n' "$(bold "$(market_name "$root")")"
+  printf '  %-11s %s\n' homepage "$(json_get "$root/registry.json" homepage)"
+  printf '  %-11s %s\n' source "$(git -C "$root" remote get-url origin 2>/dev/null || echo local)"
+  printf '  %-11s %s\n' path "$root"
+  printf '  %-11s %s\n' commit "$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo '-')"
+  printf '  %-11s %s\n' units "$(find "$root/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)"
+}
+
+# Fetch one marketplace and report per-unit changes before applying them.
+update_market() {
+  local root="$1" name branch before remote changes
+  name=$(market_name "$root")
+
+  git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || {
+    say "$(dim "$name: not a git checkout, skipped")"
+    return 0
+  }
+
+  branch=$(git -C "$root" rev-parse --abbrev-ref HEAD)
+  before=$(git -C "$root" rev-parse HEAD)
+
+  git -C "$root" fetch --quiet origin "$branch" 2>/dev/null || {
+    warn "$name: fetch failed"
+    return 0
+  }
+
+  remote=$(git -C "$root" rev-parse "origin/$branch" 2>/dev/null) || {
+    warn "$name: no origin/$branch"
+    return 0
+  }
+
+  if [[ $before == "$remote" ]]; then
+    say "$(dim "$name: up to date at ${before:0:12}")"
+    return 0
+  fi
+
+  say "$(bold "$name")"
+  changes=$(registry_diff "$root" "$name" "$before" "$remote")
+  if [[ $changes == "__NOCHANGES__" ]]; then
+    say "  $(dim 'no unit changed; the update touches only docs or tooling')"
+  else
+    printf '%s\n' "$changes"
+  fi
+
+  if ! git -C "$root" merge --ff-only "origin/$branch" --quiet 2>/dev/null; then
+    warn "$name: cannot fast-forward, you have local commits. Rebase or stash them."
+    return 0
+  fi
+
+  say "  $(green updated) $(dim "${before:0:12} -> ${remote:0:12}")"
+}
+
+# Compare a marketplace's registry at two refs and print one line per changed
+# unit. This is what makes an update legible before it is applied.
+registry_diff() {
+  python3 - "$1" "$2" "$3" "$4" "$LINKED_FILE" <<'PY'
+import json, subprocess, sys
+
+root, market, old_ref, new_ref, linked_path = sys.argv[1:6]
+
+def registry_at(ref):
+    out = subprocess.run(
+        ["git", "-C", root, "show", f"{ref}:registry.json"],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        return {}
+    try:
+        return json.loads(out.stdout)["units"]
+    except Exception:
+        return {}
+
+old, new = registry_at(old_ref), registry_at(new_ref)
+linked = {line.strip() for line in open(linked_path) if line.strip()}
+
+rows = []
+for name in sorted(set(old) | set(new)):
+    a, b = old.get(name), new.get(name)
+    on = "on " if f"{market}/{name}" in linked else "   "
+    if a and not b:
+        rows.append(("removed", name, on, f"was {a['version']}"))
+    elif b and not a:
+        rows.append(("new", name, on, f"{b['version']}  {b['summary']}"))
+    elif a["hash"] != b["hash"]:
+        detail = (f"{a['version']} -> {b['version']}" if a["version"] != b["version"]
+                  else f"{b['version']} (content changed, version did not)")
+        rows.append(("changed", name, on, detail))
+
+if not rows:
+    print("__NOCHANGES__")
+    sys.exit(0)
+
+colour = {"new": "32", "changed": "36", "removed": "31"}
+for kind, name, on, detail in rows:
+    print(f"  \033[{colour[kind]}m{kind:<8}\033[0m \033[2m{on}\033[0m{name:<20} {detail}")
+PY
+}
+
+cmd_market_update() {
+  local root
+  if (($# > 0)); then
+    root=$(market_root "$1") || die "no marketplace named '$1'"
+    update_market "$root"
+  else
+    while read -r root; do update_market "$root"; done < <(market_roots)
+  fi
+}
+
+cmd_market() {
+  local sub="${1:-list}"
+  shift 2>/dev/null || true
+  case "$sub" in
+  list | ls) cmd_market_list ;;
+  add) cmd_market_add "$@" ;;
+  remove | rm) cmd_market_remove "$@" ;;
+  update) cmd_market_update "$@" ;;
+  info) cmd_market_info "$@" ;;
+  *)
+    say "unknown: bo market $sub"
+    market_usage
+    return 1
+    ;;
+  esac
+}
+
+# ---------------------------------------------------------------- updating
+
+cmd_outdated() {
+  local ref want have n=0
+  while read -r ref; do
+    ref_exists "$ref" || continue
+    want=$(reg "$ref" hash)
+    have=$(installed_field "$ref" hash)
+    [[ -z $want || $want == "$have" ]] && continue
+    printf '  %-30s %s -> %s\n' "$ref" "$(installed_field "$ref" version)" "$(reg "$ref" version)"
+    ((n++))
+  done < <(linked_refs)
+
+  if ((n == 0)); then
+    say "$(green 'Every linked unit matches its marketplace.')"
+  else
+    say ""
+    say "Run $(cyan 'bo relink') to apply."
+  fi
+  return 0
+}
+
+# Re-run link for units whose content changed. Symlinked files need nothing, but
+# a unit that gained a hypr/ file or a bin/ script does.
+cmd_relink() {
+  local ref want have n=0
+  while read -r ref; do
+    ref_exists "$ref" || continue
+    want=$(reg "$ref" hash)
+    have=$(installed_field "$ref" hash)
+    [[ -z $want || $want == "$have" ]] && continue
+
+    link_hypr "$ref"
+    link_bin "$ref"
+    [[ $(meta "$ref" kind) == plugin ]] && rescan_plugins
+    record_installed "$ref"
+    say "$(cyan relinked) $ref $(dim "$(meta "$ref" version)")"
+    ((n++))
+  done < <(linked_refs)
+
+  ((n == 0)) && say "Nothing to relink."
+  return 0
+}
+
+cmd_update() {
+  cmd_market_update
+  say ""
+  cmd_relink
+}
+
+# ---------------------------------------------------------------- author tools
+
+cmd_registry() {
+  local root builder
+  root=$(market_root "${1:-$(market_name "$SELF_ROOT")}") || die "no such marketplace"
+  builder="$root/tools/build-registry"
+  [[ -x $builder ]] || die "$root has no executable tools/build-registry"
+  "$builder"
+}
+
 cmd_validate() {
-  local unit id failed=0
-  while read -r unit; do
-    [[ $(meta "$unit" kind) == plugin ]] || continue
-    id=$(meta "$unit" id)
-    if omarchy plugin validate "$UNITS_DIR/$unit/plugin" >/dev/null 2>&1; then
-      say "$(green ok) $unit ($id)"
+  local ref failed=0 dir
+  while read -r ref; do
+    [[ $(meta "$ref" kind) == plugin ]] || continue
+    dir="$(ref_dir "$ref")/plugin"
+    if omarchy plugin validate "$dir" >/dev/null 2>&1; then
+      say "$(green ok) $ref"
     else
-      say "$(red fail) $unit ($id)"
-      omarchy plugin validate "$UNITS_DIR/$unit/plugin" 2>&1 | sed 's/^/    /'
+      say "$(red fail) $ref"
+      omarchy plugin validate "$dir" 2>&1 | sed 's/^/    /'
       failed=1
     fi
-  done < <(all_units)
+  done < <(all_refs)
   return $failed
 }
 
-# shell.json is copied rather than symlinked, because every writer replaces the
-# file instead of editing it. This pulls the live one back into the repo.
 cmd_sync() {
-  local live="$CONFIG_HOME/omarchy/shell.json" tracked="$BO_ROOT/config/shell.json"
+  local live="$CONFIG_HOME/omarchy/shell.json" tracked="$SELF_ROOT/config/shell.json"
   [[ -f $live ]] || die "no $live"
+  [[ -d "$SELF_ROOT/units" ]] || die "bo is not running from a marketplace checkout"
   mkdir -p "$(dirname "$tracked")"
   if cmp -s "$live" "$tracked"; then
     say "shell.json unchanged"
   else
     cp "$live" "$tracked"
-    say "$(green updated) config/shell.json"
+    say "$(green updated) $tracked"
   fi
 }
 
-cmd_update() {
-  git -C "$BO_ROOT" pull --ff-only || die "git pull failed"
-  local unit
-  while read -r unit; do
-    unit_exists "$unit" || {
-      warn "$unit is gone from the repo; run: bo remove $unit"
-      continue
-    }
-  done < <(linked_units)
-  rescan_plugins
-  reload_hypr
-  say "$(green 'Up to date.')"
+cmd_version() {
+  local root
+  printf 'bo             %s\n' "$(git -C "$SELF_ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+  printf 'running from   %s\n' "$SELF_ROOT"
+  printf 'marketplaces   %s\n' "$(market_names | join_lines)"
+  printf 'units          %s available, %s on\n' "$(all_refs | wc -l)" "$(linked_refs | wc -l)"
 }
 
 usage() {
   cat <<'TXT'
-bo - manage better-omarchy units
+bo - Omarchy customizations, from any marketplace
 
-  bo list                 every unit, and whether it is on
+  bo list                 every unit available, and whether it is on
+  bo search <term>        find a unit by name, summary, category or tag
+  bo info <unit>          everything known about one unit
   bo status               what is on, plus keybinding conflicts
+
   bo add [unit...]        turn units on (no argument opens a picker)
   bo remove [unit...]     turn units off (no argument opens a picker)
-  bo doctor               check that every linked unit's dependencies exist
+
+  bo update               fetch every marketplace, show what changed, apply
+  bo outdated             linked units whose marketplace moved on
+  bo relink               apply those changes
+
+  bo market ...           add, remove and inspect marketplaces
+  bo doctor               check every linked unit's dependencies exist
   bo validate             run omarchy plugin validate on every plugin unit
-  bo sync                 copy the live shell.json back into the repo
-  bo update               git pull, then reload
+  bo registry [name]      rebuild a marketplace's registry.json (authors)
+  bo sync                 copy the live shell.json into this checkout
+  bo version              what this is and where it lives
+
+A unit is named `marketplace/unit`, and the marketplace half can be left off
+when only one marketplace offers that name.
 TXT
 }
 
 case "${1:-}" in
-list) cmd_list ;;
+list | ls) cmd_list ;;
+search | find) shift; cmd_search "$@" ;;
+info | show) shift; cmd_info "$@" ;;
 status) cmd_status ;;
-add) shift; cmd_add "$@" ;;
-remove) shift; cmd_remove "$@" ;;
+add | install) shift; cmd_add "$@" ;;
+remove | rm | uninstall) shift; cmd_remove "$@" ;;
+update | upgrade) cmd_update ;;
+outdated) cmd_outdated ;;
+relink) cmd_relink ;;
+market | marketplace) shift; cmd_market "$@" ;;
 doctor) cmd_doctor ;;
 validate) cmd_validate ;;
+registry) shift; cmd_registry "$@" ;;
 sync) cmd_sync ;;
-update) cmd_update ;;
+version | --version | -V) cmd_version ;;
 "" | -h | --help | help) usage ;;
-*) die "unknown command: $1" ;;
+*) die "unknown command: $1. Try: bo help" ;;
 esac

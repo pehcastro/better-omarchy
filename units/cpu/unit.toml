@@ -1,6 +1,10 @@
-name    = "cpu"
-summary = "CPU load in the bar, opens btop on click"
-kind    = "plugin"
-id      = "bo.cpu"
-needs   = ["btop"]
-keys    = []
+name     = "cpu"
+summary  = "CPU load in the bar, opens btop on click"
+version  = "0.1.0"
+category = "System"
+tags     = ["bar","monitoring"]
+author   = "pehcastro"
+kind     = "plugin"
+id       = "bo.cpu"
+needs    = ["btop"]
+keys     = []
