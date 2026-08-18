@@ -1,0 +1,10 @@
+name      = "search-radio"
+summary   = "Play internet radio from the launcher, with radio:"
+version   = "0.1.0"
+category  = "Media"
+tags      = ["launcher", "radio", "music"]
+author    = "pehcastro"
+kind      = "hypr"
+needs     = ["curl", "jq", "mpv"]
+requires  = ["omacast"]
+keys      = []

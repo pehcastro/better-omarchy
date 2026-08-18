@@ -137,6 +137,12 @@ function toRow(ext, raw, index) {
     today: raw.today,
     weekStart: raw.weekStart,
     marks: Array.isArray(raw.marks) ? raw.marks : null,
+    // A player: what is playing, how far in, and the calls to change it.
+    status: String(raw.status || ""),
+    player: String(raw.player || ""),
+    lengthSeconds: raw.lengthSeconds,
+    seek: String(raw.seek || ""),
+    controls: (raw.controls && typeof raw.controls === "object") ? raw.controls : null,
     actions: Array.isArray(raw.actions) ? raw.actions : null,
     tier: ext.tier,
     local: local,

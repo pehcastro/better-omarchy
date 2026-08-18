@@ -1,107 +1,150 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `music:` keyword: what is playing, and the
-# transport controls for it.
+# Music for OmaCast's `music:` keyword.
 #
-#   music:          now playing, plus play/pause, next, previous
-#   music:next      just the controls that match
+#   music:                what is playing, as a player
+#   music:kind of blue    search a catalogue, then play or open the result
 #
-# MPRIS over busctl rather than playerctl, so this needs nothing installed:
-# every player that shows a media control anywhere already speaks it.
+# Two halves that need nothing installed and nothing registered. Control goes
+# over MPRIS, which every player that shows a media widget already speaks.
+# Search goes to iTunes' public endpoint, which needs no key and returns cover
+# art, and playback of a result goes back through MPRIS OpenUri, which the Linux
+# Spotify client implements.
+#
+# What this cannot do without the Spotify developer app is play the exact track
+# a search returned: nothing keyless maps a title to a Spotify id. So a result
+# opens that search inside Spotify, which is one keypress from the right track
+# rather than zero. `sp:` from the spotify unit does the exact thing, once set up.
 
 set -uo pipefail
 
 query="${1:-}"
-BUS=org.mpris.MediaPlayer2
-PATH_=/org/mpris/MediaPlayer2
-IFACE=org.mpris.MediaPlayer2.Player
+
+BUS_PATH=/org/mpris/MediaPlayer2
+PLAYER_IFACE=org.mpris.MediaPlayer2.Player
 
 player=$(busctl --user list --no-legend 2>/dev/null |
   awk '$1 ~ /^org\.mpris\.MediaPlayer2\./ { print $1; exit }')
 
-[[ -z $player ]] && exit 0
-
-short=${player#org.mpris.MediaPlayer2.}
-
-# busctl prints a variant as a type tag and a value. This pulls the value out of
-# a string variant, and the first string out of an array variant, which is how
-# xesam:artist arrives.
 prop() {
-  busctl --user get-property "$player" "$PATH_" "$IFACE" "$1" 2>/dev/null
+  busctl --user get-property "$player" "$BUS_PATH" "$PLAYER_IFACE" "$1" 2>/dev/null
 }
 
-metadata=$(busctl --user get-property "$player" "$PATH_" "$IFACE" Metadata 2>/dev/null)
-
-# busctl escapes a quote, a backslash and an apostrophe inside its strings, so
-# a title like "Doesn't Just Happen" arrives with a backslash in it. Undo that
-# here, or every apostrophe reaches the row as \'.
-unescape() { sed "s/\\\\\\(.\\)/\\1/g"; }
+# busctl escapes quotes, backslashes and apostrophes inside its strings, so a
+# title like "Doesn't Just Happen" arrives with a backslash in it.
+unescape() { sed 's/\\\(.\)/\1/g'; }
 
 field() {
-  printf '%s' "$metadata" | grep -oP "\"$1\"\s+\Ks[^\"]*\"([^\"\\\\]|\\\\.)*\"" | head -1 |
+  printf '%s' "$1" | grep -oP "\"$2\"\s+\Ks[^\"]*\"([^\"\\\\]|\\\\.)*\"" | head -1 |
     sed 's/^s\s*//; s/^"//; s/"$//' | unescape
 }
 
-title=$(field "xesam:title")
-album=$(field "xesam:album")
-artist=$(printf '%s' "$metadata" | grep -oP '"xesam:artist"\s+as\s+\d+\s+\K"([^"\\\\]|\\\\.)*"' |
-  head -1 | sed 's/^"//; s/"$//' | unescape)
+# ---------------------------------------------------------------- now playing
 
-status=$(prop PlaybackStatus | sed 's/^s\s*//; s/"//g')
-[[ -z $status ]] && status="Stopped"
+now_playing() {
+  [[ -z $player ]] && return 0
 
-subtitle="$short"
-[[ -n $artist ]] && subtitle="$artist"
-[[ -n $artist && -n $album ]] && subtitle="$artist  ·  $album"
+  local metadata title album artist art status length position
+  metadata=$(busctl --user get-property "$player" "$BUS_PATH" "$PLAYER_IFACE" Metadata 2>/dev/null)
+  title=$(field "$metadata" "xesam:title")
+  [[ -z $title ]] && return 0
 
-row() {
-  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg e "$4" --argjson sc "$5" \
-    '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, view: "list"}'
-}
+  album=$(field "$metadata" "xesam:album")
+  art=$(field "$metadata" "mpris:artUrl")
+  artist=$(printf '%s' "$metadata" | grep -oP '"xesam:artist"\s+as\s+\d+\s+\K"([^"\\]|\\.)*"' |
+    head -1 | sed 's/^"//; s/"$//' | unescape)
 
-call="busctl --user call $player $PATH_ $IFACE"
+  status=$(prop PlaybackStatus | sed 's/^s\s*//; s/"//g')
+  [[ -z $status ]] && status="Stopped"
 
-# Nothing typed: lead with what is playing, then the controls.
-matches() {
-  [[ -z $query ]] && return 0
-  [[ ${1,,} == *"${query,,}"* ]]
-}
-
-# Now playing leads, as a hero with the cover art. It is the answer to
-# "music:" far more often than any of the controls under it.
-if [[ -n $title ]] && matches "$title $artist $album"; then
-  art=$(field "mpris:artUrl")
   length=$(printf '%s' "$metadata" | grep -oP '"mpris:length"\s+t\s+\K\d+' | head -1)
   position=$(prop Position | grep -oP '^x\s+\K\d+' | head -1)
 
-  progress=0
-  if [[ -n $length && -n $position && $length -gt 0 ]]; then
-    progress=$(awk -v p="$position" -v l="$length" 'BEGIN { printf "%.4f", p / l }')
+  local seconds=0 progress=0
+  if [[ -n $length && $length -gt 0 ]]; then
+    seconds=$(awk -v l="$length" 'BEGIN { printf "%.0f", l / 1000000 }')
+    [[ -n $position ]] && progress=$(awk -v p="$position" -v l="$length" 'BEGIN { printf "%.4f", p / l }')
   fi
 
-  verb=$([[ $status == "Playing" ]] && echo "Pause" || echo "Play")
+  local short=${player#org.mpris.MediaPlayer2.}
+  local call="busctl --user call $player $BUS_PATH $PLAYER_IFACE"
+  local trackid
+  trackid=$(field "$metadata" "mpris:trackid")
+
+  # SetPosition takes an object path and microseconds. The view knows neither,
+  # so it substitutes the seconds it wants into this and runs it.
+  local seek=""
+  [[ -n $trackid ]] && seek="$call SetPosition ox $trackid \$(( {seconds} * 1000000 ))"
 
   jq -cn \
-    --arg id now --arg t "$title" --arg s "$subtitle" --arg d "$short  ·  $status" \
-    --arg art "$art" --arg e "$call PlayPause" --argjson sc 95000 \
-    --argjson pr "$progress" \
-    --arg next "$call Next" --arg prev "$call Previous" \
-    --arg copy "printf %s $(printf '%q' "$title - $artist") | wl-copy" \
-    --arg verb "$verb" \
+    --arg t "$title" --arg s "$artist" --arg d "$album" --arg art "$art" \
+    --arg status "$status" --arg player "$short" --arg seek "$seek" \
+    --arg pp "$call PlayPause" --arg next "$call Next" --arg prev "$call Previous" \
+    --argjson pr "$progress" --argjson len "$seconds" \
     '{
-       id: $id, title: $t, subtitle: $s, detail: $d, art: $art,
-       exec: $e, score: $sc, view: "hero", progress: $pr,
+       id: "now", title: $t, subtitle: $s, detail: $d, art: $art,
+       status: $status, player: $player, progress: $pr, lengthSeconds: $len,
+       seek: $seek, view: "player", score: 99000,
+       controls: { playPause: $pp, next: $next, prev: $prev },
+       exec: $pp,
        actions: [
-         { title: $verb, shortcut: "\u21b5", exec: $e },
+         { title: (if $status == "Playing" then "Pause" else "Play" end), shortcut: "↵", exec: $pp },
          { title: "Next Track", exec: $next },
          { title: "Previous Track", exec: $prev },
-         { title: "Copy Title and Artist", exec: $copy }
+         { title: "Copy Title and Artist",
+           exec: ("printf %s " + (($t + " - " + $s) | @sh) + " | wl-copy") }
        ]
      }'
+}
+
+# ---------------------------------------------------------------- search
+
+# Deezer rather than iTunes, for one reason: it returns an ISRC on every row,
+# and an ISRC is what MusicBrainz can turn into a Spotify track id. Without it
+# a result can only ever open a search rather than play the track.
+search() {
+  local terms="$1" encoded json
+  encoded=$(jq -rn --arg q "$terms" '$q|@uri')
+
+  json=$(curl -sf --max-time 6 "https://api.deezer.com/search?q=$encoded&limit=9" 2>/dev/null) || return 0
+
+  printf '%s' "$json" | jq -c '
+    .data[]? |
+    {
+      id: (.id | tostring),
+      title: .title,
+      subtitle: .artist.name,
+      detail: .album.title,
+      accessory: ((.duration / 60 | floor | tostring) + ":" +
+                  ((.duration % 60 | tostring) | if length == 1 then "0" + . else . end)),
+      art: .album.cover_medium,
+      preview: .preview,
+      isrc: (.isrc // ""),
+      view: "cards",
+      score: 90000
+    }' 2>/dev/null |
+  while IFS= read -r row; do
+    local isrc phrase preview play web
+    isrc=$(printf '%s' "$row" | jq -r '.isrc')
+    phrase=$(printf '%s' "$row" | jq -r '.subtitle + " " + .title')
+    preview=$(printf '%s' "$row" | jq -r '.preview // ""')
+
+    play="omacast-music-play $(printf '%q' "$isrc") $(printf '%q' "$phrase")"
+    web="omarchy-launch-browser $(printf '%q' "https://open.spotify.com/search/$(jq -rn --arg q "$phrase" '$q|@uri')")"
+
+    printf '%s' "$row" | jq -c --arg play "$play" --arg web "$web" --arg preview "$preview" \
+      'del(.isrc, .preview) | .exec = $play |
+       .actions = ([{title: "Play in Spotify", shortcut: "\u21b5", exec: $play}] +
+                   (if $preview != "" then [{title: "Play 30s Preview", exec: ("mpv --no-video --really-quiet " + ($preview | @sh))}] else [] end) +
+                   [{title: "Open in Browser", exec: $web},
+                    {title: "Copy Title and Artist",
+                     exec: ("printf %s " + ((.title + " - " + .subtitle) | @sh) + " | wl-copy")}])'
+  done
+}
+
+if [[ -z $query ]]; then
+  now_playing
+  exit 0
 fi
 
-matches "play pause" && row "playpause" "Play or Pause" "$short" "$call PlayPause" 80000
-matches "next skip forward" && row "next" "Next Track" "$short" "$call Next" 79000
-matches "previous back" && row "prev" "Previous Track" "$short" "$call Previous" 78000
-matches "stop" && row "stop" "Stop" "$short" "$call Stop" 77000
-
+search "$query"
 exit 0

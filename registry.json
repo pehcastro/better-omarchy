@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "ccb5bd10cb98c464574095ca7fc07fea8df11297",
+  "generated_at_commit": "afa8feec8d53b9b3e92e8303f9faed9d555b6bd1",
   "units": {
     "accents": {
       "name": "accents",
@@ -270,8 +270,8 @@
       "keys": [],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 22,
-      "hash": "4759678a2e2beae6698747f3a379f8ece8ee2b358c17e9c7f1d7d8280eebbe78",
+      "files": 23,
+      "hash": "c0dbacbdf7f97a385b1b402a30ef8eec4583b255636b07e07c6941aa5d0c16e7",
       "commit": "4969d3d7eebb5dc47ebf700a6221656a9a72354d",
       "updated": "2026-08-18T18:51:00-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -340,16 +340,43 @@
       "author": "pehcastro",
       "needs": [
         "busctl",
-        "jq"
+        "jq",
+        "curl"
       ],
       "keys": [],
       "pluginId": "",
       "path": "units/search-music",
-      "files": 3,
-      "hash": "e6c157e6eb4c6c622ed5b1fb51bf845ab268af9ba1b84e57498af4580e60f602",
+      "files": 4,
+      "hash": "4ff3fc791e9bb2172421445f9af5d1e4c54a258b2ed345f4960f631153ef334c",
       "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "search-radio": {
+      "name": "search-radio",
+      "summary": "Play internet radio from the launcher, with radio:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Media",
+      "tags": [
+        "launcher",
+        "radio",
+        "music"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "curl",
+        "jq",
+        "mpv"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/search-radio",
+      "files": 3,
+      "hash": "86f87e174685d694f884940ad2d5faac068d782851aec2dfe95a087772e601da",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
     "search-windows": {
       "name": "search-windows",

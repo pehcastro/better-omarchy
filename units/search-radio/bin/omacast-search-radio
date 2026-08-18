@@ -1,0 +1,48 @@
+#!/bin/bash
+# Internet radio for OmaCast's `radio:` keyword, from radio-browser.info.
+#
+#   radio:fip           stations matching that name
+#   radio:jazz          the same, since the endpoint searches names not genres
+#
+# No key and no account. mpv plays the stream, and mpv-mpris puts it on the same
+# bus everything else here already talks to, so `music:` can pause it afterwards.
+
+set -uo pipefail
+
+query="${1:-}"
+[[ -z $query ]] && exit 0
+
+AGENT="omacast/0.1"
+
+# The project asks clients to resolve a mirror by DNS rather than pinning one of
+# the named hosts, which come and go. `all.api.radio-browser.info` is itself the
+# round-robin record, so curl gets a different healthy mirror per lookup without
+# this needing dig, which is not installed on a stock Omarchy box.
+host="all.api.radio-browser.info"
+
+encoded=$(jq -rn --arg q "$query" '$q|@uri')
+
+curl -sf --max-time 6 -H "User-Agent: $AGENT" \
+  "https://$host/json/stations/search?name=$encoded&limit=10&hidebroken=true&order=votes&reverse=true" 2>/dev/null |
+  jq -c '
+    .[]? |
+    select((.url_resolved // "") != "") |
+    {
+      id: .stationuuid,
+      title: .name,
+      subtitle: ([.country, .language] | map(select(. != "" and . != null)) | join("  ·  ")),
+      detail: ([(.codec // ""), (if .bitrate > 0 then ((.bitrate | tostring) + " kbps") else "" end)]
+               | map(select(. != "")) | join("  ·  ")),
+      accessory: (if .votes > 0 then ((.votes | tostring) + " votes") else "" end),
+      art: (.favicon // ""),
+      view: "cards",
+      score: 90000,
+      exec: ("mpv --no-video --really-quiet " + (.url_resolved | @sh)),
+      actions: [
+        { title: "Play", shortcut: "↵", exec: ("mpv --no-video --really-quiet " + (.url_resolved | @sh)) },
+        { title: "Stop Playing", exec: "pkill -f \"mpv --no-video\"" },
+        { title: "Copy Stream URL", exec: ("printf %s " + (.url_resolved | @sh) + " | wl-copy") },
+        { title: "Open Homepage", exec: ("omarchy-launch-browser " + ((.homepage // "") | @sh)) }
+      ]
+    }' 2>/dev/null
+exit 0

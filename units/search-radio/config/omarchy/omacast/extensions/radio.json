@@ -1,0 +1,15 @@
+{
+  "id": "radio",
+  "title": "Radio",
+  "keyword": "radio",
+  "aliases": ["fm", "station", "stream"],
+  "subtitle": "Radio",
+  "glyph": "",
+  "search": "omacast-search-radio {query}",
+  "minChars": 2,
+  "debounceMs": 250,
+  "timeoutMs": 8000,
+  "maxRows": 10,
+  "tier": "substring",
+  "view": "cards"
+}

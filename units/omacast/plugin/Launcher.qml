@@ -103,7 +103,7 @@ Item {
     if (root.answerMode) return "answer"
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
-    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar"].indexOf(wanted) >= 0 ? wanted : "list"
+    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar", "player"].indexOf(wanted) >= 0 ? wanted : "list"
   }
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
@@ -1003,6 +1003,7 @@ Item {
           case "grid": return gridView
           case "dashboard": return dashboardView
           case "calendar": return calendarView
+          case "player": return playerView
           case "answer": return answerView
           default: return listView
           }
@@ -1017,6 +1018,7 @@ Item {
       Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width } }
       Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width } }
       Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width } }
+      Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width } }
 
       // The hint bar: what Enter does, and that there is more on Ctrl+K.
       Item {

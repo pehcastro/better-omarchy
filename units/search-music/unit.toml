@@ -5,6 +5,6 @@ category = "Media"
 tags     = ["launcher", "music", "mpris"]
 author   = "pehcastro"
 kind     = "hypr"
-needs     = ["busctl", "jq"]
+needs     = ["busctl", "jq", "curl"]
 requires  = ["omacast"]
 keys     = []

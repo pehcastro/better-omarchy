@@ -1,0 +1,67 @@
+#!/bin/bash
+# Play a search result in Spotify, from a catalogue row that has no Spotify id.
+#
+#   omacast-music-play <isrc> <artist and title>
+#
+# Two routes, best first. MusicBrainz stores Spotify track URLs against an ISRC,
+# and Deezer hands an ISRC back on every row, so about six times in ten the
+# exact track can be resolved and played. The rest fall back to opening that
+# search inside Spotify, which is one keypress from right rather than zero.
+#
+# Nothing here needs a key, an account, or a developer app.
+
+set -uo pipefail
+
+isrc="${1:-}"
+phrase="${2:-}"
+
+BUS=org.mpris.MediaPlayer2.spotify
+BUS_PATH=/org/mpris/MediaPlayer2
+PLAYER=org.mpris.MediaPlayer2.Player
+
+busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS " || {
+  notify-send -u low "OmaCast" "Spotify is not running." 2>/dev/null
+  exit 0
+}
+
+# With shuffle on, OpenUri plays a random track from the same context instead of
+# the one asked for. Verified: the same call with shuffle off plays the right
+# track. Turn it off first, and leave it off, since silently restoring it would
+# race the playback that is about to start.
+busctl --user set-property "$BUS" "$BUS_PATH" "$PLAYER" Shuffle b false 2>/dev/null || true
+
+open_uri() {
+  busctl --user call "$BUS" "$BUS_PATH" "$PLAYER" OpenUri s "$1" >/dev/null 2>&1
+}
+
+track_id() {
+  busctl --user get-property "$BUS" "$BUS_PATH" "$PLAYER" Metadata 2>/dev/null |
+    grep -oP '/com/spotify/track/\K[A-Za-z0-9]+' | head -1
+}
+
+if [[ -n $isrc ]]; then
+  # One request, only for the row actually chosen, so MusicBrainz's one per
+  # second limit never comes into it. The User-Agent is mandatory there: an
+  # empty one is answered with 403.
+  spotify_id=$(curl -sf --max-time 5 \
+    -H "User-Agent: omacast/0.1 ( https://github.com/pehcastro/better-omarchy )" \
+    "https://musicbrainz.org/ws/2/isrc/$isrc?inc=url-rels&fmt=json" 2>/dev/null |
+    grep -oP 'open\.spotify\.com/track/\K[A-Za-z0-9]+' | head -1)
+
+  if [[ -n $spotify_id ]]; then
+    before=$(track_id)
+    open_uri "spotify:track:$spotify_id"
+
+    # A bad id is accepted silently and changes nothing, so success is the
+    # track id moving, not the call returning.
+    for _ in 1 2 3 4 5 6 7 8; do
+      sleep 0.25
+      [[ $(track_id) == "$spotify_id" ]] && exit 0
+    done
+  fi
+fi
+
+[[ -z $phrase ]] && exit 0
+
+encoded=$(jq -rn --arg q "$phrase" '$q|@uri')
+open_uri "spotify:search:$encoded"
