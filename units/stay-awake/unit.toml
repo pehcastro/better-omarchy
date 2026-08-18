@@ -1,9 +1,0 @@
-name     = "stay-awake"
-summary  = "Never lock or dim on idle"
-version  = "0.1.0"
-category = "System"
-tags     = ["idle","power"]
-author   = "pehcastro"
-kind     = "setting"
-needs    = ["omarchy"]
-keys     = []

@@ -5,78 +5,11 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "b394f8dc5c9683c9c86ccc35acccfc40c7ca9082",
+  "generated_at_commit": "7eca477740783c3d5d7c36fe370138b473d9ff35",
   "units": {
-    "accents": {
-      "name": "accents",
-      "summary": "Type accented characters with AltGr",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Hardware",
-      "tags": [
-        "hyprland",
-        "keyboard"
-      ],
-      "author": "pehcastro",
-      "needs": [],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/accents",
-      "files": 3,
-      "hash": "5a5797ca975b0faa44adf2f276eb785dda24cc55cf54299a29c3bdede96ea3f3",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "cpu-meter": {
-      "name": "cpu-meter",
-      "summary": "CPU load in the bar, click for btop",
-      "version": "0.1.0",
-      "kind": "plugin",
-      "category": "System",
-      "tags": [
-        "bar",
-        "monitoring"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "btop"
-      ],
-      "keys": [],
-      "pluginId": "bo.cpu-meter",
-      "path": "units/cpu-meter",
-      "files": 4,
-      "hash": "aa4c270274f2311589d4f3b3320d69ba680208118ee93adf91c176dbb645f3af",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "display-local": {
-      "name": "display-local",
-      "summary": "Your monitor layout, kept out of git",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Hardware",
-      "tags": [
-        "hyprland",
-        "monitors"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "hyprctl"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/display-local",
-      "files": 3,
-      "hash": "59b7c4f4e5f38cf8bf45a6b00efd2df5ce2eec88d0f1dd5d278e3afb6ea4b824",
-      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
-      "updated": "2026-08-18T17:49:29-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "familiar-keys": {
-      "name": "familiar-keys",
-      "summary": "Alt+F4 closes, Super+E files, Super+B browser",
+    "nkz-keys": {
+      "name": "nkz-keys",
+      "summary": "My keys: Alt+F4 closes, Super+E files, Super+B browser",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -93,91 +26,12 @@
         "SUPER+R"
       ],
       "pluginId": "",
-      "path": "units/familiar-keys",
-      "files": 3,
-      "hash": "545b6d449499aa2f6104f6848f138cea5faeff37e2d1c64875464f9920c29c8f",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "keys-additive": {
-      "name": "keys-additive",
-      "summary": "OmaCast on Super+Shift+K, nothing else changes",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "keybindings"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "omarchy-shell"
-      ],
-      "keys": [
-        "SUPER+SHIFT+K"
-      ],
-      "pluginId": "",
-      "path": "units/keys-additive",
-      "files": 3,
-      "hash": "99433b9e7878acc2a0ce8890f146f077915a7273824f8c6993a2560a35b0dfe3",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "keys-balanced": {
-      "name": "keys-balanced",
-      "summary": "OmaCast on Super+K, everything else stays put",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "keybindings"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "omarchy-shell"
-      ],
-      "keys": [
-        "SUPER+K",
-        "SUPER+H"
-      ],
-      "pluginId": "",
-      "path": "units/keys-balanced",
-      "files": 3,
-      "hash": "729dcc5e19d2d959cc8d31ebed8cbd8af99db5358fce63a7e2cf4e9f545269b3",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "keys-full": {
-      "name": "keys-full",
-      "summary": "OmaCast on Super+K, and it replaces every other launcher",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "keybindings"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "omarchy-shell"
-      ],
-      "keys": [
-        "SUPER+K",
-        "SUPER+H",
-        "SUPER+SPACE",
-        "SUPER+ALT+SPACE"
-      ],
-      "pluginId": "",
-      "path": "units/keys-full",
-      "files": 3,
-      "hash": "0b7a81fcc472aad63c430161f54c76cdc83d0db47ae27a913abcffeded9e15ff",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "path": "units/nkz-keys",
+      "files": 4,
+      "hash": "dd61175fde8c683858fc6b7391f73257d2eb9bba5ee59379478ade195a4c2b9a",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
     "omacast": {
       "name": "omacast",
@@ -199,61 +53,16 @@
         "busctl",
         "mpv"
       ],
-      "keys": [],
+      "keys": [
+        "SUPER+K",
+        "SUPER+H"
+      ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 49,
-      "hash": "e894a315f94cc8b54af0b9575003880c5a7917437f4ec3cd47683714971541c4",
-      "commit": "bd72c5e1105b85b26df718f96fa86f2f94f63262",
-      "updated": "2026-08-18T19:39:58-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "spotify-library": {
-      "name": "spotify-library",
-      "summary": "Your Spotify library and playlists, with sp:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Media",
-      "tags": [
-        "launcher",
-        "spotify",
-        "music"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "curl",
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/spotify-library",
-      "files": 5,
-      "hash": "29f27f2b7cc4e482c14ba5274b635957851d1a6ae7c7170907862a8d6cc43be7",
-      "commit": "bd72c5e1105b85b26df718f96fa86f2f94f63262",
-      "updated": "2026-08-18T19:39:58-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "stay-awake": {
-      "name": "stay-awake",
-      "summary": "Never lock or dim on idle",
-      "version": "0.1.0",
-      "kind": "setting",
-      "category": "System",
-      "tags": [
-        "idle",
-        "power"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "omarchy"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/stay-awake",
-      "files": 4,
-      "hash": "ce26b0a9909fc9c321d988c4765818519357e59eead9aa828db92ce2cb308b84",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
+      "files": 54,
+      "hash": "efb7f02670f2234d9295b73b89ec9577dfacc25bad9b69063d0e8257bd184a42",
+      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
+      "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
@@ -279,8 +88,8 @@
       "path": "units/undo-close",
       "files": 5,
       "hash": "5740d2f8736f9ae61b2551990f8e95482c70acc043c30f01ed72706159eaaf84",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
+      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
+      "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "workspace-names": {
@@ -305,8 +114,8 @@
       "path": "units/workspace-names",
       "files": 5,
       "hash": "8490886be54120b7bbe96eff088345b845ef37b45ee350fabb2d38e267aeb6a6",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
+      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
+      "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "zen-mode": {
@@ -326,8 +135,8 @@
       "path": "units/zen-mode",
       "files": 3,
       "hash": "bfa2daa109ab5480b2ea32d489602a9e802cdc22d64e1add8b33d193dc6e8a95",
-      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
-      "updated": "2026-08-18T17:39:14-03:00",
+      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
+      "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     }
   }

@@ -7,4 +7,4 @@ author   = "pehcastro"
 kind     = "plugin"
 id       = "bo.omacast"
 needs    = ["qalc", "jq", "curl", "fd", "busctl", "mpv"]
-keys     = []
+keys     = ["SUPER+K", "SUPER+H"]

@@ -1,2 +1,2 @@
 # Machine-specific. Copy monitors.lua.example beside it and edit that.
-units/display-local/hypr/monitors.lua
+units/nkz-keys/hypr/monitors.lua

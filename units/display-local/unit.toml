@@ -1,9 +1,0 @@
-name     = "display-local"
-summary  = "Your monitor layout, kept out of git"
-version  = "0.1.0"
-category = "Hardware"
-tags     = ["hyprland", "monitors"]
-author   = "pehcastro"
-kind     = "hypr"
-needs    = ["hyprctl"]
-keys     = []

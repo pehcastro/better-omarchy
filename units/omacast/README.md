@@ -4,8 +4,21 @@ A launcher. One box that answers with apps, arithmetic, files, music, your notes
 and the web, and draws each of those the way it deserves rather than as one long
 list.
 
-Open it with whichever `keys-*` unit you picked. `keys-balanced` puts it on
-`Super+K`.
+`Super+K` opens it. To change that, edit the one line at the top of
+`hypr/keys.lua`:
+
+```lua
+local preset = "balanced"
+```
+
+- `additive`: `Super+Shift+K`, and every Omarchy default survives.
+- `balanced`: `Super+K`, with the keybindings cheatsheet moved to `Super+H`.
+- `full`: the same, and nothing else opens a launcher any more.
+
+Nothing reads this from a settings file, because a Hyprland keybinding has to be
+Lua and reaching into JSON from there would be worse than a variable. The
+Omarchy menu keeps its bar icon and `Super+Shift+F12` in all three, so `full` is
+recoverable without editing config.
 
 ## What you can type
 
@@ -114,6 +127,7 @@ when writing your own.
 | `note:` | `omacast-note` | one markdown file per note, opened in Omawrite |
 | `alarm:` | `omacast-alarm` | plain language duration, rounded up to whole minutes |
 | `theme:` | `omacast-theme` | every theme, current one first |
+| `sp:` | `omacast-spotify` | playlists and library, after `omacast-spotify-auth` |
 | `cal:` | `omacast-calendar` | sends the numbers, the view draws the grid |
 | `date:` | `omacast-date` | answers unscoped, so its gate is deliberately narrow |
 | `sys:` | `omacast-system` | every reading optional, skipped when absent |
@@ -138,8 +152,9 @@ Three things that had to be got right, each found by testing:
 - `xdg-open` does nothing for `spotify:` URIs even though it claims the handler.
   Only D-Bus works.
 
-`spotify-library`, a separate unit, adds playlists and your saved library
-through the Web API. That one does need a developer app.
+Playlists and your saved library need the Web API, which needs a Spotify
+developer app. That ships here too, as `sp:`, and stays silent until you run
+`omacast-spotify-auth`. See [SPOTIFY-LIBRARY.md](SPOTIFY-LIBRARY.md).
 
 ## Writing your own extension
 

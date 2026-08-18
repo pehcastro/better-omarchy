@@ -12,23 +12,13 @@ lets you pick what you want. Nothing turns on without you choosing it.
 
 ## Units
 
-Twelve of them. `bo list` shows what is on, and every unit has a README beside
-it with the detail.
+Five. `bo list` shows what is on, and every unit has a README beside it.
 
 **[omacast](units/omacast/README.md)** is the launcher, and most of what this
 repo is. Apps, arithmetic, files, images, windows, music, radio, clipboard,
 notes, reminders, themes, a calendar, a system dashboard and the web, in one
-box. Its extensions ship inside it, because none of them works without it.
-
-**[keys-full](units/keys-full/README.md)**,
-**[keys-balanced](units/keys-balanced/README.md)** and
-**[keys-additive](units/keys-additive/README.md)** decide what opens the
-launcher. Exactly one at a time. Start with additive if you are unsure: it takes
-`Super+Shift+K` and changes nothing else.
-
-**[spotify-library](units/spotify-library/README.md)** adds your playlists and
-saved library on `sp:`, through the Web API. The only unit that needs setting
-up, and the only one you do not need for music to work.
+box. Everything it answers ships inside it, including which key opens it:
+`units/omacast/hypr/keys.lua` has three presets and one line to switch.
 
 **[workspace-names](units/workspace-names/README.md)** puts workspace names in
 the bar instead of numbers, with `Super+F2` to rename the one you are on.
@@ -36,23 +26,22 @@ the bar instead of numbers, with `Super+F2` to rename the one you are on.
 **[undo-close](units/undo-close/README.md)** reopens the window you closed last,
 on `Super+Z`. Exactly one: press twice and the second press does nothing.
 
-**[cpu-meter](units/cpu-meter/README.md)** puts CPU load in the bar and opens
-btop on click. Omarchy ships no CPU widget.
-
 **[zen-mode](units/zen-mode/README.md)** lets a lone tiled window fill its
 workspace, with no gaps, border or rounding. Open a second and all three return.
 
-**[familiar-keys](units/familiar-keys/README.md)** gives you `Alt+F4`,
-`Super+E`, `Super+B` and `Super+R`, without replacing any Omarchy default.
+**[nkz-keys](units/nkz-keys/README.md)** is one person's setup: `Alt+F4`,
+`Super+E`, `Super+B`, `Super+R`, and a `monitors.lua` that is gitignored because
+that file is wrong on any other machine. Copy it, do not add it.
 
-**[accents](units/accents/README.md)** types accented characters with AltGr on a
-US keyboard. Plain typing is unchanged.
+### Things that are not units
 
-**[stay-awake](units/stay-awake/README.md)** never locks or dims on idle, using
-Omarchy's own flag so `Super+Ctrl+I` still toggles it back.
+Some customizations are one command and do not need a folder:
 
-**[display-local](units/display-local/README.md)** holds your monitor layout,
-gitignored, since that one file is wrong on any other machine.
+```bash
+omarchy toggle idle stay-awake     # never lock or dim on idle
+omarchy toggle nightlight
+omarchy theme set catppuccin       # or type theme: in the launcher
+```
 
 ## The launcher
 
