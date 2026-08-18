@@ -128,6 +128,8 @@ function toRow(ext, raw, index) {
     // set the layout first and the rest follow it.
     view: String(raw.view || ext.view),
     preview: String(raw.preview || ""),
+    // Preformatted text: a calendar's columns only line up in a fixed pitch.
+    mono: raw.mono === true,
     progress: raw.progress,
     actions: Array.isArray(raw.actions) ? raw.actions : null,
     tier: ext.tier,

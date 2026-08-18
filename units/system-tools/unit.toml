@@ -1,0 +1,10 @@
+name     = "system-tools"
+summary  = "Dates, a calendar and system status, in the launcher"
+version  = "0.1.0"
+category = "System"
+tags     = ["launcher", "calendar", "system"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["jq"]
+requires  = ["omarchycast"]
+keys     = []

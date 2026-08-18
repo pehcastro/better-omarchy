@@ -1,0 +1,14 @@
+{
+  "id": "sys",
+  "title": "System",
+  "keyword": "sys",
+  "aliases": ["system", "status", "battery", "info"],
+  "subtitle": "System",
+  "glyph": "",
+  "search": "omarchycast-system {query}",
+  "minChars": 0,
+  "debounceMs": 60,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

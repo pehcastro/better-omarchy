@@ -1,0 +1,58 @@
+#!/bin/bash
+# A month, as a preview pane.
+#
+#   cal:                 this month
+#   cal:december         that month, this year
+#   cal:november 2027    that month, that year
+#   cal:2027             the whole year
+#
+# `cal` already draws a month better than a QML grid would, and its output is
+# what the terminal shows, so the two agree.
+
+set -uo pipefail
+
+query="${1:-}"
+lower=${query,,}
+
+# Highlighting the current day needs a real terminal; without one cal emits
+# escape codes that would show as junk in the preview.
+CAL=(cal --color=never)
+
+# No -m anywhere: it forces a Monday start, and mixing it with the plain form
+# gives one month starting Sunday and the next starting Monday.
+
+row() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg p "$4" --arg e "$5" --argjson sc "$6" \
+    '{id: $id, title: $t, subtitle: $s, preview: $p, exec: $e, score: $sc, mono: true}'
+}
+
+copy_of() { printf 'printf %%s %s | wl-copy' "$(printf '%q' "$1")"; }
+
+if [[ -z $lower ]]; then
+  this=$("${CAL[@]}" 2>/dev/null)
+  next=$("${CAL[@]}" "$(date -d 'next month' +%m)" "$(date -d 'next month' +%Y)" 2>/dev/null)
+  prev=$("${CAL[@]}" "$(date -d 'last month' +%m)" "$(date -d 'last month' +%Y)" 2>/dev/null)
+  year=$("${CAL[@]}" "$(date +%Y)" 2>/dev/null)
+
+  row now "$(date '+%B %Y')" "$(date '+%A %-d, week %V')" "$this" "$(copy_of "$this")" 95000
+  row next "$(date -d 'next month' '+%B %Y')" "Next month" "$next" "$(copy_of "$next")" 94000
+  row prev "$(date -d 'last month' '+%B %Y')" "Last month" "$prev" "$(copy_of "$prev")" 93000
+  row year "$(date +%Y)" "The whole year" "$year" "$(copy_of "$year")" 92000
+  exit 0
+fi
+
+# A bare year.
+if [[ $lower =~ ^[0-9]{4}$ ]]; then
+  text=$("${CAL[@]}" "$lower" 2>/dev/null) || exit 0
+  row year "$lower" "The whole year" "$text" "$(copy_of "$text")" 95000
+  exit 0
+fi
+
+# A month, with or without a year. `date -d` reads "december 2027" for us, and
+# fails on anything that is not a month, which is the gate.
+stamp=$(date -d "1 $query" +%s 2>/dev/null) || exit 0
+month=$(date -d "@$stamp" +%m)
+year=$(date -d "@$stamp" +%Y)
+
+text=$("${CAL[@]}" "$month" "$year" 2>/dev/null) || exit 0
+row month "$(date -d "@$stamp" '+%B %Y')" "" "$text" "$(copy_of "$text")" 95000

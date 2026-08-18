@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "4c56fdf357fd911bccb1439745ac81c24b675200",
+  "generated_at_commit": "042f86cbd2be0b2951f4589840f67e187ee6bb7e",
   "units": {
     "accents": {
       "name": "accents",
@@ -222,8 +222,8 @@
       "pluginId": "bo.omarchycast",
       "path": "units/omarchycast",
       "files": 20,
-      "hash": "cad42987cdcd94298e73ca023f4fbbdad228f77439d513159108f85af19b5e33",
-      "commit": "4c56fdf357fd911bccb1439745ac81c24b675200",
+      "hash": "14cb753403c9713caae906911d7ebf36bbf45bd2088b6e99d460be13005f1bc3",
+      "commit": "155ef69b9f52dd49d54cef59df30e30e8ed445dd",
       "updated": "2026-08-18T18:25:00-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
@@ -349,6 +349,30 @@
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "system-tools": {
+      "name": "system-tools",
+      "summary": "Dates, a calendar and system status, in the launcher",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "System",
+      "tags": [
+        "launcher",
+        "calendar",
+        "system"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/system-tools",
+      "files": 7,
+      "hash": "31952e9767e919d63db7ddaa24ba31e0f74a55d4b1afb93972df5808b6106626",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
     "undo-close": {
       "name": "undo-close",

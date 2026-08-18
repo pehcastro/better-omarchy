@@ -1,0 +1,15 @@
+{
+  "id": "calendar",
+  "title": "Calendar",
+  "keyword": "cal",
+  "aliases": ["calendar", "month"],
+  "subtitle": "Calendar",
+  "glyph": "",
+  "search": "omarchycast-calendar {query}",
+  "when": "command -v cal",
+  "minChars": 0,
+  "debounceMs": 60,
+  "maxRows": 4,
+  "tier": "prefix",
+  "view": "split"
+}

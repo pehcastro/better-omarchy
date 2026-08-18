@@ -1,0 +1,85 @@
+#!/bin/bash
+# The numbers you open a terminal to check: battery, uptime, memory, disk,
+# address, temperature.
+#
+#   sys:            everything
+#   sys:battery     just that
+#   battery:        the alias goes straight there
+#
+# Every reading is optional. A desktop has no battery and a VM has no thermal
+# zone, so each block writes a row only when it has something true to say.
+
+set -uo pipefail
+
+query="${1:-}"
+
+row() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg a "$4" --arg e "$5" --argjson sc "$6" \
+    '{id: $id, title: $t, subtitle: $s, accessory: $a, exec: $e, score: $sc}'
+}
+
+matches() {
+  [[ -z $query ]] && return 0
+  [[ ${1,,} == *"${query,,}"* ]]
+}
+
+copy() { printf 'printf %%s %s | wl-copy' "$(printf '%q' "$1")"; }
+
+# ---- battery
+for supply in /sys/class/power_supply/BAT*; do
+  [[ -d $supply ]] || continue
+  capacity=$(<"$supply/capacity") || continue
+  state=$(<"$supply/status")
+  matches "battery power charge $state" || continue
+  row battery "$capacity%" "Battery  ·  $state" "$(basename "$supply")" "$(copy "$capacity%")" 95000
+  break
+done
+
+# ---- uptime
+if matches "uptime running since boot"; then
+  up=$(uptime -p 2>/dev/null | sed 's/^up //')
+  since=$(uptime -s 2>/dev/null)
+  [[ -n $up ]] && row uptime "$up" "Uptime  ·  since $since" "" "$(copy "$up")" 94000
+fi
+
+# ---- memory
+if matches "memory ram used free"; then
+  read -r _ total used _ < <(free -h --si | awk 'NR==2')
+  percent=$(free | awk 'NR==2 { printf "%d", $3 / $2 * 100 }')
+  row memory "$used of $total" "Memory  ·  ${percent}% used" "" "$(copy "$used of $total")" 93000
+fi
+
+# ---- disk
+if matches "disk storage space root free"; then
+  read -r size used avail percent < <(df -h --output=size,used,avail,pcent / | awk 'NR==2')
+  row disk "$avail free" "Disk  ·  $used of $size used, $percent" "" "$(copy "$avail free")" 92000
+fi
+
+# ---- address
+if matches "ip address network local"; then
+  address=$(ip -4 -json route get 1.1.1.1 2>/dev/null | jq -r '.[0].prefsrc // empty')
+  interface=$(ip -4 -json route get 1.1.1.1 2>/dev/null | jq -r '.[0].dev // empty')
+  [[ -n $address ]] && row ip "$address" "Local address  ·  $interface" "" "$(copy "$address")" 91000
+fi
+
+# ---- temperature
+if matches "temperature heat cpu thermal"; then
+  # sensors output varies wildly by chipset; take the first Celsius reading it
+  # offers rather than guessing at a label that may not exist.
+  temp=$(sensors 2>/dev/null | grep -oP '\+\K[0-9]+\.[0-9]+(?=°C)' | head -1)
+  [[ -n $temp ]] && row temp "${temp}°C" "Temperature" "" "$(copy "${temp}°C")" 90000
+fi
+
+# ---- kernel and host
+if matches "kernel version host hostname os arch"; then
+  row kernel "$(uname -r)" "Kernel  ·  $(uname -m)" "" "$(copy "$(uname -r)")" 89000
+  row host "$(hostnamectl hostname 2>/dev/null || hostname)" "Hostname" "" "$(copy "$(hostname)")" 88000
+fi
+
+# ---- omarchy
+if matches "omarchy version"; then
+  version=$(omarchy version 2>/dev/null | head -1)
+  [[ -n $version ]] && row omarchy "$version" "Omarchy" "" "$(copy "$version")" 87000
+fi
+
+exit 0

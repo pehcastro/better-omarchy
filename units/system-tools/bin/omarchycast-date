@@ -1,0 +1,73 @@
+#!/bin/bash
+# Answers a date typed in plain words: "27 november 2027", "next friday",
+# "in 3 weeks", "2026-12-25".
+#
+# This one answers unscoped, so it has to be quiet unless it is confident. The
+# gate is deliberately narrow: `date -d` will happily read "may" as a month and
+# "1" as a day of the current month, which would put a date row on top of every
+# search for a file called 1. A query has to look like a date before it is
+# treated as one.
+
+set -uo pipefail
+
+query="${1:-}"
+[[ -z $query ]] && exit 0
+
+lower=${query,,}
+
+looks_like_date() {
+  # An explicit calendar date, in any of the usual orders.
+  [[ $lower =~ [0-9]{4}-[0-9]{1,2}-[0-9]{1,2} ]] && return 0
+  [[ $lower =~ [0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4} ]] && return 0
+
+  # A month name with a number beside it.
+  if [[ $lower =~ (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec) ]]; then
+    [[ $lower =~ [0-9] ]] && return 0
+  fi
+
+  # The relative forms people actually type.
+  [[ $lower =~ ^(today|tomorrow|yesterday)$ ]] && return 0
+  [[ $lower =~ ^(next|last)\ (week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$ ]] && return 0
+  [[ $lower =~ ^in\ [0-9]+\ (day|days|week|weeks|month|months|year|years)$ ]] && return 0
+  [[ $lower =~ ^[0-9]+\ (day|days|week|weeks|month|months|year|years)\ ago$ ]] && return 0
+
+  return 1
+}
+
+looks_like_date || exit 0
+
+stamp=$(date -d "$query" +%s 2>/dev/null) || exit 0
+[[ -z $stamp ]] && exit 0
+
+full=$(date -d "@$stamp" "+%A, %-d %B %Y")
+weekday=$(date -d "@$stamp" "+%A")
+iso=$(date -d "@$stamp" "+%Y-%m-%d")
+week=$(date -d "@$stamp" "+%V")
+doy=$(date -d "@$stamp" "+%-j")
+
+today=$(date -d "$(date +%F)" +%s)
+target=$(date -d "$iso" +%s)
+days=$(( (target - today) / 86400 ))
+
+case $days in
+  0) relative="today" ;;
+  1) relative="tomorrow" ;;
+  -1) relative="yesterday" ;;
+  *) if ((days > 0)); then relative="in $days days"; else relative="$(( -days )) days ago"; fi ;;
+esac
+
+jq -cn \
+  --arg t "$weekday" \
+  --arg s "$full" \
+  --arg d "$relative  ·  week $week  ·  day $doy of the year" \
+  --arg e "printf %s $(printf '%q' "$iso") | wl-copy" \
+  --arg iso "$iso" \
+  --arg cal "$(date -d "@$stamp" +%m) $(date -d "@$stamp" +%Y)" \
+  '{
+     id: "date", title: $t, subtitle: $s, detail: $d,
+     exec: $e, score: 99000, view: "hero",
+     actions: [
+       { title: "Copy ISO Date", shortcut: "↵", exec: $e },
+       { title: "Copy Full Date", exec: ("printf %s " + ($s | @sh) + " | wl-copy") }
+     ]
+   }'

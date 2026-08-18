@@ -100,7 +100,9 @@ Item {
       visible: String((view.current && view.current.art) || "") === ""
       text: String((view.current && (view.current.preview || view.current.detail || view.current.title)) || "")
       color: view.launcher.foreground
-      font.family: view.launcher.fontFamily
+      // A row that says it is preformatted gets a fixed pitch, or a calendar's
+      // columns land wherever the proportional font puts them.
+      font.family: (view.current && view.current.mono) ? Style.font.family : view.launcher.fontFamily
       font.pixelSize: Style.font.caption
       wrapMode: Text.Wrap
       elide: Text.ElideRight
