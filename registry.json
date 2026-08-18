@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "c387165e26638697f62d813baf6e5d14b51aff7a",
+  "generated_at_commit": "7f0c1603d490318235141a8432e6fad16d3a4aa7",
   "units": {
     "accents": {
       "name": "accents",
@@ -68,8 +68,8 @@
       "keys": [],
       "pluginId": "",
       "path": "units/display-local",
-      "files": 4,
-      "hash": "85cfec611631f3851aa33a8c6ae4d5904c8b9fffb812ad01e8ab6a393a0e3a2c",
+      "files": 3,
+      "hash": "503c6eeb115d16ad87da08c1f67dbcf67587f0bb7378a07d2fd2f04d83b96ecb",
       "commit": "",
       "updated": "",
       "author_last": ""
@@ -199,9 +199,9 @@
       "path": "units/omarchycast",
       "files": 8,
       "hash": "eba37cb5be18db31acb6d2c17a41a7c495e3f84c161875caf868902971839663",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "7f0c1603d490318235141a8432e6fad16d3a4aa7",
+      "updated": "2026-08-18T17:49:29-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "stay-awake": {
       "name": "stay-awake",

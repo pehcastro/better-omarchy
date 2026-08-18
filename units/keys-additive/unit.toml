@@ -1,0 +1,11 @@
+name     = "keys-additive"
+summary  = "OmarchyCast on Super+Shift+K, nothing else changes"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["launcher", "keybindings"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["omarchy-shell"]
+requires  = ["omarchycast"]
+keys      = ["SUPER+SHIFT+K"]
+conflicts = ["keys-full", "keys-balanced"]

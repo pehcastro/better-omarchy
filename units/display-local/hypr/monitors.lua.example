@@ -1,0 +1,13 @@
+-- Copy this to monitors.lua beside it, then edit. The copy is gitignored, so
+-- your layout never travels to another machine.
+--
+-- List what you have: hyprctl monitors all
+
+hl.env("GDK_SCALE", "1")
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+
+-- One named monitor:
+-- hl.monitor({ output = "DP-2", mode = "2560x1440@144", position = "0x0", scale = 1 })
+
+-- Portrait, rotated (transform 1 = 90 degrees, 3 = 270):
+-- hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, transform = 1 })

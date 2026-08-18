@@ -453,6 +453,33 @@ LUA
   fi
 }
 
+# `conflicts` and `requires` name bare unit names, not refs, because a unit
+# author cannot know which marketplace a user got the other one from. Both are
+# resolved against whatever is available here.
+check_conflicts() {
+  local ref="$1" other resolved
+  while read -r other; do
+    [[ -z $other ]] && continue
+    resolved=$(all_refs | awk -F/ -v u="$other" '$NF == u' | head -1)
+    [[ -n $resolved ]] || continue
+    is_linked "$resolved" &&
+      die "$ref conflicts with $resolved, which is on. Turn that off first: bo remove $resolved"
+  done < <(meta_list "$ref" conflicts)
+}
+
+check_requires() {
+  local ref="$1" other resolved
+  while read -r other; do
+    [[ -z $other ]] && continue
+    resolved=$(all_refs | awk -F/ -v u="$other" '$NF == u' | head -1)
+    [[ -n $resolved ]] || die "$ref needs a unit called '$other', and no marketplace here has one"
+    is_linked "$resolved" || {
+      say "  $(dim "$ref needs $resolved, turning that on first")"
+      link_unit "$resolved"
+    }
+  done < <(meta_list "$ref" requires)
+}
+
 link_unit() {
   local ref="$1" kind
   ref_exists "$ref" || die "no unit '$ref'"
@@ -460,6 +487,9 @@ link_unit() {
     say "$ref is already on"
     return 0
   }
+
+  check_conflicts "$ref"
+  check_requires "$ref"
 
   # Every unit may carry hypr/ and bin/, whatever its kind: a bar widget that
   # also wants a keybinding is normal. kind only decides the extra step.
@@ -543,6 +573,10 @@ cmd_info() {
   [[ -n $(meta "$ref" id) ]] && printf '  %-11s %s\n' "plugin id" "$(meta "$ref" id)"
   printf '  %-11s %s\n' needs "$(meta_list "$ref" needs | join_lines)"
   printf '  %-11s %s\n' keys "$(meta_list "$ref" keys | join_lines)"
+  [[ -n $(meta_list "$ref" requires) ]] &&
+    printf '  %-11s %s\n' requires "$(meta_list "$ref" requires | join_lines)"
+  [[ -n $(meta_list "$ref" conflicts) ]] &&
+    printf '  %-11s %s\n' conflicts "$(meta_list "$ref" conflicts | join_lines)"
 
   local updated
   updated=$(reg "$ref" updated)
