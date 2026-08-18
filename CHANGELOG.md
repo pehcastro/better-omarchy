@@ -19,10 +19,19 @@ This file is about bo and the marketplace itself.
 - **units:** Play music properly, and search the clipboard
 - **omarchycast:** Add quicklinks and a grid view
 - **units:** Browse images from the launcher with img:
+- **omarchycast:** Ask a model on ctrl+enter, and stream the answer
+
+### Fixes
+
+- **omarchycast:** Make image thumbnails readable
 
 ### Documentation
 
 - **readme:** Cover the launcher, its filters and its extensions
+
+### Build and dependencies
+
+- **changelog:** Regenerate
 
 ## 0.1.0 (2026-08-18)
 
