@@ -1,0 +1,95 @@
+#!/bin/bash
+# Notes for OmaCast's `note:` keyword. One markdown file per note.
+#
+#   note:                       every note, newest first
+#   note:standup                notes whose name or text contains that
+#   note:new tuesday standup    the first row creates it, the rest are matches
+#
+# Creating and finding share one keyword on purpose. You rarely know which one
+# you meant when you start typing: the same words either find the note or become
+# its title, and the list underneath tells you which.
+#
+# Notes live in ~/Documents/Notes by default. Set NOTES_DIR to move them, or
+# `notesDir` in ~/.config/omarchy/omacast.json, which wins.
+
+set -uo pipefail
+
+query="${1:-}"
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast.json"
+dir="${NOTES_DIR:-}"
+
+if [[ -z $dir && -f $config ]]; then
+  dir=$(jq -r '.notesDir // empty' "$config" 2>/dev/null)
+fi
+dir="${dir:-$HOME/Documents/Notes}"
+dir="${dir/#\~/$HOME}"
+
+# A slug that is safe as a filename and still readable a year later.
+slug() {
+  printf '%s' "${1,,}" |
+    sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' |
+    cut -c1-60
+}
+
+row() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg p "$4" --arg e "$5" \
+    --argjson sc "$6" --argjson acts "$7" \
+    '{id: $id, title: $t, subtitle: $s, preview: $p, exec: $e, score: $sc, actions: $acts}'
+}
+
+# The create row, first, whenever there is something to name a note after. The
+# script writes the file and opens it in one command, so the launcher does not
+# have to know that a note is a file at all.
+if [[ -n $query ]]; then
+  name=$(slug "$query")
+  [[ -z $name ]] && name="note"
+  target="$dir/$name.md"
+
+  if [[ -f $target ]]; then
+    # Already exists: opening it is what "new" should do here, rather than
+    # writing a second file with a number stuck on the end.
+    create_exec="omawrite $(printf '%q' "$target")"
+    create_label="Open “$query”"
+  else
+    create_exec="mkdir -p $(printf '%q' "$dir") && printf '# %s\n\n' $(printf '%q' "$query") > $(printf '%q' "$target") && omawrite $(printf '%q' "$target")"
+    create_label="New note “$query”"
+  fi
+
+  row "new:$name" "$create_label" "$name.md" "" "$create_exec" 99000 \
+    "$(jq -cn --arg e "$create_exec" --arg p "$target" \
+      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
+        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")}]')"
+fi
+
+[[ -d $dir ]] || exit 0
+
+# Existing notes. A match on the filename or on the text, newest first, because
+# the note you want is nearly always one you touched recently.
+while IFS= read -r -d '' file; do
+  base=$(basename "$file" .md)
+
+  if [[ -n $query ]]; then
+    haystack="$base $(head -c 4000 "$file" 2>/dev/null)"
+    [[ ${haystack,,} == *"${query,,}"* ]] || continue
+  fi
+
+  # The first heading is a better title than the slug, when there is one.
+  title=$(grep -m1 '^#\+ ' "$file" 2>/dev/null | sed 's/^#\+ *//')
+  [[ -z $title ]] && title="$base"
+
+  modified=$(stat -c %Y "$file" 2>/dev/null || echo 0)
+  when=$(date -d "@$modified" '+%d %b %Y' 2>/dev/null)
+  preview=$(head -c 3000 "$file" 2>/dev/null)
+
+  open="omawrite $(printf '%q' "$file")"
+
+  row "$file" "$title" "$when" "$preview" "$open" "$((modified % 90000))" \
+    "$(jq -cn --arg e "$open" --arg p "$file" \
+      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
+        {title: "Copy Contents", exec: ("wl-copy < " + ($p | @sh))},
+        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")},
+        {title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh))}]')"
+done < <(find "$dir" -maxdepth 2 -name '*.md' -type f -print0 2>/dev/null)
+
+exit 0

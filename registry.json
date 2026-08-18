@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+  "generated_at_commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
   "units": {
     "accents": {
       "name": "accents",
@@ -228,6 +228,30 @@
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
+    "notes": {
+      "name": "notes",
+      "summary": "Write and find markdown notes, with note:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "notes",
+        "markdown"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/notes",
+      "files": 3,
+      "hash": "80b079c8df65d138c0d90589e75a474f145aa95d2e56e4c842bb4aa5bf7df7fd",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
     "omacast": {
       "name": "omacast",
       "summary": "A launcher: apps, math, settings, and the web in one box",
@@ -247,7 +271,7 @@
       "pluginId": "bo.omacast",
       "path": "units/omacast",
       "files": 22,
-      "hash": "d113cead1a71408a47d29daad7dcb646c4d384cf9ea8b8ded4fe76859d58bece",
+      "hash": "4759678a2e2beae6698747f3a379f8ece8ee2b358c17e9c7f1d7d8280eebbe78",
       "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -373,8 +397,8 @@
       "path": "units/spotify",
       "files": 5,
       "hash": "9ec058c41a66071c89e20d22f0ff7be7e032206a04b195a7716e57b5ee60044d",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
+      "commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
+      "updated": "2026-08-18T18:48:18-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "stay-awake": {

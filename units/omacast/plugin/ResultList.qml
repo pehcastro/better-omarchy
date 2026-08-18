@@ -79,6 +79,8 @@ ListView {
 
       MouseArea {
         anchors.fill: parent
+        hoverEnabled: true
+        onEntered: view.launcher.select(parent.parent.index)
         onClicked: view.launcher.activate(parent.parent.modelData)
       }
 
