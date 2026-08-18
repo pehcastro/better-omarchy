@@ -20,10 +20,18 @@ This file is about bo and the marketplace itself.
 - **omarchycast:** Add quicklinks and a grid view
 - **units:** Browse images from the launcher with img:
 - **omarchycast:** Ask a model on ctrl+enter, and stream the answer
+- **units:** Add dates, a calendar and system status
+- **omarchycast:** Draw system status and the calendar properly
+- **units:** Search Spotify and start playback with sp:
+- **units:** Add notes, alarms, theme switching, and hover selection
 
 ### Fixes
 
 - **omarchycast:** Make image thumbnails readable
+
+### Refactors
+
+- **Breaking:** **omacast:** Rename omarchycast to omacast
 
 ### Documentation
 
@@ -31,6 +39,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 
 ## 0.1.0 (2026-08-18)
