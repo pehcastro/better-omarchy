@@ -7,7 +7,7 @@ is a major, a new unit or command is a minor, a fix is a patch.
 A unit carries its own version in its unit.toml, bumped on its own schedule.
 This file is about bo and the marketplace itself.
 
-## Unreleased
+## 0.1.0 (2026-08-18)
 
 ### Features
 
@@ -21,5 +21,9 @@ This file is about bo and the marketplace itself.
 ### Documentation
 
 - **readme:** Describe each unit in prose, drop the docs folder
+
+### Build and dependencies
+
+- **changelog:** Generate CHANGELOG.md with git-cliff
 
 
