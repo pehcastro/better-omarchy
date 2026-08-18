@@ -36,6 +36,7 @@ This file is about bo and the marketplace itself.
 
 - **Breaking:** **omacast:** Rename omarchycast to omacast
 - **Breaking:** **omacast:** Ship the launcher extensions inside the launcher
+- **Breaking:** **units:** Cut to five, and put omacast's keys inside omacast
 
 ### Documentation
 
@@ -43,6 +44,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
