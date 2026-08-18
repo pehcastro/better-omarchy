@@ -24,6 +24,7 @@ This file is about bo and the marketplace itself.
 - **omarchycast:** Draw system status and the calendar properly
 - **units:** Search Spotify and start playback with sp:
 - **units:** Add notes, alarms, theme switching, and hover selection
+- **units:** Add notes, and select a result on hover
 
 ### Fixes
 
@@ -39,6 +40,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 
