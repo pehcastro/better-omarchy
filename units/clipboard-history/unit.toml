@@ -1,0 +1,10 @@
+name     = "clipboard-history"
+summary  = "Search what you copied, from the launcher, with ch:"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["launcher", "clipboard"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["jq", "wl-copy"]
+requires  = ["omarchycast"]
+keys     = []

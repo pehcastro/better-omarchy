@@ -10,5 +10,6 @@
   "minChars": 0,
   "debounceMs": 60,
   "maxRows": 8,
-  "tier": "substring"
+  "tier": "substring",
+  "view": "hero"
 }

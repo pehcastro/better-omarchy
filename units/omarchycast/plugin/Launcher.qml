@@ -11,6 +11,7 @@ import "Score.js" as Score
 import "Calc.js" as Calc
 import "Commands.js" as Commands
 import "Extensions.js" as Extensions
+import "Settings.js" as Settings
 
 // OmarchyCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -54,6 +55,36 @@ Item {
   property var extensions: []
   property var extensionProviders: []
 
+  // User settings, watched so an edit takes effect on the next keystroke with
+  // no reload. Assigned as one object, so bindings re-evaluate once.
+  property var config: Settings.DEFAULTS
+  readonly property string defaultEngine: String(root.config.defaultEngine || "google")
+
+  // Which layout the current results want. A provider declares it, so `=2+2`
+  // renders one big answer and `music:` renders cards, without the launcher
+  // knowing what either of them is.
+  property bool actionPanelOpen: false
+
+  // What the active filter is called, for the chip in the header.
+  readonly property string scopeLabel: {
+    var query = Query.parse(root.queryText, root.epoch)
+    if (query.scope === "") return ""
+
+    for (var i = 0; i < root.extensions.length; i++) {
+      var ext = root.extensions[i]
+      if (ext.keyword === query.scope || ext.aliases.indexOf(query.scope) >= 0) return ext.title
+    }
+
+    var builtin = { calc: "Calculator", run: "Commands", web: "Web", apps: "Applications" }
+    return builtin[query.scope] || query.scope
+  }
+
+  readonly property string activeView: {
+    if (root.rows.length === 0) return "list"
+    var wanted = String(root.rows[0].view || "list")
+    return ["list", "hero", "cards", "split"].indexOf(wanted) >= 0 ? wanted : "list"
+  }
+
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
   readonly property color background: Color.menu.background
@@ -64,9 +95,8 @@ Item {
   readonly property var borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
   readonly property string fontFamily: Style.font.menuFamily
 
-  readonly property int cardWidth: Math.min(Style.space(620), panel.width - Style.gapsOut * 2)
-  readonly property int rowHeight: Style.space(44)
-  readonly property int maxRows: 9
+  readonly property int cardWidth: Math.min(Style.space(Number(root.config.cardWidth) || 620), panel.width - Style.gapsOut * 2)
+  readonly property int maxRows: Number(root.config.maxRows) || 9
 
   // ------------------------------------------------------------ lifecycle
 
@@ -74,10 +104,11 @@ Item {
     pinScreen()
     loadExtensions()
     root.opened = true
-    root.queryText = ""
+    if (root.config.resetOnOpen !== false) root.queryText = ""
     root.pendingActivate = ""
     resetSelection()
-    setQuery("")
+    setQuery(root.queryText)
+    input.text = root.queryText
     if (root.appLibrary) root.appLibrary.refreshIcons()
     Qt.callLater(function () {
       input.forceActiveFocus()
@@ -94,6 +125,7 @@ Item {
     root.buckets = ({})
     root.rows = []
     root.pendingActivate = ""
+    root.actionPanelOpen = false
   }
 
   function toggle() {
@@ -212,6 +244,12 @@ Item {
         pending: false,
         run: (function (id, name) {
           return function () { root.appLibrary.launch(id, name) }
+        })(entry.id, root.appLibrary.entryName(entry)),
+        actions: (function (id, name) {
+          return [
+            { title: "Open", shortcut: "\u21B5", run: function () { root.appLibrary.launch(id, name) } },
+            { title: "Copy Name", exec: "printf %s " + Util.shellQuote(name) + " | wl-copy" }
+          ]
         })(entry.id, root.appLibrary.entryName(entry))
       })
     }
@@ -264,17 +302,51 @@ Item {
       providerId: "web",
       group: "Web",
       title: "Search the web for “" + text + "”",
-      subtitle: "DuckDuckGo",
+      subtitle: (function () {
+        var engine = Settings.engine(root.config, root.defaultEngine)
+        return engine ? engine.title : root.defaultEngine
+      })(),
       accessory: "",
       iconSource: "",
       iconGlyph: "",
       score: Rank.score(Rank.TIER.web, 0, 0),
       pending: false,
-      run: function () {
-        Util.execDetached("omarchy-launch-browser " + Util.shellQuote(
-          "https://duckduckgo.com/?q=" + encodeURIComponent(text)))
-      }
+      run: function () { root.openSearch(root.engineUrl(root.defaultEngine, text)) },
+      actions: root.searchActions(text)
     }])
+  }
+
+  function engineUrl(id, query) {
+    return Settings.url(root.config, id, query)
+  }
+
+  function openSearch(url) {
+    if (!url) return
+    Util.execDetached("omarchy-launch-browser " + Util.shellQuote(url))
+  }
+
+  // The default engine first, then whatever else is configured. Ctrl+K is how
+  // "search Google" becomes "ask ChatGPT" without touching a config file.
+  function searchActions(text) {
+    var seen = {}
+    var out = []
+
+    function add(id, primary) {
+      if (seen[id]) return
+      var engine = Settings.engine(root.config, id)
+      if (!engine) return
+      seen[id] = true
+      out.push({
+        title: engine.title,
+        shortcut: primary ? "\u21B5" : "",
+        exec: "omarchy-launch-browser " + Util.shellQuote(Settings.url(root.config, id, text))
+      })
+    }
+
+    add(root.defaultEngine, true)
+    var listed = root.config.engineActions || []
+    for (var i = 0; i < listed.length; i++) add(String(listed[i]), false)
+    return out
   }
 
   // ------------------------------------------------------------ activation
@@ -294,6 +366,43 @@ Item {
     var action = row.run
     dismiss()
     if (typeof action === "function") Qt.callLater(action)
+  }
+
+  // Every row's actions. The first is the primary and already runs on Enter;
+  // the panel exists for the rest.
+  function currentActions() {
+    var row = root.rows[root.selectedIndex]
+    if (!row) return []
+
+    var list = []
+    if (row.actions) {
+      for (var i = 0; i < row.actions.length; i++) list.push(row.actions[i])
+    }
+
+    // A row with a primary but no declared list still deserves one entry, so
+    // Ctrl+K never opens an empty panel on a working result.
+    if (list.length === 0 && (row.run || row.exec)) {
+      list.push({ title: String(row.accessory || "Open"), shortcut: "Return", row: row })
+    }
+    return list
+  }
+
+  function runAction(action) {
+    if (!action) return
+    root.actionPanelOpen = false
+
+    if (typeof action.run === "function") {
+      dismiss()
+      Qt.callLater(action.run)
+      return
+    }
+    if (action.exec) {
+      var command = String(action.exec)
+      dismiss()
+      Qt.callLater(function () { Util.execDetached(command) })
+      return
+    }
+    if (action.row) root.activate(action.row)
   }
 
   function move(delta) {
@@ -330,6 +439,7 @@ Item {
       // through to an app while qalc is still running.
       var row = Calc.placeholder(expression)
       row.score = Rank.score(Rank.TIER.calc, 0, 0)
+      row.view = "hero"
       root.put("calc", query, [row])
 
       calc.pendingEpoch = query.epoch
@@ -361,11 +471,16 @@ Item {
       if (!row) return root.put("calc", query, [])
 
       row.score = Rank.score(Rank.TIER.calc, 0, 0)
+      row.view = "hero"
       row.run = (function (answer) {
         return function () {
           Util.execDetached("printf %s " + Util.shellQuote(answer) + " | wl-copy")
         }
       })(row.title)
+      row.actions = [
+        { title: "Copy Result", shortcut: "\u21B5", exec: "printf %s " + Util.shellQuote(row.title) + " | wl-copy" },
+        { title: "Copy Expression", exec: "printf %s " + Util.shellQuote(calc.pendingText) + " | wl-copy" }
+      ]
       root.put("calc", query, [row])
       root.rebuild()
     }
@@ -415,6 +530,18 @@ Item {
       if (ext) loaded.push(ext)
     }
     root.extensions = loaded
+  }
+
+  FileView {
+    id: configFile
+    path: Quickshell.env("HOME") + "/.config/omarchy/omarchycast.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.config = Settings.merge(text())
+    onFileChanged: reload()
+    // No file is the normal case, so fall back to the defaults rather than
+    // writing one the user never asked for.
+    onLoadFailed: root.config = Settings.DEFAULTS
   }
 
   Process {
@@ -484,7 +611,8 @@ Item {
 
       anchors.horizontalCenter: parent.horizontalCenter
       y: Math.round(parent.height * 0.18)
-      height: header.height + (root.rows.length > 0 ? list.height + Style.space(8) : 0)
+      height: header.height + (root.rows.length > 0
+        ? resultsArea.height + footer.height + Style.space(14) : 0)
 
       Behavior on height {
         NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
@@ -511,12 +639,25 @@ Item {
           font.pixelSize: Style.font.body
         }
 
-        TextInput {
-          id: input
+        // A chip for the active filter, so `file:` reads as a mode you are in
+        // rather than as four characters to re-read in the input.
+        Chip {
+          id: scopeChip
           anchors.left: prompt.right
           anchors.leftMargin: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          accented: true
+          text: root.scopeLabel
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+        }
+
+        TextInput {
+          id: input
+          anchors.left: scopeChip.visible ? scopeChip.right : prompt.right
+          anchors.leftMargin: Style.space(12)
           anchors.right: parent.right
-          anchors.rightMargin: Style.space(18)
+          anchors.rightMargin: Style.space(20)
           anchors.verticalCenter: parent.verticalCenter
 
           color: root.foreground
@@ -537,7 +678,19 @@ Item {
           // chords are deliberately absent: they belong to the text cursor.
           Keys.priority: Keys.BeforeItem
           Keys.onPressed: function (event) {
-            if (event.key === Qt.Key_Escape) {
+            if (event.key === Qt.Key_K && (event.modifiers & Qt.ControlModifier)) {
+              if (root.currentActions().length > 0) root.actionPanelOpen = !root.actionPanelOpen
+              event.accepted = true
+            } else if (root.actionPanelOpen) {
+              // While the panel is up it owns navigation, so Up and Down move
+              // between actions rather than between results underneath it.
+              if (event.key === Qt.Key_Escape) root.actionPanelOpen = false
+              else if (event.key === Qt.Key_Down) actionPanel.move(1)
+              else if (event.key === Qt.Key_Up) actionPanel.move(-1)
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) actionPanel.activate()
+              else return
+              event.accepted = true
+            } else if (event.key === Qt.Key_Escape) {
               if (input.text.length > 0) input.text = ""
               else root.dismiss()
               event.accepted = true
@@ -581,97 +734,84 @@ Item {
         color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.1)
       }
 
-      ListView {
-        id: list
+      // One Loader picks the layout the results asked for. Each view reads the
+      // same rows and reports the same selection, so navigation is identical
+      // whichever one is on screen.
+      Loader {
+        id: resultsArea
         anchors.top: header.bottom
         anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
-        height: Math.min(root.rows.length, root.maxRows) * root.rowHeight
-        clip: true
-        focus: false
-        interactive: true
-        currentIndex: root.selectedIndex
-        highlightMoveDuration: 0
-        model: root.rows
+        active: root.rows.length > 0
 
-        delegate: Item {
-          required property var modelData
-          required property int index
-
-          width: list.width
-          height: root.rowHeight
-
-          readonly property bool selected: index === root.selectedIndex
-
-          Rectangle {
-            anchors.fill: parent
-            anchors.leftMargin: Style.space(8)
-            anchors.rightMargin: Style.space(8)
-            radius: Style.cornerRadius
-            color: parent.selected ? root.selectedBackground : "transparent"
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: false
-            onClicked: root.activate(modelData)
-          }
-
-          Image {
-            id: icon
-            visible: String(modelData.iconSource || "") !== ""
-            source: modelData.iconSource || ""
-            width: Style.space(22)
-            height: Style.space(22)
-            sourceSize.width: width * Screen.devicePixelRatio
-            sourceSize.height: height * Screen.devicePixelRatio
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(18)
-            anchors.verticalCenter: parent.verticalCenter
-          }
-
-          Text {
-            visible: !icon.visible
-            text: String(modelData.iconGlyph || "")
-            color: parent.selected ? root.selectedText : Qt.darker(root.foreground, 1.4)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            width: Style.space(22)
-            horizontalAlignment: Text.AlignHCenter
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(18)
-            anchors.verticalCenter: parent.verticalCenter
-          }
-
-          Text {
-            id: title
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(52)
-            anchors.right: subtitle.left
-            anchors.rightMargin: Style.space(12)
-            anchors.verticalCenter: parent.verticalCenter
-            text: String(modelData.title || "")
-            color: parent.selected ? root.selectedText : root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            opacity: modelData.pending ? 0.5 : 1
-            elide: Text.ElideRight
-          }
-
-          Text {
-            id: subtitle
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(20)
-            anchors.verticalCenter: parent.verticalCenter
-            text: String(modelData.subtitle || "")
-            color: Qt.darker(root.foreground, 1.7)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-            width: Math.min(implicitWidth, list.width * 0.35)
+        sourceComponent: {
+          switch (root.activeView) {
+          case "hero": return heroView
+          case "cards": return cardsView
+          case "split": return splitView
+          default: return listView
           }
         }
+      }
+
+      Component { id: listView;  ResultList  { launcher: root; width: resultsArea.width } }
+      Component { id: heroView;  ResultHero  { launcher: root; width: resultsArea.width } }
+      Component { id: cardsView; ResultCards { launcher: root; width: resultsArea.width } }
+      Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width } }
+
+      // The hint bar: what Enter does, and that there is more on Ctrl+K.
+      Item {
+        id: footer
+        anchors.top: resultsArea.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: root.rows.length > 0 ? Style.space(30) : 0
+        visible: root.rows.length > 0
+
+        Rectangle {
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          height: Math.max(1, Style.space(1))
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+        }
+
+        Text {
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(18)
+          anchors.verticalCenter: parent.verticalCenter
+          text: {
+            var actions = root.currentActions()
+            return actions.length > 0 ? "\u21B5  " + String(actions[0].title || "Open") : ""
+          }
+          color: Qt.darker(root.foreground, 1.8)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        Text {
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(18)
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.currentActions().length > 1
+          text: "\u2303K  Actions"
+          color: Qt.darker(root.foreground, 1.8)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      ActionPanel {
+        id: actionPanel
+        launcher: root
+        visible: root.actionPanelOpen && root.rows.length > 0
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(12)
+        // Below the card, not above it: anchored upward it runs off the top of
+        // the screen as soon as the results are short.
+        anchors.top: footer.bottom
+        anchors.topMargin: Style.space(6)
       }
     }
   }

@@ -52,6 +52,10 @@ function normalize(raw, sourcePath) {
     timeoutMs: ext.timeoutMs === undefined ? 4000 : Number(ext.timeoutMs),
     maxRows: ext.maxRows === undefined ? 8 : Number(ext.maxRows),
     tier: TIERS[String(ext.tier || "substring")] || TIERS.substring,
+    // The layout this extension's results want. A row may override it, which
+    // is how `music:` shows one hero for what is playing and cards for the
+    // rest of the answer.
+    view: String(ext.view || "list"),
     // Unscoped, an extension stays quiet unless it says otherwise. A launcher
     // that shells out to six services on every keystroke is a launcher nobody
     // keeps, so answering a bare query is opt in.
@@ -112,12 +116,20 @@ function toRow(ext, raw, index) {
   return {
     key: "ext:" + ext.id + ":" + id,
     providerId: ext.id,
-    group: ext.title,
+    group: String(raw.group || ext.title),
     title: String(raw.title || ""),
     subtitle: String(raw.subtitle !== undefined ? raw.subtitle : ext.subtitle),
+    detail: String(raw.detail || ""),
     accessory: String(raw.accessory || ""),
     iconSource: String(raw.icon || ""),
     iconGlyph: String(raw.glyph || ext.glyph),
+    art: String(raw.art || ""),
+    // Only the first row's view is read, so a script puts the row it wants to
+    // set the layout first and the rest follow it.
+    view: String(raw.view || ext.view),
+    preview: String(raw.preview || ""),
+    progress: raw.progress,
+    actions: Array.isArray(raw.actions) ? raw.actions : null,
     tier: ext.tier,
     local: local,
     exec: String(raw.exec || ""),

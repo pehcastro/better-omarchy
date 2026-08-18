@@ -55,7 +55,7 @@ subtitle="$short"
 
 row() {
   jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg e "$4" --argjson sc "$5" \
-    '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc}'
+    '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, view: "list"}'
 }
 
 call="busctl --user call $player $PATH_ $IFACE"
@@ -66,9 +66,37 @@ matches() {
   [[ ${1,,} == *"${query,,}"* ]]
 }
 
+# Now playing leads, as a hero with the cover art. It is the answer to
+# "music:" far more often than any of the controls under it.
 if [[ -n $title ]] && matches "$title $artist $album"; then
-  verb=$([[ $status == "Playing" ]] && echo Pause || echo Play)
-  row "now" "$title" "$subtitle  ·  $verb" "$call PlayPause" 95000
+  art=$(field "mpris:artUrl")
+  length=$(printf '%s' "$metadata" | grep -oP '"mpris:length"\s+t\s+\K\d+' | head -1)
+  position=$(prop Position | grep -oP '^x\s+\K\d+' | head -1)
+
+  progress=0
+  if [[ -n $length && -n $position && $length -gt 0 ]]; then
+    progress=$(awk -v p="$position" -v l="$length" 'BEGIN { printf "%.4f", p / l }')
+  fi
+
+  verb=$([[ $status == "Playing" ]] && echo "Pause" || echo "Play")
+
+  jq -cn \
+    --arg id now --arg t "$title" --arg s "$subtitle" --arg d "$short  ·  $status" \
+    --arg art "$art" --arg e "$call PlayPause" --argjson sc 95000 \
+    --argjson pr "$progress" \
+    --arg next "$call Next" --arg prev "$call Previous" \
+    --arg copy "printf %s $(printf '%q' "$title - $artist") | wl-copy" \
+    --arg verb "$verb" \
+    '{
+       id: $id, title: $t, subtitle: $s, detail: $d, art: $art,
+       exec: $e, score: $sc, view: "hero", progress: $pr,
+       actions: [
+         { title: $verb, shortcut: "\u21b5", exec: $e },
+         { title: "Next Track", exec: $next },
+         { title: "Previous Track", exec: $prev },
+         { title: "Copy Title and Artist", exec: $copy }
+       ]
+     }'
 fi
 
 matches "play pause" && row "playpause" "Play or Pause" "$short" "$call PlayPause" 80000
