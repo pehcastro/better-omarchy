@@ -1,0 +1,6 @@
+name    = "workspaces"
+summary = "Workspace names in the bar, with an inline rename panel"
+kind    = "plugin"
+id      = "bo.workspaces"
+needs   = ["hyprctl"]
+keys    = ["SUPER+F2"]

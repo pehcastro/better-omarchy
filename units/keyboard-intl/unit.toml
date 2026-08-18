@@ -1,0 +1,5 @@
+name    = "keyboard-intl"
+summary = "US keyboard with AltGr accents (altgr-intl)"
+kind    = "hypr"
+needs   = []
+keys    = []

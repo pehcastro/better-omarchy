@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "bo.workspaces",
+  "name": "Workspaces",
+  "version": "1.0.0",
+  "author": "better-omarchy",
+  "description": "Named workspaces with an inline rename panel",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "displayName": "Workspaces",
+    "description": "Named workspaces with an inline rename panel",
+    "category": "Compositor",
+    "allowMultiple": false
+  }
+}

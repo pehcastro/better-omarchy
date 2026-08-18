@@ -1,0 +1,526 @@
+#!/bin/bash
+# better-omarchy: turn customizations on and off one unit at a time.
+#
+# A unit is one folder under units/ with a unit.toml. Nothing in here knows the
+# name of any particular unit; everything comes from that file.
+
+set -uo pipefail
+
+BO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+UNITS_DIR="$BO_ROOT/units"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/better-omarchy"
+LINKED_FILE="$STATE_DIR/linked"
+
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+HYPR_DIR="$CONFIG_HOME/hypr"
+HYPR_MODULES="$HYPR_DIR/modules.d"
+PLUGINS_DIR="$CONFIG_HOME/omarchy/plugins"
+BIN_DIR="$HOME/.local/bin"
+
+mkdir -p "$STATE_DIR"
+touch "$LINKED_FILE"
+
+# ---------------------------------------------------------------- output
+
+bold() { printf '\033[1m%s\033[0m' "$1"; }
+dim() { printf '\033[2m%s\033[0m' "$1"; }
+red() { printf '\033[31m%s\033[0m' "$1"; }
+green() { printf '\033[32m%s\033[0m' "$1"; }
+yellow() { printf '\033[33m%s\033[0m' "$1"; }
+
+say() { printf '%s\n' "$*"; }
+warn() { printf '%s %s\n' "$(yellow WARN)" "$*" >&2; }
+die() {
+  printf '%s %s\n' "$(red ERROR)" "$*" >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------- unit.toml
+#
+# The format is deliberately a strict subset of TOML so a shell script can read
+# it without a parser: `key = "value"` and `key = ["a", "b"]`, one per line, no
+# tables, no multi-line values.
+
+# meta <unit> <key> -> the scalar value, or empty
+meta() {
+  local unit="$1" key="$2" file="$UNITS_DIR/$1/unit.toml"
+  [[ -f $file ]] || return 1
+  sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*$/\1/p" "$file" | head -1
+}
+
+# meta_list <unit> <key> -> one element per line
+meta_list() {
+  local unit="$1" key="$2" file="$UNITS_DIR/$1/unit.toml" raw
+  [[ -f $file ]] || return 1
+  raw=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p" "$file" | head -1)
+  [[ -z $raw ]] && return 0
+  printf '%s' "$raw" | tr ',' '\n' | sed 's/^[[:space:]]*"\?//; s/"\?[[:space:]]*$//' | grep -v '^$'
+}
+
+all_units() {
+  [[ -d $UNITS_DIR ]] || return 0
+  for dir in "$UNITS_DIR"/*/; do
+    [[ -f "$dir/unit.toml" ]] || continue
+    basename "$dir"
+  done
+}
+
+unit_exists() { [[ -f "$UNITS_DIR/$1/unit.toml" ]]; }
+
+# ---------------------------------------------------------------- linked state
+
+is_linked() { grep -qxF "$1" "$LINKED_FILE"; }
+
+mark_linked() { is_linked "$1" || printf '%s\n' "$1" >>"$LINKED_FILE"; }
+
+mark_unlinked() {
+  local tmp
+  tmp=$(mktemp)
+  grep -vxF "$1" "$LINKED_FILE" >"$tmp"
+  mv "$tmp" "$LINKED_FILE"
+}
+
+linked_units() { cat "$LINKED_FILE"; }
+
+# ---------------------------------------------------------------- helpers
+
+# Symlink src to dst, refusing to clobber anything we did not put there.
+link_path() {
+  local src="$1" dst="$2"
+
+  if [[ -L $dst ]]; then
+    [[ $(readlink -f "$dst") == "$(readlink -f "$src")" ]] && return 0
+    die "$dst is a symlink to something else. Remove it first."
+  fi
+
+  if [[ -e $dst ]]; then
+    local backup="$dst.before-bo.$(date +%s)"
+    warn "$dst exists, moving it to $(basename "$backup")"
+    mv "$dst" "$backup"
+  fi
+
+  mkdir -p "$(dirname "$dst")"
+  ln -s "$src" "$dst"
+}
+
+# Remove a symlink only if it points into this repo.
+unlink_path() {
+  local dst="$1"
+  [[ -L $dst ]] || return 0
+  case "$(readlink -f "$dst")" in
+  "$BO_ROOT"/*) rm -f "$dst" ;;
+  *) warn "$dst does not point into the repo, leaving it alone" ;;
+  esac
+}
+
+shell_running() { pgrep -f '[q]uickshell.*omarchy' >/dev/null; }
+
+rescan_plugins() {
+  shell_running || return 0
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1
+}
+
+reload_hypr() {
+  command -v hyprctl >/dev/null || return 0
+  hyprctl reload >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- link by kind
+
+# Is this widget already placed in the bar layout in shell.json?
+plugin_in_layout() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, os, sys
+path = os.path.expanduser("~/.config/omarchy/shell.json")
+try:
+    layout = json.load(open(path))["bar"]["layout"]
+except Exception:
+    sys.exit(1)
+sys.exit(0 if any(w.get("id") == sys.argv[1] for s in layout.values() for w in s) else 1)
+PY
+}
+
+link_plugin() {
+  local unit="$1" id
+  id=$(meta "$unit" id) || true
+  [[ -n $id ]] || die "unit '$unit' is kind=plugin but has no id"
+  [[ -d "$UNITS_DIR/$unit/plugin" ]] || die "unit '$unit' has no plugin/ folder"
+
+  link_path "$UNITS_DIR/$unit/plugin" "$PLUGINS_DIR/$id"
+  rescan_plugins
+  sleep 1
+  shell_running || return 0
+
+  # `plugin enable` appends the widget to its default section. Calling it on a
+  # widget that is already placed would move it there and drop its settings, so
+  # only enable one the layout has never seen.
+  if plugin_in_layout "$id"; then
+    say "  $id is already in the bar, leaving its position and settings alone"
+    return 0
+  fi
+
+  omarchy plugin enable "$id" >/dev/null 2>&1 ||
+    warn "linked $id but could not enable it; run: omarchy plugin enable $id"
+}
+
+unlink_plugin() {
+  local unit="$1" id
+  id=$(meta "$unit" id) || true
+  [[ -n $id ]] || return 0
+
+  # Deliberately no `plugin disable`: for a bar widget that command deletes its
+  # layout entry, taking its position and every setting with it. Removing the
+  # symlink is enough. The stale layout entry renders nothing and is what makes
+  # `bo add` later restore the widget exactly where it was.
+  unlink_path "$PLUGINS_DIR/$id"
+  rescan_plugins
+}
+
+# Linked names are prefixed with the unit, so two units can ship a bindings.lua
+# without colliding, and `ls modules.d` says who owns what.
+hypr_link_name() { printf '%s-%s' "$1" "$(basename "$2")"; }
+
+link_hypr() {
+  local unit="$1" file found=0
+  shopt -s nullglob
+  for file in "$UNITS_DIR/$unit"/hypr/*.lua; do
+    ((found++ == 0)) && {
+      mkdir -p "$HYPR_MODULES"
+      ensure_modules_loader
+    }
+    link_path "$file" "$HYPR_MODULES/$(hypr_link_name "$unit" "$file")"
+  done
+  shopt -u nullglob
+  ((found > 0)) && reload_hypr
+  return 0
+}
+
+unlink_hypr() {
+  local unit="$1" file found=0
+  shopt -s nullglob
+  for file in "$UNITS_DIR/$unit"/hypr/*.lua; do
+    unlink_path "$HYPR_MODULES/$(hypr_link_name "$unit" "$file")"
+    ((found++))
+  done
+  shopt -u nullglob
+  ((found > 0)) && reload_hypr
+  return 0
+}
+
+link_setting() {
+  local script="$UNITS_DIR/$1/apply.sh"
+  [[ -x $script ]] || die "unit '$1' is kind=setting but has no executable apply.sh"
+  "$script" || die "apply.sh failed for '$1'"
+}
+
+unlink_setting() {
+  local script="$UNITS_DIR/$1/revert.sh"
+  [[ -x $script ]] || {
+    warn "unit '$1' has no revert.sh, leaving the setting as it is"
+    return 0
+  }
+  "$script" || warn "revert.sh failed for '$1'"
+}
+
+link_bin() {
+  local unit="$1" file
+  shopt -s nullglob
+  for file in "$UNITS_DIR/$unit"/bin/*; do
+    link_path "$file" "$BIN_DIR/$(basename "$file")"
+  done
+  shopt -u nullglob
+}
+
+unlink_bin() {
+  local unit="$1" file
+  shopt -s nullglob
+  for file in "$UNITS_DIR/$unit"/bin/*; do
+    unlink_path "$BIN_DIR/$(basename "$file")"
+  done
+  shopt -u nullglob
+}
+
+# One require line in hyprland.lua, plus a loader that walks modules.d. After
+# this runs, adding a unit never edits a config file again.
+ensure_modules_loader() {
+  local loader="$HYPR_DIR/modules.lua" main="$HYPR_DIR/hyprland.lua"
+
+  if [[ ! -f $loader ]]; then
+    cat >"$loader" <<'LUA'
+-- Loads every .lua in ~/.config/hypr/modules.d, in name order.
+-- Managed by better-omarchy. Units link their files into that directory.
+--
+-- Two reasons this does not use require() or default.hypr.require_all:
+--   require() turns every dot in a module name into a path separator, so
+--     "hypr.modules.d.foo" would look for hypr/modules/d/foo.lua.
+--   require_all runs `find -type f`, which does not match a symlink, and every
+--     file in here is a symlink into the better-omarchy checkout.
+-- dofile on an absolute path has neither problem, and always re-executes.
+
+local dir = os.getenv("HOME") .. "/.config/hypr/modules.d"
+local handle = io.popen("find -L '" .. dir .. "' -maxdepth 1 -name '*.lua' -printf '%f\\n' 2>/dev/null | sort")
+
+if handle then
+  for filename in handle:lines() do
+    dofile(dir .. "/" .. filename)
+  end
+  handle:close()
+end
+LUA
+  fi
+
+  if [[ -f $main ]] && ! grep -q 'require("hypr.modules")' "$main"; then
+    printf '\n-- better-omarchy: load every linked unit from ~/.config/hypr/modules.d\nrequire("hypr.modules")\n' >>"$main"
+  fi
+}
+
+# ---------------------------------------------------------------- commands
+
+cmd_list() {
+  local unit kind summary state
+  printf '%-20s %-8s %-8s %s\n' UNIT KIND STATE SUMMARY
+  while read -r unit; do
+    kind=$(meta "$unit" kind)
+    summary=$(meta "$unit" summary)
+    if is_linked "$unit"; then state=$(green on); else state=$(dim off); fi
+    printf '%-20s %-8s %-17s %s\n' "$unit" "$kind" "$state" "$summary"
+  done < <(all_units)
+}
+
+cmd_status() {
+  local unit key seen_keys="" dupes=""
+
+  say "$(bold 'Linked units')"
+  if [[ ! -s $LINKED_FILE ]]; then
+    say "  none"
+  else
+    while read -r unit; do
+      unit_exists "$unit" || {
+        say "  $unit $(red '(no longer in the repo)')"
+        continue
+      }
+      say "  $unit: $(meta "$unit" summary)"
+    done < <(linked_units)
+  fi
+
+  # Two linked units claiming the same key is the failure this catches.
+  while read -r unit; do
+    unit_exists "$unit" || continue
+    while read -r key; do
+      [[ -z $key ]] && continue
+      if printf '%s\n' "$seen_keys" | grep -qxF "$key"; then
+        dupes+="$key"$'\n'
+      fi
+      seen_keys+="$key"$'\n'
+    done < <(meta_list "$unit" keys)
+  done < <(linked_units)
+
+  printf '\n%s\n' "$(bold 'Key conflicts')"
+  if [[ -z $dupes ]]; then
+    say "  none"
+  else
+    printf '%s' "$dupes" | sort -u | while read -r key; do
+      [[ -z $key ]] && continue
+      printf '  %s %s claimed by:' "$(red '!')" "$key"
+      while read -r unit; do
+        unit_exists "$unit" || continue
+        meta_list "$unit" keys | grep -qxF "$key" && printf ' %s' "$unit"
+      done < <(linked_units)
+      printf '\n'
+    done
+  fi
+}
+
+cmd_doctor() {
+  local unit need missing=0
+  while read -r unit; do
+    unit_exists "$unit" || continue
+    while read -r need; do
+      [[ -z $need ]] && continue
+      if ! command -v "$need" >/dev/null; then
+        say "$(red 'missing') $need, needed by $unit"
+        missing=1
+      fi
+    done < <(meta_list "$unit" needs)
+  done < <(linked_units)
+
+  ((missing == 0)) && say "$(green 'All dependencies present.')"
+  return $missing
+}
+
+link_unit() {
+  local unit="$1" kind
+  unit_exists "$unit" || die "no unit named '$unit'"
+  is_linked "$unit" && {
+    say "$unit is already on"
+    return 0
+  }
+
+  # Every unit may carry hypr/*.lua and bin/*, whatever its kind. A plugin that
+  # also wants a keybinding is normal, so kind only decides the extra step.
+  kind=$(meta "$unit" kind)
+  case "$kind" in
+  plugin) link_plugin "$unit" ;;
+  setting) link_setting "$unit" ;;
+  hypr) ;;
+  *) die "unit '$unit' has an unknown kind: '${kind:-<empty>}'" ;;
+  esac
+
+  link_hypr "$unit"
+  link_bin "$unit"
+  mark_linked "$unit"
+  say "$(green on) $unit"
+}
+
+unlink_unit() {
+  local unit="$1" kind
+  unit_exists "$unit" || die "no unit named '$unit'"
+  is_linked "$unit" || {
+    say "$unit is already off"
+    return 0
+  }
+
+  kind=$(meta "$unit" kind)
+  case "$kind" in
+  plugin) unlink_plugin "$unit" ;;
+  setting) unlink_setting "$unit" ;;
+  esac
+
+  unlink_hypr "$unit"
+  unlink_bin "$unit"
+  mark_unlinked "$unit"
+  say "$(dim off) $unit"
+}
+
+# A picker when called bare, so `bo add` is the marketplace.
+cmd_add() {
+  local unit
+  if (($# > 0)); then
+    for unit in "$@"; do link_unit "$unit"; done
+    return
+  fi
+
+  command -v gum >/dev/null || die "gum is not installed; pass unit names instead"
+
+  local choices=()
+  while read -r unit; do
+    is_linked "$unit" && continue
+    choices+=("$unit  ·  $(meta "$unit" summary)")
+  done < <(all_units)
+
+  ((${#choices[@]} > 0)) || {
+    say "Every unit is already on."
+    return 0
+  }
+
+  local picked
+  picked=$(printf '%s\n' "${choices[@]}" | gum choose --no-limit --header "Turn on which units?") || return 0
+  [[ -z $picked ]] && return 0
+
+  while read -r line; do
+    [[ -z $line ]] && continue
+    link_unit "${line%%  ·  *}"
+  done <<<"$picked"
+}
+
+cmd_remove() {
+  local unit
+  if (($# > 0)); then
+    for unit in "$@"; do unlink_unit "$unit"; done
+    return
+  fi
+
+  command -v gum >/dev/null || die "gum is not installed; pass unit names instead"
+
+  local choices=()
+  while read -r unit; do
+    unit_exists "$unit" || continue
+    choices+=("$unit  ·  $(meta "$unit" summary)")
+  done < <(linked_units)
+
+  ((${#choices[@]} > 0)) || {
+    say "Nothing is on."
+    return 0
+  }
+
+  local picked
+  picked=$(printf '%s\n' "${choices[@]}" | gum choose --no-limit --header "Turn off which units?") || return 0
+  [[ -z $picked ]] && return 0
+
+  while read -r line; do
+    [[ -z $line ]] && continue
+    unlink_unit "${line%%  ·  *}"
+  done <<<"$picked"
+}
+
+cmd_validate() {
+  local unit id failed=0
+  while read -r unit; do
+    [[ $(meta "$unit" kind) == plugin ]] || continue
+    id=$(meta "$unit" id)
+    if omarchy plugin validate "$UNITS_DIR/$unit/plugin" >/dev/null 2>&1; then
+      say "$(green ok) $unit ($id)"
+    else
+      say "$(red fail) $unit ($id)"
+      omarchy plugin validate "$UNITS_DIR/$unit/plugin" 2>&1 | sed 's/^/    /'
+      failed=1
+    fi
+  done < <(all_units)
+  return $failed
+}
+
+# shell.json is copied rather than symlinked, because every writer replaces the
+# file instead of editing it. This pulls the live one back into the repo.
+cmd_sync() {
+  local live="$CONFIG_HOME/omarchy/shell.json" tracked="$BO_ROOT/config/shell.json"
+  [[ -f $live ]] || die "no $live"
+  mkdir -p "$(dirname "$tracked")"
+  if cmp -s "$live" "$tracked"; then
+    say "shell.json unchanged"
+  else
+    cp "$live" "$tracked"
+    say "$(green updated) config/shell.json"
+  fi
+}
+
+cmd_update() {
+  git -C "$BO_ROOT" pull --ff-only || die "git pull failed"
+  local unit
+  while read -r unit; do
+    unit_exists "$unit" || {
+      warn "$unit is gone from the repo; run: bo remove $unit"
+      continue
+    }
+  done < <(linked_units)
+  rescan_plugins
+  reload_hypr
+  say "$(green 'Up to date.')"
+}
+
+usage() {
+  cat <<'TXT'
+bo - manage better-omarchy units
+
+  bo list                 every unit, and whether it is on
+  bo status               what is on, plus keybinding conflicts
+  bo add [unit...]        turn units on (no argument opens a picker)
+  bo remove [unit...]     turn units off (no argument opens a picker)
+  bo doctor               check that every linked unit's dependencies exist
+  bo validate             run omarchy plugin validate on every plugin unit
+  bo sync                 copy the live shell.json back into the repo
+  bo update               git pull, then reload
+TXT
+}
+
+case "${1:-}" in
+list) cmd_list ;;
+status) cmd_status ;;
+add) shift; cmd_add "$@" ;;
+remove) shift; cmd_remove "$@" ;;
+doctor) cmd_doctor ;;
+validate) cmd_validate ;;
+sync) cmd_sync ;;
+update) cmd_update ;;
+"" | -h | --help | help) usage ;;
+*) die "unknown command: $1" ;;
+esac

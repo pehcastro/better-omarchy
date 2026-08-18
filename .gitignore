@@ -1,0 +1,2 @@
+# Machine-specific. Copy monitors.lua.example and edit it.
+units/display-local/hypr/monitors.lua

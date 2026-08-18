@@ -1,0 +1,5 @@
+name    = "my-apps"
+summary = "App bindings that differ from Omarchy's defaults"
+kind    = "hypr"
+needs   = []
+keys    = ["SUPER+SHIFT+W"]

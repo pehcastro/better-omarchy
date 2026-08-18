@@ -1,0 +1,5 @@
+name    = "no-idle-lock"
+summary = "Never lock or start the screensaver on idle"
+kind    = "setting"
+needs   = ["omarchy"]
+keys    = []

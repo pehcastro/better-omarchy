@@ -1,0 +1,5 @@
+name    = "windows-keys"
+summary = "Windows habits: ALT+F4 closes, SUPER+E files, SUPER+B browser"
+kind    = "hypr"
+needs   = []
+keys    = ["ALT+F4", "SUPER+E", "SUPER+B", "SUPER+R"]

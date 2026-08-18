@@ -1,0 +1,6 @@
+name    = "cpu"
+summary = "CPU load in the bar, opens btop on click"
+kind    = "plugin"
+id      = "bo.cpu"
+needs   = ["btop"]
+keys    = []

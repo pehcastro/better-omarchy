@@ -1,0 +1,50 @@
+#!/bin/bash
+# Relaunch the window that was closed last. Bound to Super + Z.
+# One shot: the entry is consumed, so a second press has nothing to reopen.
+# Restores the application, not its unsaved state.
+
+set -uo pipefail
+
+STACK="$HOME/.local/state/omarchy/closed-windows"
+
+if [[ ! -s $STACK ]]; then
+  notify-send -u low "Reopen window" "Nothing closed to reopen." 2>/dev/null
+  exit 0
+fi
+
+entry=$(tail -1 "$STACK")
+: >"$STACK"
+
+class=${entry%%$'\t'*}
+cmd=${entry#*$'\t'}
+
+# Find the .desktop file for a window class, for apps whose command line cannot
+# be re-executed.
+launch_by_class() {
+  local c="$1" d
+  [[ -z $c ]] && return 1
+  for d in "$HOME/.local/share/applications" /usr/share/applications; do
+    for f in "$d/$c.desktop" "$d/${c,,}.desktop" "$d"/*"${c,,}"*.desktop; do
+      [[ -f $f ]] || continue
+      setsid -f gio launch "$f" >/dev/null 2>&1 && return 0
+      return 1
+    done
+  done
+  return 1
+}
+
+# The recorded command is only usable when its first token is a real executable.
+# Chrome and friends rewrite argv, collapsing everything into one token.
+first=${cmd%% *}
+first=${first//\'/}
+
+if [[ -n $cmd && -x $first ]]; then
+  setsid -f bash -c "$cmd" >/dev/null 2>&1 &
+  exit 0
+fi
+
+if launch_by_class "$class"; then
+  exit 0
+fi
+
+notify-send -u low "Reopen window" "Could not relaunch ${class:-that window}." 2>/dev/null

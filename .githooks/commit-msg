@@ -1,0 +1,44 @@
+#!/bin/sh
+# The em dash test compares raw bytes. This script never decodes the message file into
+# characters, so the three UTF-8 bytes of U+2014 match on every platform and in every
+# Windows codepage. Do not replace this test with a tool that decodes the file first.
+
+types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+
+message=$(sed -e '/^#.*>8/,$d' -e '/^#/d' "$1")
+subject=$(printf '%s\n' "$message" | grep -v '^[[:space:]]*$' | head -n 1)
+
+fail() {
+    printf '\n%s\n\n' "The commit-msg hook rejected this message." >&2
+    printf '%s\n\n' "  $1" >&2
+    printf '%s\n' "Your subject line was:" >&2
+    printf '%s\n\n' "  $subject" >&2
+    printf '%s\n' "The form is:  type(scope): subject" >&2
+    printf '%s\n' "A type is:    build chore ci docs feat fix perf refactor revert style test" >&2
+    printf '%s\n' "A scope is optional and lower case. A '!' before the colon marks a breaking change." >&2
+    printf '%s\n\n' "See CONTRIBUTING.md, section 7.1." >&2
+    exit 1
+}
+
+emdash=$(printf '\342\200\224')
+case "$message" in
+*"$emdash"*)
+    fail "It holds an em dash (U+2014). Use a comma, a colon, a period, parentheses, or a hyphen."
+    ;;
+esac
+
+if printf '%s\n' "$message" | grep -qi 'co-authored-by:'; then
+    fail "It holds a Co-authored-by trailer. This repository credits no co-author, no tool, and no bot."
+fi
+
+case "$subject" in
+"Merge "*)
+    exit 0
+    ;;
+esac
+
+if ! printf '%s\n' "$subject" | grep -Eq "^($types)(\([a-z0-9][a-z0-9./-]*\))?!?: [^[:space:]].*$"; then
+    fail "The subject line does not match the Conventional Commits form."
+fi
+
+exit 0

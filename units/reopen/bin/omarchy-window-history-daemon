@@ -1,0 +1,89 @@
+#!/bin/bash
+# Records the command line of every window as it opens, so the last closed one
+# can be relaunched by `omarchy-window-reopen` (Super + Z).
+#
+# Hyprland's killactive terminates the process, so nothing can be restored after
+# the fact. The command has to be captured while the window is still alive.
+
+set -uo pipefail
+
+STATE_DIR="$HOME/.local/state/omarchy"
+MAP="$STATE_DIR/window-cmds"       # address<TAB>quoted-cmdline, append-only
+STACK="$STATE_DIR/closed-windows"  # exactly one entry: the last window closed
+
+mkdir -p "$STATE_DIR"
+
+# Only one instance, so a relogin or a manual start cannot stack duplicates.
+exec 9>"$STATE_DIR/window-history.lock"
+flock -n 9 || exit 0
+
+: >"$MAP"
+touch "$STACK"
+
+# Windows already open when this starts would otherwise never be recorded, so
+# the first thing closed after a login could not be reopened. Seed from them.
+seed_existing() {
+  local addr class
+  while IFS=$'\t' read -r addr class; do
+    [[ -n $addr ]] && record "${addr#0x}" "$class"
+  done < <(hyprctl clients -j 2>/dev/null |
+    jq -r '.[] | select(.pid > 0) | "\(.address)\t\(.class)"')
+}
+
+SOCK="$XDG_RUNTIME_DIR/hypr/${HYPRLAND_INSTANCE_SIGNATURE:?}/.socket2.sock"
+
+# Windows whose command line is useless to re-run, or that relaunch themselves.
+SKIP_CLASS='^(walker|xdg-desktop-portal.*|hyprpicker|)$'
+
+record() {
+  local addr="$1" class="$2" pid cmd
+  [[ $class =~ $SKIP_CLASS ]] && return
+
+  pid=$(hyprctl clients -j 2>/dev/null |
+    jq -r --arg a "0x$addr" '.[] | select(.address == $a) | .pid')
+  [[ -z $pid || $pid == null || $pid -le 0 ]] && return
+
+  # %q-quote each argv entry so paths with spaces survive the round trip.
+  local argc
+  argc=$(tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null | grep -c .)
+  cmd=$(xargs -0 printf '%q ' <"/proc/$pid/cmdline" 2>/dev/null)
+  cmd=${cmd% }
+
+  # Chrome and some Electron apps rewrite their process title, so /proc/cmdline
+  # collapses into a single argv entry holding spaces. That cannot be re-executed,
+  # so blank it and let reopen fall back to the .desktop file for the class.
+  if [[ $argc -le 1 && $cmd == *" "* ]]; then
+    cmd=""
+  fi
+  printf '%s\t%s\t%s\n' "$addr" "$class" "$cmd" >>"$MAP"
+}
+
+remember_closed() {
+  local addr="$1" entry
+  entry=$(grep -F "$addr"$'\t' "$MAP" 2>/dev/null | tail -1 | cut -f2-)
+  [[ -z $entry ]] && return
+
+  # Only the most recent close is reopenable, so this replaces the file
+  # rather than pushing onto a stack.
+  printf '%s\n' "$entry" >"$STACK"
+}
+
+seed_existing
+
+# Kill the socat child on exit, otherwise it lingers holding the inherited lock
+# fd and every later start refuses to run.
+trap 'kill 0' EXIT INT TERM
+
+# 9>&- keeps the lock fd out of socat so a stray socat cannot hold the lock.
+socat -U - "UNIX-CONNECT:$SOCK" 9>&- 2>/dev/null | while read -r line; do
+  case "$line" in
+    openwindow\>\>*)
+      data=${line#openwindow>>}
+      IFS=',' read -r addr _ws class _title <<<"$data"
+      record "$addr" "$class"
+      ;;
+    closewindow\>\>*)
+      remember_closed "${line#closewindow>>}"
+      ;;
+  esac
+done

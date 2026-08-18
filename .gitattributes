@@ -1,0 +1,48 @@
+# Every text file holds LF in the repository and LF in the working tree. The explicit
+# eol=lf has precedence over core.autocrlf, so no contributor sees the warning "LF will be
+# replaced by CRLF". This matches end_of_line = lf in .editorconfig.
+
+* text=auto eol=lf
+
+.githooks/* text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+*.service text eol=lf
+
+# cmd.exe misreads a batch file that holds no carriage return, so these two stay CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.rs text eol=lf diff=rust
+*.toml text eol=lf diff=toml
+*.md text eol=lf diff=markdown
+*.py text eol=lf diff=python
+
+pnpm-lock.yaml text eol=lf linguist-generated=true -diff
+Cargo.lock text eol=lf linguist-generated=true -diff
+CHANGELOG.md text eol=lf merge=union
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.avif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.zst binary
+*.br binary
+*.wasm binary
+*.node binary
+*.img binary
+*.qcow2 binary
+*.ext4 binary
+*.squashfs binary
