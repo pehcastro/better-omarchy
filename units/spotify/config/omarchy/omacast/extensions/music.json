@@ -1,14 +1,14 @@
 {
-  "id": "music",
-  "title": "Music",
-  "keyword": "music",
+  "id": "spotify",
+  "title": "Spotify",
+  "keyword": "spotify",
   "aliases": [
+    "music",
     "song",
     "track",
-    "play",
-    "spotify"
+    "play"
   ],
-  "subtitle": "Music",
+  "subtitle": "Spotify",
   "glyph": "",
   "search": "omacast-search-music {query}",
   "when": "busctl --user list --no-legend 2>/dev/null | grep -q org.mpris.MediaPlayer2",

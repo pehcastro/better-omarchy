@@ -1,8 +1,13 @@
 {
-  "id": "spotify",
-  "title": "Spotify",
+  "id": "spotify-library",
+  "title": "Spotify Library",
   "keyword": "sp",
-  "aliases": ["spotify", "track", "album", "artist"],
+  "aliases": [
+    "spotify",
+    "track",
+    "album",
+    "artist"
+  ],
   "subtitle": "Spotify",
   "glyph": "",
   "search": "omacast-spotify search {query} {type}",

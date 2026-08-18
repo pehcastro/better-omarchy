@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "afa8feec8d53b9b3e92e8303f9faed9d555b6bd1",
+  "generated_at_commit": "8092fad1e73780602b5b8cbea01d1aa1bf079521",
   "units": {
     "accents": {
       "name": "accents",
@@ -271,9 +271,9 @@
       "pluginId": "bo.omacast",
       "path": "units/omacast",
       "files": 23,
-      "hash": "c0dbacbdf7f97a385b1b402a30ef8eec4583b255636b07e07c6941aa5d0c16e7",
-      "commit": "4969d3d7eebb5dc47ebf700a6221656a9a72354d",
-      "updated": "2026-08-18T18:51:00-03:00",
+      "hash": "c34841f423bcc49843d61f3d695c6204e3e2b57d4dea4e9aa8753a047b07df33",
+      "commit": "cac9beb9e31ce1b56949e68f4c3ae4b99667f89d",
+      "updated": "2026-08-18T19:24:33-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
@@ -326,32 +326,6 @@
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
-    "search-music": {
-      "name": "search-music",
-      "summary": "Control whatever is playing, from the launcher, with music:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Media",
-      "tags": [
-        "launcher",
-        "music",
-        "mpris"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "busctl",
-        "jq",
-        "curl"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/search-music",
-      "files": 4,
-      "hash": "4ff3fc791e9bb2172421445f9af5d1e4c54a258b2ed345f4960f631153ef334c",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
     "search-radio": {
       "name": "search-radio",
       "summary": "Play internet radio from the launcher, with radio:",
@@ -374,9 +348,9 @@
       "path": "units/search-radio",
       "files": 3,
       "hash": "86f87e174685d694f884940ad2d5faac068d782851aec2dfe95a087772e601da",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "cac9beb9e31ce1b56949e68f4c3ae4b99667f89d",
+      "updated": "2026-08-18T19:24:33-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-windows": {
       "name": "search-windows",
@@ -405,7 +379,33 @@
     },
     "spotify": {
       "name": "spotify",
-      "summary": "Search Spotify and start playback from the launcher, with sp:",
+      "summary": "Spotify in the launcher: a player, and search that needs no account",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Media",
+      "tags": [
+        "launcher",
+        "music",
+        "mpris"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "busctl",
+        "jq",
+        "curl"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/spotify",
+      "files": 4,
+      "hash": "db928d11c28e9a390f8513288e8ad8394a4c3c5de91b7c40c8ec12ce58d90360",
+      "commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
+      "updated": "2026-08-18T18:48:18-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "spotify-library": {
+      "name": "spotify-library",
+      "summary": "Your Spotify library and playlists, with sp:",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Media",
@@ -421,12 +421,12 @@
       ],
       "keys": [],
       "pluginId": "",
-      "path": "units/spotify",
+      "path": "units/spotify-library",
       "files": 5,
-      "hash": "9ec058c41a66071c89e20d22f0ff7be7e032206a04b195a7716e57b5ee60044d",
-      "commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
-      "updated": "2026-08-18T18:48:18-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "29f27f2b7cc4e482c14ba5274b635957851d1a6ae7c7170907862a8d6cc43be7",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
     "stay-awake": {
       "name": "stay-awake",

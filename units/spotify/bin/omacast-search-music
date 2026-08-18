@@ -67,6 +67,28 @@ now_playing() {
 
   local short=${player#org.mpris.MediaPlayer2.}
   local call="busctl --user call $player $BUS_PATH $PLAYER_IFACE"
+  local setprop="busctl --user set-property $player $BUS_PATH $PLAYER_IFACE"
+
+  # Shuffle and repeat are real player state, not commands, so the view needs
+  # to know which way they are set before it can draw them lit or unlit.
+  local shuffle loop
+  shuffle=$(prop Shuffle | awk '{print $2}')
+  [[ $shuffle == "true" ]] || shuffle=false
+  loop=$(prop LoopStatus | sed 's/^s\s*//; s/"//g')
+  [[ -z $loop ]] && loop="None"
+
+  # LoopStatus cycles None, Playlist, Track, which is the order the buttons in
+  # every player step through: off, repeat all, repeat one.
+  local next_loop
+  case "$loop" in
+    None) next_loop="Playlist" ;;
+    Playlist) next_loop="Track" ;;
+    *) next_loop="None" ;;
+  esac
+
+  local can_next can_prev
+  can_next=$(prop CanGoNext | awk '{print $2}')
+  can_prev=$(prop CanGoPrevious | awk '{print $2}')
   local trackid
   trackid=$(field "$metadata" "mpris:trackid")
 
@@ -79,17 +101,30 @@ now_playing() {
     --arg t "$title" --arg s "$artist" --arg d "$album" --arg art "$art" \
     --arg status "$status" --arg player "$short" --arg seek "$seek" \
     --arg pp "$call PlayPause" --arg next "$call Next" --arg prev "$call Previous" \
+    --arg shuffleCmd "$setprop Shuffle b $([[ $shuffle == true ]] && echo false || echo true)" \
+    --arg loopCmd "$setprop LoopStatus s $next_loop" \
+    --arg loop "$loop" \
+    --argjson shuffle "$shuffle" \
+    --argjson canNext "${can_next:-true}" --argjson canPrev "${can_prev:-true}" \
     --argjson pr "$progress" --argjson len "$seconds" \
     '{
        id: "now", title: $t, subtitle: $s, detail: $d, art: $art,
        status: $status, player: $player, progress: $pr, lengthSeconds: $len,
        seek: $seek, view: "player", score: 99000,
-       controls: { playPause: $pp, next: $next, prev: $prev },
+       shuffle: $shuffle, loop: $loop, canNext: $canNext, canPrev: $canPrev,
+       controls: { playPause: $pp, next: $next, prev: $prev,
+                   shuffle: $shuffleCmd, loop: $loopCmd },
        exec: $pp,
        actions: [
-         { title: (if $status == "Playing" then "Pause" else "Play" end), shortcut: "↵", exec: $pp },
-         { title: "Next Track", exec: $next },
-         { title: "Previous Track", exec: $prev },
+         { title: (if $status == "Playing" then "Pause" else "Play" end),
+           shortcut: "↵", exec: $pp, query: "spotify:" },
+         { title: "Next Track", exec: $next, query: "spotify:" },
+         { title: "Previous Track", exec: $prev, query: "spotify:" },
+         { title: (if $shuffle then "Shuffle Off" else "Shuffle On" end),
+           exec: $shuffleCmd, query: "spotify:" },
+         { title: (if $loop == "None" then "Repeat All"
+                   elif $loop == "Playlist" then "Repeat One"
+                   else "Repeat Off" end), exec: $loopCmd, query: "spotify:" },
          { title: "Copy Title and Artist",
            exec: ("printf %s " + (($t + " - " + $s) | @sh) + " | wl-copy") }
        ]
@@ -123,17 +158,21 @@ search() {
       score: 90000
     }' 2>/dev/null |
   while IFS= read -r row; do
-    local isrc phrase preview play web
+    local isrc phrase preview play open web
     isrc=$(printf '%s' "$row" | jq -r '.isrc')
     phrase=$(printf '%s' "$row" | jq -r '.subtitle + " " + .title')
     preview=$(printf '%s' "$row" | jq -r '.preview // ""')
 
     play="omacast-music-play $(printf '%q' "$isrc") $(printf '%q' "$phrase")"
+    # Shift+Enter raises the Spotify window on that search, for when you want
+    # the app rather than the track.
+    open="busctl --user call org.mpris.MediaPlayer2.spotify $BUS_PATH $PLAYER_IFACE OpenUri s $(printf '%q' "spotify:search:$(jq -rn --arg q "$phrase" '$q|@uri')") && omarchy-launch-or-focus '^[Ss]potify$' 'uwsm-app -- spotify'"
     web="omarchy-launch-browser $(printf '%q' "https://open.spotify.com/search/$(jq -rn --arg q "$phrase" '$q|@uri')")"
 
-    printf '%s' "$row" | jq -c --arg play "$play" --arg web "$web" --arg preview "$preview" \
+    printf '%s' "$row" | jq -c --arg play "$play" --arg open "$open" --arg web "$web" --arg preview "$preview" \
       'del(.isrc, .preview) | .exec = $play |
-       .actions = ([{title: "Play in Spotify", shortcut: "\u21b5", exec: $play}] +
+       .actions = ([{title: "Play", shortcut: "\u21b5", exec: $play, query: "spotify:"},
+                    {title: "Open in Spotify", shortcut: "\u21e7\u21b5", exec: $open}] +
                    (if $preview != "" then [{title: "Play 30s Preview", exec: ("mpv --no-video --really-quiet " + ($preview | @sh))}] else [] end) +
                    [{title: "Open in Browser", exec: $web},
                     {title: "Copy Title and Artist",

@@ -59,9 +59,15 @@ def tracked_files(unit_dir):
 def content_hash(files):
     h = hashlib.sha256()
     for name in files:
+        path = ROOT / name
+        # git ls-files reports what the index holds, which lags the working tree
+        # right after a rename. Skipping a missing entry keeps a mid-rename
+        # rebuild from dying; the next build, once staged, sees the truth.
+        if not path.is_file():
+            continue
         h.update(name.encode())
         h.update(b"\0")
-        h.update((ROOT / name).read_bytes())
+        h.update(path.read_bytes())
         h.update(b"\0")
     return h.hexdigest()
 

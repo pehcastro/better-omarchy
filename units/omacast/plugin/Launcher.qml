@@ -547,6 +547,12 @@ Item {
   function activate(row) {
     if (!row) return
 
+    // A row with actions runs its first one, so the query follow-up a script
+    // asked for is honoured whether Enter or the panel fired it.
+    if (row.actions && row.actions.length > 0 && row.actions[0].query !== undefined) {
+      return runAction(row.actions[0])
+    }
+
     if (row.pending) {
       // Hold Enter until the real answer replaces this placeholder.
       root.pendingActivate = row.key
@@ -584,18 +590,67 @@ Item {
     if (!action) return
     root.actionPanelOpen = false
 
+    // An action may ask to stay open and land on another query instead. That is
+    // what makes pressing play on a search result show the player rather than
+    // throwing you into Spotify's own window: the thing you started is the
+    // thing you want to look at next.
+    var followUp = action.query !== undefined ? String(action.query) : ""
+
     if (typeof action.run === "function") {
-      dismiss()
+      if (followUp === "") dismiss()
       Qt.callLater(action.run)
+      if (followUp !== "") requery(followUp)
       return
     }
     if (action.exec) {
       var command = String(action.exec)
-      dismiss()
+      if (followUp === "") dismiss()
       Qt.callLater(function () { Util.execDetached(command) })
+      if (followUp !== "") requery(followUp)
       return
     }
     if (action.row) root.activate(action.row)
+  }
+
+  // Ask again, several times, because what just ran takes an unknown while to
+  // show up. Playing a search result can mean an ISRC lookup, then OpenUri,
+  // then Spotify actually starting: one poll at a fixed delay reports the old
+  // track often enough to look broken.
+  function requery(text) {
+    followUp.text = text
+    followUp.round = 0
+    followUpTimer.restart()
+  }
+
+  function refresh() {
+    root.setQuery(root.queryText)
+  }
+
+  QtObject {
+    id: followUp
+    property string text: ""
+    property int round: 0
+  }
+
+  Timer {
+    id: followUpTimer
+    interval: 900
+    repeat: true
+    onTriggered: {
+      followUp.round += 1
+
+      if (followUp.round === 1) {
+        input.text = followUp.text
+        resetSelection()
+        Qt.callLater(function () { input.forceActiveFocus() })
+      } else {
+        root.refresh()
+      }
+
+      // Four passes over roughly four seconds, which covers the slowest path
+      // seen: a MusicBrainz lookup plus Spotify starting a track.
+      if (followUp.round >= 4) followUpTimer.stop()
+    }
   }
 
   // How far one press of Up or Down travels. In a grid that is a whole row,

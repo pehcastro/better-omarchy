@@ -1,10 +1,10 @@
 name     = "spotify"
-summary  = "Search Spotify and start playback from the launcher, with sp:"
+summary  = "Spotify in the launcher: a player, and search that needs no account"
 version  = "0.1.0"
 category = "Media"
-tags     = ["launcher", "spotify", "music"]
+tags     = ["launcher", "music", "mpris"]
 author   = "pehcastro"
 kind     = "hypr"
-needs     = ["curl", "jq"]
+needs     = ["busctl", "jq", "curl"]
 requires  = ["omacast"]
 keys     = []

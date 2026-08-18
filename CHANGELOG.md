@@ -45,6 +45,7 @@ This file is about bo and the marketplace itself.
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
+- **changelog:** Regenerate
 
 ## 0.1.0 (2026-08-18)
 
