@@ -12,6 +12,7 @@ import "Calc.js" as Calc
 import "Commands.js" as Commands
 import "Extensions.js" as Extensions
 import "Settings.js" as Settings
+import "Quicklinks.js" as Quicklinks
 
 // OmarchyCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -75,6 +76,11 @@ Item {
       if (ext.keyword === query.scope || ext.aliases.indexOf(query.scope) >= 0) return ext.title
     }
 
+    var links = root.config.quicklinks || []
+    for (var j = 0; j < links.length; j++) {
+      if (String(links[j].keyword || "").toLowerCase() === query.scope) return String(links[j].title)
+    }
+
     var builtin = { calc: "Calculator", run: "Commands", web: "Web", apps: "Applications" }
     return builtin[query.scope] || query.scope
   }
@@ -82,7 +88,7 @@ Item {
   readonly property string activeView: {
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
-    return ["list", "hero", "cards", "split"].indexOf(wanted) >= 0 ? wanted : "list"
+    return ["list", "hero", "cards", "split", "grid"].indexOf(wanted) >= 0 ? wanted : "list"
   }
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
@@ -166,6 +172,7 @@ Item {
 
     queryApps(query)
     queryCommands(query)
+    queryQuicklinks(query)
     queryWeb(query)
     calc.run(query)
 
@@ -290,6 +297,67 @@ Item {
     put("commands", query, out)
   }
 
+  // Quicklinks are found two ways, because people reach for both: by typing
+  // part of the title, and by typing the keyword and then the argument.
+  function queryQuicklinks(query) {
+    var links = root.config.quicklinks || []
+    if (links.length === 0) return put("quicklinks", query, [])
+
+    var out = []
+
+    for (var i = 0; i < links.length; i++) {
+      var link = links[i]
+      if (!link || !link.title) continue
+
+      var keyword = String(link.keyword || "").toLowerCase()
+      var addressed = keyword !== "" && query.scope === keyword
+      var argument = ""
+      var fuzzy = -1
+
+      if (addressed) {
+        argument = Query.argFor(query, keyword, [])
+      } else {
+        if (query.scope !== "" && query.scope !== "quicklinks") continue
+        if (query.empty) continue
+        fuzzy = Score.fuzzy(Quicklinks.asEntry(link, i), query.text)
+        if (fuzzy < 0) continue
+        // Typing a name finds the link; it cannot also supply an argument,
+        // since the words that found it are not what goes in the placeholder.
+        argument = ""
+      }
+
+      var command = Quicklinks.command(link, argument, Util.shellQuote)
+      if (!command) continue
+
+      var needsArgument = Quicklinks.takesArgument(link)
+      out.push({
+        key: "ql:" + (link.keyword || link.title),
+        providerId: "quicklinks",
+        group: "Quicklinks",
+        title: String(link.title),
+        subtitle: (link.tags || []).join(", "),
+        detail: addressed && argument ? argument : "",
+        accessory: needsArgument && keyword ? keyword + ":" : "",
+        iconSource: "",
+        iconGlyph: String(link.glyph || ""),
+        // Addressed by keyword it is the answer, so it pins above apps. Found
+        // by name it competes with everything else on match quality alone.
+        score: addressed
+          ? Rank.score(Rank.TIER.forced, 90000, 0)
+          : Rank.score(Rank.tierFor(fuzzy), Rank.local(fuzzy), 2000),
+        pending: false,
+        run: (function (cmd) { return function () { Util.execDetached(cmd) } })(command),
+        actions: (function (cmd, url) {
+          var list = [{ title: "Open", shortcut: "\u21B5", exec: cmd }]
+          if (url) list.push({ title: "Copy Link", exec: "printf %s " + Util.shellQuote(url) + " | wl-copy" })
+          return list
+        })(command, Quicklinks.expand(link, argument))
+      })
+    }
+
+    put("quicklinks", query, out)
+  }
+
   function queryWeb(query) {
     if (!Query.routesTo(query, "web", ["search", "google", "ddg"]) || query.empty) {
       return put("web", query, [])
@@ -403,6 +471,14 @@ Item {
       return
     }
     if (action.row) root.activate(action.row)
+  }
+
+  // How far one press of Up or Down travels. In a grid that is a whole row,
+  // because moving one cell at a time down a wall of thumbnails is maddening.
+  readonly property int verticalStep: {
+    if (root.activeView !== "grid") return 1
+    var perRow = Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(96)))
+    return perRow
   }
 
   function move(delta) {
@@ -694,12 +770,24 @@ Item {
               if (input.text.length > 0) input.text = ""
               else root.dismiss()
               event.accepted = true
-            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab
+            } else if (event.key === Qt.Key_Down
                        || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
+              root.move(root.verticalStep)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up
+                       || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
+              root.move(-root.verticalStep)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Tab) {
               root.move(1)
               event.accepted = true
-            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab
-                       || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
+            } else if (event.key === Qt.Key_Backtab) {
+              root.move(-1)
+              event.accepted = true
+            } else if (root.activeView === "grid" && event.key === Qt.Key_Right) {
+              root.move(1)
+              event.accepted = true
+            } else if (root.activeView === "grid" && event.key === Qt.Key_Left) {
               root.move(-1)
               event.accepted = true
             } else if (event.key === Qt.Key_PageDown) {
@@ -750,6 +838,7 @@ Item {
           case "hero": return heroView
           case "cards": return cardsView
           case "split": return splitView
+          case "grid": return gridView
           default: return listView
           }
         }
@@ -759,6 +848,7 @@ Item {
       Component { id: heroView;  ResultHero  { launcher: root; width: resultsArea.width } }
       Component { id: cardsView; ResultCards { launcher: root; width: resultsArea.width } }
       Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width } }
+      Component { id: gridView;  ResultGrid  { launcher: root; width: resultsArea.width } }
 
       // The hint bar: what Enter does, and that there is more on Ctrl+K.
       Item {

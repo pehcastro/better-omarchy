@@ -26,6 +26,17 @@ var DEFAULTS = {
   // whether or not it is listed here.
   engineActions: ["google", "chatgpt", "ddg", "youtube", "github"],
 
+  // Your own links, searchable by title and tag, and addressable by keyword.
+  // A url with {} takes an argument: `gh omarchy` opens the search, `gh` alone
+  // opens the placeholder-free part of the site.
+  //
+  //   { "title": "GitHub Issues", "keyword": "issues", "tags": ["dev"],
+  //     "url": "https://github.com/pehcastro/{}/issues" }
+  //
+  // `open` replaces `url` when the link should run something instead, which is
+  // how a quicklink becomes a shortcut to a folder or a script.
+  quicklinks: [],
+
   maxRows: 9,
   cardWidth: 620,
 

@@ -1,0 +1,76 @@
+#!/bin/bash
+# Emits JSON rows of images for OmarchyCast's `img:` keyword, one per line.
+#
+#   img:            everything under the usual picture folders
+#   img:screenshot  by name
+#   img: in:~/work  somewhere else
+#
+# Dimensions come from `identify` when ImageMagick is present and are simply
+# left out when it is not, because a missing chip is better than a slow search:
+# probing hundreds of files costs far more than listing them.
+
+set -uo pipefail
+
+query="${1:-}"
+root="${2:-}"
+
+EXT=(jpg jpeg png gif webp avif bmp svg tiff heic)
+
+roots=()
+if [[ -n $root ]]; then
+  root="${root/#\~/$HOME}"
+  [[ -d $root ]] && roots=("$root")
+fi
+
+if ((${#roots[@]} == 0)); then
+  for dir in "$HOME/Pictures" "$HOME/Downloads" "$HOME/Desktop" "$HOME/Documents"; do
+    [[ -d $dir ]] && roots+=("$dir")
+  done
+fi
+((${#roots[@]} == 0)) && roots=("$HOME")
+
+args=(--ignore-case --type f --max-results 300 --follow)
+for e in "${EXT[@]}"; do args+=(--extension "$e"); done
+for skip in .git node_modules .cache .thumbnails; do args+=(--exclude "$skip"); done
+
+have_identify=0
+command -v identify >/dev/null && have_identify=1
+
+# Newest first: with pictures, recent is nearly always what you are after.
+fd "${args[@]}" -- "$query" "${roots[@]}" 2>/dev/null |
+  while read -r path; do
+    printf '%s\t%s\n' "$(stat -c %Y "$path" 2>/dev/null || echo 0)" "$path"
+  done |
+  sort -rn |
+  head -60 |
+  while IFS=$'\t' read -r mtime path; do
+    base=${path##*/}
+    dir=${path%/*}
+    dir=${dir/#$HOME/\~}
+
+    size=$(stat -c %s "$path" 2>/dev/null || echo 0)
+    human=$(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "")
+
+    dimensions=""
+    if ((have_identify)); then
+      dimensions=$(identify -format '%wx%h' "$path[0]" 2>/dev/null || true)
+    fi
+
+    jq -cn --arg id "$path" --arg t "$base" --arg s "$dir" \
+      --arg art "file://$path" --arg d "$dimensions" --arg a "$human" \
+      --arg e "xdg-open $(printf '%q' "$path")" \
+      --arg copy "wl-copy < $(printf '%q' "$path")" \
+      --arg reveal "nautilus --select $(printf '%q' "$path")" \
+      --arg path "$path" \
+      --argjson sc "$((mtime % 90000))" \
+      '{
+         id: $id, title: $t, subtitle: $s, art: $art,
+         detail: $d, accessory: $a, exec: $e, score: $sc,
+         actions: [
+           { title: "Open", shortcut: "↵", exec: $e },
+           { title: "Copy Image", exec: $copy },
+           { title: "Copy Path", exec: ("printf %s " + ($path | @sh) + " | wl-copy") },
+           { title: "Reveal in Files", exec: $reveal }
+         ]
+       }'
+  done
