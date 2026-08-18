@@ -37,6 +37,26 @@ var DEFAULTS = {
   // how a quicklink becomes a shortcut to a folder or a script.
   quicklinks: [],
 
+  // Ctrl+Enter asks a model and streams the answer into the card.
+  //
+  // Providers are tried in order and the first whose `when` succeeds is used,
+  // so a machine with the Claude CLI signed in needs no configuration at all.
+  // Set `askProvider` to force one by id.
+  //
+  // A provider's command gets {query} shell-quoted and {model} unquoted, must
+  // write to stdout as it goes, and must exit when it is done. Anything with
+  // that shape works, including a curl to an API you host.
+  askProvider: "",
+
+  askProviders: [
+    { id: "claude", title: "Claude", command: "claude -p {query}", when: "command -v claude" },
+    { id: "codex", title: "Codex", command: "codex exec --skip-git-repo-check {query}", when: "command -v codex" },
+    { id: "gemini", title: "Gemini", command: "gemini -p {query}", when: "command -v gemini" },
+    { id: "ollama", title: "Ollama", model: "llama3.2", command: "ollama run {model} {query}", when: "command -v ollama" },
+    { id: "aichat", title: "aichat", command: "aichat {query}", when: "command -v aichat" },
+    { id: "mods", title: "mods", command: "mods {query}", when: "command -v mods" }
+  ],
+
   maxRows: 9,
   cardWidth: 620,
 
@@ -83,6 +103,23 @@ function merge(text) {
   }
 
   return config
+}
+
+// The provider to ask, honouring an explicit choice and otherwise leaving the
+// order in the list to decide. Availability is settled at runtime, since only
+// the shell can answer whether a command exists.
+function providers(config) {
+  var chosen = String(config.askProvider || "")
+  var all = config.askProviders || []
+  if (!chosen) return all
+
+  var ordered = []
+  for (var i = 0; i < all.length; i++) {
+    if (String(all[i].id) === chosen) ordered.push(all[i])
+  }
+  // An id that matches nothing is a typo, not an instruction to ask nothing,
+  // so fall back to the full list rather than going silent.
+  return ordered.length > 0 ? ordered : all
 }
 
 function engine(config, id) {

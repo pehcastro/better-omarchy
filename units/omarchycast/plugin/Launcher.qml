@@ -66,6 +66,20 @@ Item {
   // knowing what either of them is.
   property bool actionPanelOpen: false
 
+  // Ctrl+Enter: ask a model, stream the answer here. This is the one thing in
+  // the launcher that takes time on purpose, so it owns the card while it runs
+  // rather than being a row that fills in later.
+  property bool answerMode: false
+  property bool answerAvailable: false
+  property bool answerStreaming: false
+  property string answerText: ""
+  property string answerQuestion: ""
+  property string answerError: ""
+  // Which provider answered the availability probe first.
+  property var answerProvider: null
+  readonly property string answerModel: root.answerProvider
+    ? String(root.answerProvider.title || root.answerProvider.id) : ""
+
   // What the active filter is called, for the chip in the header.
   readonly property string scopeLabel: {
     var query = Query.parse(root.queryText, root.epoch)
@@ -86,6 +100,7 @@ Item {
   }
 
   readonly property string activeView: {
+    if (root.answerMode) return "answer"
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
     return ["list", "hero", "cards", "split", "grid"].indexOf(wanted) >= 0 ? wanted : "list"
@@ -132,6 +147,7 @@ Item {
     root.rows = []
     root.pendingActivate = ""
     root.actionPanelOpen = false
+    leaveAnswer()
   }
 
   function toggle() {
@@ -417,6 +433,115 @@ Item {
     return out
   }
 
+  // ------------------------------------------------------------ asking
+
+  function ask(question) {
+    if (!root.answerAvailable || !root.answerProvider || !question) return
+
+    root.answerMode = true
+    root.answerStreaming = true
+    root.answerText = ""
+    root.answerError = ""
+    root.answerQuestion = question
+
+    var spec = root.answerProvider
+    var command = String(spec.command || "")
+      .replace("{model}", String(spec.model || ""))
+      .replace("{query}", Util.shellQuote(question))
+
+    // stdbuf so a line-buffered model actually streams: without it the answer
+    // sits in a pipe buffer and arrives all at once, which defeats the point.
+    //
+    // stdin from /dev/null because a CLI that reads it will otherwise wait, and
+    // some print a warning about it into the answer. stderr is folded in so a
+    // real failure is visible rather than silent.
+    askProcess.command = ["bash", "-lc", "stdbuf -oL " + command + " < /dev/null 2>&1"]
+    askProcess.running = true
+  }
+
+  function stopAsking() {
+    root.answerStreaming = false
+    if (askProcess.running) askProcess.running = false
+  }
+
+  function leaveAnswer() {
+    stopAsking()
+    root.answerMode = false
+    root.answerText = ""
+    root.answerError = ""
+    root.answerQuestion = ""
+  }
+
+  Process {
+    id: askProcess
+    stdout: SplitParser {
+      // Split on newline rather than collecting: this is what makes the answer
+      // appear a line at a time instead of in one lump at the end.
+      onRead: function (line) {
+        root.answerText += (root.answerText === "" ? "" : "\n") + line
+      }
+    }
+    onExited: function (code) {
+      root.answerStreaming = false
+      if (code !== 0 && root.answerText === "") {
+        root.answerError = "That command exited " + code + ". Check ask.command in omarchycast.json."
+      }
+    }
+  }
+
+  property int askProbeIndex: 0
+
+  Process {
+    id: askAvailability
+    onExited: function (code) {
+      var list = Settings.providers(root.config)
+      var spec = list[root.askProbeIndex]
+
+      if (code === 0 && spec) {
+        root.answerProvider = spec
+        root.answerAvailable = true
+        return
+      }
+
+      root.askProbeIndex += 1
+      Qt.callLater(root.probeNextProvider)
+    }
+  }
+
+  // One probe per provider, in order, stopping at the first that exists. This
+  // runs once at startup, never per keystroke, so an absent CLI costs nothing.
+  function probeNextProvider() {
+    var list = Settings.providers(root.config)
+    if (root.askProbeIndex >= list.length) {
+      root.answerAvailable = false
+      root.answerProvider = null
+      return
+    }
+
+    var spec = list[root.askProbeIndex]
+    if (!spec || !spec.command) {
+      root.askProbeIndex += 1
+      return Qt.callLater(root.probeNextProvider)
+    }
+
+    if (!spec.when) {
+      root.answerProvider = spec
+      root.answerAvailable = true
+      return
+    }
+
+    if (askAvailability.running) return
+    askAvailability.command = ["bash", "-lc", String(spec.when)]
+    askAvailability.running = true
+  }
+
+  function checkAsk() {
+    root.askProbeIndex = 0
+    root.answerAvailable = false
+    root.answerProvider = null
+    probeNextProvider()
+  }
+
   // ------------------------------------------------------------ activation
 
   function activate(row) {
@@ -477,7 +602,7 @@ Item {
   // because moving one cell at a time down a wall of thumbnails is maddening.
   readonly property int verticalStep: {
     if (root.activeView !== "grid") return 1
-    var perRow = Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(96)))
+    var perRow = Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(168)))
     return perRow
   }
 
@@ -613,11 +738,17 @@ Item {
     path: Quickshell.env("HOME") + "/.config/omarchy/omarchycast.json"
     watchChanges: true
     printErrors: false
-    onLoaded: root.config = Settings.merge(text())
+    onLoaded: {
+      root.config = Settings.merge(text())
+      root.checkAsk()
+    }
     onFileChanged: reload()
     // No file is the normal case, so fall back to the defaults rather than
     // writing one the user never asked for.
-    onLoadFailed: root.config = Settings.DEFAULTS
+    onLoadFailed: {
+      root.config = Settings.DEFAULTS
+      root.checkAsk()
+    }
   }
 
   Process {
@@ -687,7 +818,7 @@ Item {
 
       anchors.horizontalCenter: parent.horizontalCenter
       y: Math.round(parent.height * 0.18)
-      height: header.height + (root.rows.length > 0
+      height: header.height + ((root.rows.length > 0 || root.answerMode)
         ? resultsArea.height + footer.height + Style.space(14) : 0)
 
       Behavior on height {
@@ -745,6 +876,7 @@ Item {
           focus: true
 
           onTextChanged: {
+            if (root.answerMode) root.leaveAnswer()
             root.resetSelection()
             root.setQuery(text)
           }
@@ -767,7 +899,9 @@ Item {
               else return
               event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
-              if (input.text.length > 0) input.text = ""
+              // Three stages: leave the answer, clear the box, then close.
+              if (root.answerMode) root.leaveAnswer()
+              else if (input.text.length > 0) input.text = ""
               else root.dismiss()
               event.accepted = true
             } else if (event.key === Qt.Key_Down
@@ -796,8 +930,21 @@ Item {
             } else if (event.key === Qt.Key_PageUp) {
               root.move(-root.maxRows)
               event.accepted = true
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                       && (event.modifiers & Qt.ControlModifier)) {
+              root.ask(input.text.trim())
+              event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.activate(root.rows[root.selectedIndex])
+              if (event.modifiers & Qt.ShiftModifier) {
+                // The second action, by keystroke rather than through the
+                // panel. On a web row that is "ask ChatGPT" instead of Google,
+                // which is the swap people make constantly.
+                var actions = root.currentActions()
+                if (actions.length > 1) root.runAction(actions[1])
+                else root.activate(root.rows[root.selectedIndex])
+              } else {
+                root.activate(root.rows[root.selectedIndex])
+              }
               event.accepted = true
             }
           }
@@ -831,7 +978,7 @@ Item {
         anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
-        active: root.rows.length > 0
+        active: root.rows.length > 0 || root.answerMode
 
         sourceComponent: {
           switch (root.activeView) {
@@ -839,6 +986,7 @@ Item {
           case "cards": return cardsView
           case "split": return splitView
           case "grid": return gridView
+          case "answer": return answerView
           default: return listView
           }
         }
@@ -849,6 +997,7 @@ Item {
       Component { id: cardsView; ResultCards { launcher: root; width: resultsArea.width } }
       Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width } }
       Component { id: gridView;  ResultGrid  { launcher: root; width: resultsArea.width } }
+      Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width } }
 
       // The hint bar: what Enter does, and that there is more on Ctrl+K.
       Item {
@@ -856,8 +1005,8 @@ Item {
         anchors.top: resultsArea.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        height: root.rows.length > 0 ? Style.space(30) : 0
-        visible: root.rows.length > 0
+        height: (root.rows.length > 0 || root.answerMode) ? Style.space(30) : 0
+        visible: root.rows.length > 0 || root.answerMode
 
         Rectangle {
           anchors.top: parent.top
@@ -884,8 +1033,16 @@ Item {
           anchors.right: parent.right
           anchors.rightMargin: Style.space(18)
           anchors.verticalCenter: parent.verticalCenter
-          visible: root.currentActions().length > 1
-          text: "\u2303K  Actions"
+          visible: root.currentActions().length > 1 || root.answerMode || root.answerAvailable
+          text: {
+            if (root.answerMode) return root.answerStreaming ? "\u238B  Stop" : "\u238B  Back"
+            var actions = root.currentActions()
+            var parts = []
+            if (actions.length > 1) parts.push("\u21E7\u21B5  " + String(actions[1].title))
+            if (root.answerAvailable && input.text.trim() !== "") parts.push("\u2303\u21B5  Ask " + root.answerModel)
+            if (actions.length > 1) parts.push("\u2303K  Actions")
+            return parts.join("     ")
+          }
           color: Qt.darker(root.foreground, 1.8)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

@@ -77,9 +77,36 @@ gh:omarchy plugin          your GitHub quicklink, with an argument
 
 `=`, `>`, `?` and `/` are shorthands for calc, commands, web and file.
 
-`Ctrl+K` opens everything else the selected result can do: copy the answer
-rather than the expression, ask ChatGPT rather than Google, copy a file's path
-rather than open it.
+`Enter` runs the primary action. `Shift+Enter` runs the second one, which on a
+web search is your second engine. `Ctrl+K` shows the rest: copy the answer
+rather than the expression, copy a file's path rather than open it.
+
+### Asking a model
+
+`Ctrl+Enter` asks a model and streams the answer into the card, without leaving
+the launcher or opening a browser.
+
+Providers are tried in order and the first one installed is used, so if you
+already have the Claude, Codex or Gemini CLI signed in, this works with no
+configuration. Ollama, aichat and mods are in the list too. Pin one with
+`"askProvider": "gemini"`, or add your own:
+
+```json
+{
+  "askProvider": "mine",
+  "askProviders": [
+    { "id": "mine", "title": "My Model",
+      "command": "my-cli --stream {query}",
+      "when": "command -v my-cli" }
+  ]
+}
+```
+
+A provider's command gets `{query}` shell-quoted and `{model}` unquoted. It has
+to write to stdout as it goes and exit when it is done; anything with that shape
+works, including a curl to an API you host. The launcher runs it with stdin
+closed and stderr folded in, so a CLI that would otherwise wait for input
+answers straight away and a real failure is visible rather than silent.
 
 Settings live in `~/.config/omarchy/omarchycast.json` and take effect as you
 save. That is where the default engine lives (Google), and your quicklinks:
