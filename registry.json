@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
+  "generated_at_commit": "ccb5bd10cb98c464574095ca7fc07fea8df11297",
   "units": {
     "accents": {
       "name": "accents",
@@ -248,9 +248,9 @@
       "path": "units/notes",
       "files": 3,
       "hash": "80b079c8df65d138c0d90589e75a474f145aa95d2e56e4c842bb4aa5bf7df7fd",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "4969d3d7eebb5dc47ebf700a6221656a9a72354d",
+      "updated": "2026-08-18T18:51:00-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omacast": {
       "name": "omacast",
@@ -272,8 +272,8 @@
       "path": "units/omacast",
       "files": 22,
       "hash": "4759678a2e2beae6698747f3a379f8ece8ee2b358c17e9c7f1d7d8280eebbe78",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
+      "commit": "4969d3d7eebb5dc47ebf700a6221656a9a72354d",
+      "updated": "2026-08-18T18:51:00-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
