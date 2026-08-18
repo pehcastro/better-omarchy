@@ -12,151 +12,68 @@ lets you pick what you want. Nothing turns on without you choosing it.
 
 ## Units
 
-**omacast** is the launcher. One box that answers with apps, arithmetic,
-Omarchy commands, your own links, or the web, and shows each of those the way it
-deserves rather than as one long list. `Ctrl+K` on any result shows what else it
-can do.
+Twelve of them. `bo list` shows what is on, and every unit has a README beside
+it with the detail.
 
-**workspace-names** shows workspace names in the bar instead of numbers.
-`Super+F2` opens a rename panel under the workspace you are renaming, with a
-switch that decides between `coding` and `coding (2)`.
+**[omacast](units/omacast/README.md)** is the launcher, and most of what this
+repo is. Apps, arithmetic, files, images, windows, music, radio, clipboard,
+notes, reminders, themes, a calendar, a system dashboard and the web, in one
+box. Its extensions ship inside it, because none of them works without it.
 
-**undo-close** reopens the window you closed last, on `Super+Z`. Exactly one:
-press it twice and the second press does nothing.
+**[keys-full](units/keys-full/README.md)**,
+**[keys-balanced](units/keys-balanced/README.md)** and
+**[keys-additive](units/keys-additive/README.md)** decide what opens the
+launcher. Exactly one at a time. Start with additive if you are unsure: it takes
+`Super+Shift+K` and changes nothing else.
 
-**cpu-meter** puts CPU load in the bar and opens btop on click. Omarchy ships no
-CPU widget.
+**[spotify-library](units/spotify-library/README.md)** adds your playlists and
+saved library on `sp:`, through the Web API. The only unit that needs setting
+up, and the only one you do not need for music to work.
 
-**zen-mode** lets a lone tiled window fill its workspace, with no gaps, border
-or rounding. Open a second window and all three come back.
+**[workspace-names](units/workspace-names/README.md)** puts workspace names in
+the bar instead of numbers, with `Super+F2` to rename the one you are on.
 
-**familiar-keys** gives you the keys you already know: `Alt+F4` closes,
-`Super+E` opens files, `Super+B` opens the browser, `Super+R` opens the app
-menu.
+**[undo-close](units/undo-close/README.md)** reopens the window you closed last,
+on `Super+Z`. Exactly one: press twice and the second press does nothing.
 
-**accents** types accented characters with AltGr, on a US keyboard. Plain typing
-is unchanged: `'` and `"` do not wait for a second key.
+**[cpu-meter](units/cpu-meter/README.md)** puts CPU load in the bar and opens
+btop on click. Omarchy ships no CPU widget.
 
-**stay-awake** never locks or dims on idle. It sets Omarchy's own flag, so
-`Super+Ctrl+I` still toggles it back.
+**[zen-mode](units/zen-mode/README.md)** lets a lone tiled window fill its
+workspace, with no gaps, border or rounding. Open a second and all three return.
 
-**display-local** holds your monitor layout, gitignored, since that one file is
-wrong on any other machine.
+**[familiar-keys](units/familiar-keys/README.md)** gives you `Alt+F4`,
+`Super+E`, `Super+B` and `Super+R`, without replacing any Omarchy default.
 
-**keys-full**, **keys-balanced** and **keys-additive** decide what opens the
-launcher. Exactly one at a time: `bo` refuses the second.
+**[accents](units/accents/README.md)** types accented characters with AltGr on a
+US keyboard. Plain typing is unchanged.
 
-### Launcher extensions
+**[stay-awake](units/stay-awake/README.md)** never locks or dims on idle, using
+Omarchy's own flag so `Super+Ctrl+I` still toggles it back.
 
-Each is its own unit, so you take the ones you want.
-
-**search-files** answers `file:report format:pdf`.
-**search-images** answers `img:` with thumbnails, dimensions and size.
-**search-windows** answers `win:` and jumps to an open window.
-**search-music** answers `music:` with cover art, a progress bar and transport
-control over MPRIS, so it works with any player, not just Spotify.
-**clipboard-history** answers `ch:` from the history Omarchy already keeps.
-**natural-commands** answers `alarm:30 minutes and 45 seconds tea is ready`,
-and `theme:tokyo` to switch theme by name.
+**[display-local](units/display-local/README.md)** holds your monitor layout,
+gitignored, since that one file is wrong on any other machine.
 
 ## The launcher
 
-Type anything. Apps, commands and your quicklinks come back ranked together.
-Type `2+2*10` or `10 usd to eur` and the answer arrives large, with the
-expression under it. Type something nothing matches and it offers to search the
-web.
-
-A `keyword:value` filter narrows to one source and tells it what you want:
+See [units/omacast/README.md](units/omacast/README.md) for what you can type,
+every key, the settings file, and how to write your own extension. The short
+version:
 
 ```
-file:report format:pdf     PDFs called report
-img: in:~/work             thumbnails from somewhere else
-win:chrome                 jump to that window
-music:                     what is playing, with the cover
-ch:token                   what you copied, with a preview
+firefox                    apps, commands and quicklinks together
+2+2*10                     the answer, large
+27 november 2027           the day of week, and how far away
+file:report format:pdf     files, filtered
+img:                       thumbnails, with dimensions
+spotify:daft punk          search and play, no account needed
+note:standup               that note, or the offer to write it
 alarm:25m tea              a reminder, said the way you would say it
-gh:omarchy plugin          your GitHub quicklink, with an argument
+sys:                       battery, memory, disk, uptime
 ```
 
-`=`, `>`, `?` and `/` are shorthands for calc, commands, web and file.
-
-`Enter` runs the primary action. `Shift+Enter` runs the second one, which on a
-web search is your second engine. `Ctrl+K` shows the rest: copy the answer
-rather than the expression, copy a file's path rather than open it.
-
-### Asking a model
-
-`Ctrl+Enter` asks a model and streams the answer into the card, without leaving
-the launcher or opening a browser.
-
-Providers are tried in order and the first one installed is used, so if you
-already have the Claude, Codex or Gemini CLI signed in, this works with no
-configuration. Ollama, aichat and mods are in the list too. Pin one with
-`"askProvider": "gemini"`, or add your own:
-
-```json
-{
-  "askProvider": "mine",
-  "askProviders": [
-    { "id": "mine", "title": "My Model",
-      "command": "my-cli --stream {query}",
-      "when": "command -v my-cli" }
-  ]
-}
-```
-
-A provider's command gets `{query}` shell-quoted and `{model}` unquoted. It has
-to write to stdout as it goes and exit when it is done; anything with that shape
-works, including a curl to an API you host. The launcher runs it with stdin
-closed and stderr folded in, so a CLI that would otherwise wait for input
-answers straight away and a real failure is visible rather than silent.
-
-Settings live in `~/.config/omarchy/omacast.json` and take effect as you
-save. That is where the default engine lives (Google), and your quicklinks:
-
-```json
-{
-  "defaultEngine": "google",
-  "quicklinks": [
-    { "title": "GitHub", "keyword": "gh", "tags": ["dev"],
-      "url": "https://github.com/search?q={}" },
-    { "title": "Downloads", "keyword": "dl",
-      "open": "nautilus --new-window ~/Downloads" }
-  ]
-}
-```
-
-### Writing an extension
-
-An extension is a JSON file in `~/.config/omarchy/omacast/extensions/`
-naming a keyword and a command. The command prints JSON rows, so it can be a
-shell script, a Python file, or anything else that writes to stdout.
-
-```json
-{
-  "id": "weather",
-  "keyword": "wx",
-  "title": "Weather",
-  "search": "my-weather-lookup {query}",
-  "when": "command -v my-weather-lookup",
-  "view": "hero"
-}
-```
-
-Each row is `{ id, title, subtitle, exec }`, plus optional `detail`,
-`accessory`, `art`, `score`, `progress` and its own `actions`. `view` picks the
-layout: `list`, `hero`, `cards`, `grid` or `split`.
-
-`when` is checked once when the extension loads, not per keystroke, so an
-extension for software you do not have costs nothing. Unscoped, an extension
-stays quiet unless it sets `"always": true`.
-
-Ship one as a unit by putting the JSON under
-`config/omarchy/omacast/extensions/` and the script under `bin/`.
-
-`bo new extension <name>` writes that unit for you, and what it writes already
-answers: add it, type `<name>:hello`, and the row comes back with hello in it.
-Replace the body of the script and keep the shape.
+`Enter` runs the primary action, `Shift+Enter` the second, `Ctrl+Enter` asks a
+model and streams the answer in, `Ctrl+K` shows the rest.
 
 ## bo
 
@@ -215,7 +132,8 @@ your `PATH` and QML into your shell process, unsandboxed. Read what you turn on.
 
 ## Writing a unit
 
-One folder. The only required file is `unit.toml`.
+One folder, and a README beside it saying how to use the thing. The only
+required file is `unit.toml`.
 
 ```bash
 bo new unit my-thing                   hypr/*.lua
@@ -229,6 +147,7 @@ exists. It ends by printing the commands to run next.
 ```
 units/undo-close/
   unit.toml        what this is, what it needs, which keys it claims
+  README.md        how to use it, and what was hard about building it
   hypr/*.lua       linked into ~/.config/hypr/modules.d/
   bin/*            linked into ~/.local/bin/
   plugin/          linked into ~/.config/omarchy/plugins/<id>/   (kind = plugin)

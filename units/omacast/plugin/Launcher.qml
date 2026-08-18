@@ -80,9 +80,32 @@ Item {
   readonly property string answerModel: root.answerProvider
     ? String(root.answerProvider.title || root.answerProvider.id) : ""
 
+  // Every keyword and alias anything has registered: the built-ins, whatever
+  // the extensions declare, the extra filters those extensions read, and the
+  // user's own quicklinks. Query.parse only treats a `word:` as a filter when
+  // the word is in here.
+  readonly property var knownKeywords: {
+    var out = ["calc", "math", "run", "command", "commands", "web", "search",
+               "google", "ddg", "apps", "app", "launch",
+               // Extra filters the built-ins read alongside their own keyword.
+               "format", "in", "type"]
+
+    for (var i = 0; i < root.extensions.length; i++) {
+      out.push(root.extensions[i].keyword)
+      var aliases = root.extensions[i].aliases || []
+      for (var j = 0; j < aliases.length; j++) out.push(aliases[j])
+    }
+
+    var links = root.config.quicklinks || []
+    for (var k = 0; k < links.length; k++) {
+      if (links[k].keyword) out.push(String(links[k].keyword).toLowerCase())
+    }
+    return out
+  }
+
   // What the active filter is called, for the chip in the header.
   readonly property string scopeLabel: {
-    var query = Query.parse(root.queryText, root.epoch)
+    var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
     if (query.scope === "") return ""
 
     for (var i = 0; i < root.extensions.length; i++) {
@@ -184,7 +207,7 @@ Item {
 
   function setQuery(text) {
     root.queryText = text
-    var query = Query.parse(text, ++root.epoch)
+    var query = Query.parse(text, ++root.epoch, root.knownKeywords)
 
     queryApps(query)
     queryCommands(query)
@@ -214,7 +237,7 @@ Item {
   }
 
   function rebuild() {
-    var query = Query.parse(root.queryText, root.epoch)
+    var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
     root.rows = Rank.merge(root.buckets, query.scope, 60)
 
     if (!root.cursorMoved) {
@@ -735,7 +758,7 @@ Item {
     function finish(text) {
       if (calc.inflightEpoch !== root.epoch) return
 
-      var query = Query.parse(root.queryText, root.epoch)
+      var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
       var row = Calc.parse(calc.pendingText, text)
       if (!row) return root.put("calc", query, [])
 
@@ -796,7 +819,9 @@ Item {
     var loaded = []
     for (var i = 0; i < parsed.length; i++) {
       var ext = Extensions.normalize(parsed[i], parsed[i].__source)
-      if (ext) loaded.push(ext)
+      if (!ext) continue
+      if (!Settings.extensionEnabled(root.config, ext.id)) continue
+      loaded.push(ext)
     }
     root.extensions = loaded
   }
@@ -809,6 +834,7 @@ Item {
     onLoaded: {
       root.config = Settings.merge(text())
       root.checkAsk()
+      root.loadExtensions()
     }
     onFileChanged: reload()
     // No file is the normal case, so fall back to the defaults rather than

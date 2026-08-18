@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "8092fad1e73780602b5b8cbea01d1aa1bf079521",
+  "generated_at_commit": "b394f8dc5c9683c9c86ccc35acccfc40c7ca9082",
   "units": {
     "accents": {
       "name": "accents",
@@ -22,34 +22,10 @@
       "keys": [],
       "pluginId": "",
       "path": "units/accents",
-      "files": 2,
-      "hash": "c386a203ebf3183e68e6489d561e91ba4da69f26b467112da19d52a8b8388732",
+      "files": 3,
+      "hash": "5a5797ca975b0faa44adf2f276eb785dda24cc55cf54299a29c3bdede96ea3f3",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "clipboard-history": {
-      "name": "clipboard-history",
-      "summary": "Search what you copied, from the launcher, with ch:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "clipboard"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "jq",
-        "wl-copy"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/clipboard-history",
-      "files": 3,
-      "hash": "f8520895df44a9537117f4f4dbbbba05354b7eea4b40bb5c3f6481f9523671ca",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "cpu-meter": {
@@ -69,8 +45,8 @@
       "keys": [],
       "pluginId": "bo.cpu-meter",
       "path": "units/cpu-meter",
-      "files": 3,
-      "hash": "7280d73882802df0a47ca2f005b126f2530217bde1fc6be513942c921666fa15",
+      "files": 4,
+      "hash": "aa4c270274f2311589d4f3b3320d69ba680208118ee93adf91c176dbb645f3af",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -93,7 +69,7 @@
       "pluginId": "",
       "path": "units/display-local",
       "files": 3,
-      "hash": "503c6eeb115d16ad87da08c1f67dbcf67587f0bb7378a07d2fd2f04d83b96ecb",
+      "hash": "59b7c4f4e5f38cf8bf45a6b00efd2df5ce2eec88d0f1dd5d278e3afb6ea4b824",
       "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
       "updated": "2026-08-18T17:49:29-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -118,8 +94,8 @@
       ],
       "pluginId": "",
       "path": "units/familiar-keys",
-      "files": 2,
-      "hash": "36753800292cd4eea8027e9b29cf53258219de836fa0f648d81190694c4d2024",
+      "files": 3,
+      "hash": "545b6d449499aa2f6104f6848f138cea5faeff37e2d1c64875464f9920c29c8f",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -143,8 +119,8 @@
       ],
       "pluginId": "",
       "path": "units/keys-additive",
-      "files": 2,
-      "hash": "dc45cccb12c7638e4317b94f98baddeb8158a8e550091d918c36406ab043408f",
+      "files": 3,
+      "hash": "99433b9e7878acc2a0ce8890f146f077915a7273824f8c6993a2560a35b0dfe3",
       "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -169,8 +145,8 @@
       ],
       "pluginId": "",
       "path": "units/keys-balanced",
-      "files": 2,
-      "hash": "6896be2f847f8e12697d8201f85da59f70ca033ea6c1b0305f7539cae3cb6da8",
+      "files": 3,
+      "hash": "729dcc5e19d2d959cc8d31ebed8cbd8af99db5358fce63a7e2cf4e9f545269b3",
       "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
       "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -197,65 +173,16 @@
       ],
       "pluginId": "",
       "path": "units/keys-full",
-      "files": 2,
-      "hash": "840cbb6fae50bca18ce7798c86b6d1cdb501b991c665c874eb0cba15e48a748b",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "natural-commands": {
-      "name": "natural-commands",
-      "summary": "Set a reminder, or switch theme, by typing what you mean",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "reminder",
-        "theme"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "jq",
-        "omarchy"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/natural-commands",
-      "files": 6,
-      "hash": "a3156e296bb284f8dc34e27bb186bdc84aeddbecc4d83c9a5217d28d2a0c1f25",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "notes": {
-      "name": "notes",
-      "summary": "Write and find markdown notes, with note:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "notes",
-        "markdown"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/notes",
       "files": 3,
-      "hash": "80b079c8df65d138c0d90589e75a474f145aa95d2e56e4c842bb4aa5bf7df7fd",
-      "commit": "4969d3d7eebb5dc47ebf700a6221656a9a72354d",
-      "updated": "2026-08-18T18:51:00-03:00",
+      "hash": "0b7a81fcc472aad63c430161f54c76cdc83d0db47ae27a913abcffeded9e15ff",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omacast": {
       "name": "omacast",
-      "summary": "A launcher: apps, math, settings, and the web in one box",
-      "version": "0.1.0",
+      "summary": "A launcher: apps, maths, files, music, notes and the web in one box",
+      "version": "0.2.0",
       "kind": "plugin",
       "category": "Productivity",
       "tags": [
@@ -265,142 +192,20 @@
       ],
       "author": "pehcastro",
       "needs": [
-        "qalc"
+        "qalc",
+        "jq",
+        "curl",
+        "fd",
+        "busctl",
+        "mpv"
       ],
       "keys": [],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 23,
-      "hash": "c34841f423bcc49843d61f3d695c6204e3e2b57d4dea4e9aa8753a047b07df33",
-      "commit": "cac9beb9e31ce1b56949e68f4c3ae4b99667f89d",
-      "updated": "2026-08-18T19:24:33-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "search-files": {
-      "name": "search-files",
-      "summary": "Find files from the launcher with file: and format:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "files",
-        "search"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "fd",
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/search-files",
-      "files": 3,
-      "hash": "5f3d4ca55b379c7fdb5bfba3ad3b70c1d0274b809190e946b0b9a74fd7cd1ea1",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "search-images": {
-      "name": "search-images",
-      "summary": "Browse your images as thumbnails, with img:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "launcher",
-        "images",
-        "search"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "fd",
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/search-images",
-      "files": 3,
-      "hash": "8d5d7fe7d6e01335e2d4493d758950fae0541c7f1f0e1738c800e014731832d9",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "search-radio": {
-      "name": "search-radio",
-      "summary": "Play internet radio from the launcher, with radio:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Media",
-      "tags": [
-        "launcher",
-        "radio",
-        "music"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "curl",
-        "jq",
-        "mpv"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/search-radio",
-      "files": 3,
-      "hash": "86f87e174685d694f884940ad2d5faac068d782851aec2dfe95a087772e601da",
-      "commit": "cac9beb9e31ce1b56949e68f4c3ae4b99667f89d",
-      "updated": "2026-08-18T19:24:33-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "search-windows": {
-      "name": "search-windows",
-      "summary": "Jump to an open window from the launcher with win:",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Compositor",
-      "tags": [
-        "launcher",
-        "windows",
-        "hyprland"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "hyprctl",
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/search-windows",
-      "files": 3,
-      "hash": "8239abab35010da56b2fad9be499f44d511bfca87eb67d8b9022a406ee70835d",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "spotify": {
-      "name": "spotify",
-      "summary": "Spotify in the launcher: a player, and search that needs no account",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Media",
-      "tags": [
-        "launcher",
-        "music",
-        "mpris"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "busctl",
-        "jq",
-        "curl"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/spotify",
-      "files": 4,
-      "hash": "db928d11c28e9a390f8513288e8ad8394a4c3c5de91b7c40c8ec12ce58d90360",
-      "commit": "01cf2cbab495a74a6a857ca6648ebbef020ec4c1",
-      "updated": "2026-08-18T18:48:18-03:00",
+      "files": 49,
+      "hash": "e894a315f94cc8b54af0b9575003880c5a7917437f4ec3cd47683714971541c4",
+      "commit": "bd72c5e1105b85b26df718f96fa86f2f94f63262",
+      "updated": "2026-08-18T19:39:58-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "spotify-library": {
@@ -424,9 +229,9 @@
       "path": "units/spotify-library",
       "files": 5,
       "hash": "29f27f2b7cc4e482c14ba5274b635957851d1a6ae7c7170907862a8d6cc43be7",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "bd72c5e1105b85b26df718f96fa86f2f94f63262",
+      "updated": "2026-08-18T19:39:58-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "stay-awake": {
       "name": "stay-awake",
@@ -445,34 +250,10 @@
       "keys": [],
       "pluginId": "",
       "path": "units/stay-awake",
-      "files": 3,
-      "hash": "d2891dafbbc6a6a61680a17709a1d8f27ca852bb083aecc85c438764349822b5",
+      "files": 4,
+      "hash": "ce26b0a9909fc9c321d988c4765818519357e59eead9aa828db92ce2cb308b84",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "system-tools": {
-      "name": "system-tools",
-      "summary": "Dates, a calendar and system status, in the launcher",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "System",
-      "tags": [
-        "launcher",
-        "calendar",
-        "system"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "jq"
-      ],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/system-tools",
-      "files": 7,
-      "hash": "720d7e99d48aab1fe08fbc514bb320610b461ac31d1cb3aee47d6996ec0b3b87",
-      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
-      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
@@ -496,8 +277,8 @@
       ],
       "pluginId": "",
       "path": "units/undo-close",
-      "files": 4,
-      "hash": "2de4ece189c2e85171ad59c4e4eb29e391737b262771afab43c10d1faf741b93",
+      "files": 5,
+      "hash": "5740d2f8736f9ae61b2551990f8e95482c70acc043c30f01ed72706159eaaf84",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -522,8 +303,8 @@
       ],
       "pluginId": "bo.workspace-names",
       "path": "units/workspace-names",
-      "files": 4,
-      "hash": "a8492a99e20051f3ff2cd797072c6c55bc12cf034f3e233aeaad7bd4b846191a",
+      "files": 5,
+      "hash": "8490886be54120b7bbe96eff088345b845ef37b45ee350fabb2d38e267aeb6a6",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -543,8 +324,8 @@
       "keys": [],
       "pluginId": "",
       "path": "units/zen-mode",
-      "files": 2,
-      "hash": "d098d5ed1cc561f3e08b663ca7571b1b381aa939db4b6df0bcd23b002e1e21d7",
+      "files": 3,
+      "hash": "bfa2daa109ab5480b2ea32d489602a9e802cdc22d64e1add8b33d193dc6e8a95",
       "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
       "updated": "2026-08-18T17:39:14-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"

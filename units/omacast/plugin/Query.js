@@ -25,10 +25,26 @@ var SIGILS = {
 // provider that lists things needs a way to be asked for all of them.
 var FILTER = /([a-z][a-z0-9_-]*):(?:"([^"]*)"|'([^']*)'|(\S*))/gi
 
-function parse(raw, epoch) {
+// `known` is every keyword and alias anything has registered. A `word:` that is
+// not in it stays as literal text, so typing `anything:` searches for that
+// rather than silently addressing a provider nobody wrote. It is also what
+// keeps `https://example.com` from being read as an `https` filter.
+function parse(raw, epoch, known) {
   var text = String(raw || "")
   var filters = {}
   var order = []
+
+  var registered = {}
+  if (known) {
+    for (var k = 0; k < known.length; k++) registered[String(known[k]).toLowerCase()] = true
+  }
+
+  function isKnown(keyword) {
+    // With nothing registered yet, during the first keystroke after a reload,
+    // accept everything rather than ignoring filters that do exist.
+    if (!known) return true
+    return registered[keyword] === true
+  }
 
   // A leading sigil is rewritten into its filter, so everything downstream sees
   // one shape rather than two.
@@ -43,8 +59,10 @@ function parse(raw, epoch) {
 
   // Pull the filters out, and whatever is left is the free text.
   var rest = text.replace(FILTER, function (whole, key, dq, sq, bare) {
-    var value = dq !== undefined ? dq : (sq !== undefined ? sq : (bare || ""))
     key = key.toLowerCase()
+    if (!isKnown(key)) return whole
+
+    var value = dq !== undefined ? dq : (sq !== undefined ? sq : (bare || ""))
     filters[key] = value
     if (order.indexOf(key) < 0) order.push(key)
     return " "

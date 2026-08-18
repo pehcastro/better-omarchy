@@ -57,6 +57,15 @@ var DEFAULTS = {
     { id: "mods", title: "mods", command: "mods {query}", when: "command -v mods" }
   ],
 
+  // Which built-in extensions answer. They ship with the launcher because none
+  // of them works without it, so turning one off belongs here rather than in
+  // `bo`: `bo remove files` would have meant uninstalling half a launcher.
+  //
+  // Absent means on. Name one false to silence it.
+  //
+  //   "extensions": { "radio": false, "theme": false }
+  extensions: {},
+
   maxRows: 9,
   cardWidth: 620,
 
@@ -120,6 +129,13 @@ function providers(config) {
   // An id that matches nothing is a typo, not an instruction to ask nothing,
   // so fall back to the full list rather than going silent.
   return ordered.length > 0 ? ordered : all
+}
+
+// An extension is on unless the settings say otherwise, so a new one that ships
+// in an update starts working rather than waiting to be listed.
+function extensionEnabled(config, id) {
+  var listed = config.extensions || {}
+  return listed[id] !== false
 }
 
 function engine(config, id) {
