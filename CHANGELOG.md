@@ -27,6 +27,7 @@ This file is about bo and the marketplace itself.
 - **units:** Add notes, and select a result on hover
 - **omacast:** Make music a player, and search it with no setup at all
 - **spotify:** Make spotify a provider, and finish the transport
+- **nkz-keys:** Copy a selected file's path with ctrl+shift+g
 
 ### Fixes
 
@@ -44,6 +45,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
