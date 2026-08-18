@@ -35,6 +35,7 @@ This file is about bo and the marketplace itself.
 ### Refactors
 
 - **Breaking:** **omacast:** Rename omarchycast to omacast
+- **Breaking:** **omacast:** Ship the launcher extensions inside the launcher
 
 ### Documentation
 
@@ -42,6 +43,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
