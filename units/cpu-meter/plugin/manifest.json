@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "bo.cpu",
+  "id": "bo.cpu-meter",
   "name": "Activity",
   "version": "1.0.0",
   "author": "better-omarchy",

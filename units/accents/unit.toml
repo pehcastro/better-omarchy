@@ -1,5 +1,5 @@
-name     = "keyboard-intl"
-summary  = "US keyboard with AltGr accents (altgr-intl)"
+name     = "accents"
+summary  = "Type accented characters with AltGr"
 version  = "0.1.0"
 category = "Hardware"
 tags     = ["hyprland","keyboard"]

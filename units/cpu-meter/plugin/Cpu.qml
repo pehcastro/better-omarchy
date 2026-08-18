@@ -5,7 +5,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "bo.cpu"
+  moduleName: "bo.cpu-meter"
 
   // Percent busy since the previous sample, from /proc/stat's aggregate line.
   property int usage: 0

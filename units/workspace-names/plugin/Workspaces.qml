@@ -13,8 +13,8 @@ import qs.Ui
 // `hyprctl workspaces` stays truthful for anything that reads it.
 Panel {
   id: root
-  moduleName: "bo.workspaces"
-  ipcTarget: "bo.workspaces"
+  moduleName: "bo.workspace-names"
+  ipcTarget: "bo.workspace-names"
 
   // Panel is a bare Item, so the two geometry properties BarWidget would
   // have supplied are lifted off the host here.
@@ -150,7 +150,7 @@ Panel {
     // hyprctl in step and is not what the row reads.
     var hyprName = label === "" ? String(id) : (keep ? label + " (" + id + ")" : label)
     root.bar.run(
-      "omarchy bar set bo.workspaces names " + Util.shellQuote(JSON.stringify(next)) + " --json" +
+      "omarchy bar set bo.workspace-names names " + Util.shellQuote(JSON.stringify(next)) + " --json" +
       " ; hyprctl dispatch " + Util.shellQuote("hl.dsp.workspace.rename({ workspace = " + id + ", name = \"" + hyprName.replace(/"/g, "") + "\" })")
     )
   }

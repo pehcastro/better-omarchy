@@ -1,5 +1,5 @@
-name     = "single-window-zen"
-summary  = "One tiled window drops its gaps, border and rounding"
+name     = "zen-mode"
+summary  = "A lone window fills the screen, no gaps or border"
 version  = "0.1.0"
 category = "Appearance"
 tags     = ["hyprland","layout"]

@@ -1,5 +1,5 @@
-name     = "windows-keys"
-summary  = "Windows habits: ALT+F4 closes, SUPER+E files, SUPER+B browser"
+name     = "familiar-keys"
+summary  = "Alt+F4 closes, Super+E files, Super+B browser"
 version  = "0.1.0"
 category = "Productivity"
 tags     = ["hyprland","keybindings"]

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "bo.workspaces",
+  "id": "bo.workspace-names",
   "name": "Workspaces",
   "version": "1.0.0",
   "author": "better-omarchy",

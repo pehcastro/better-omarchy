@@ -1,5 +1,5 @@
-name     = "reopen"
-summary  = "SUPER+Z reopens the window you closed last"
+name     = "undo-close"
+summary  = "Reopen the window you closed last"
 version  = "0.1.0"
 category = "Productivity"
 tags     = ["hyprland","windows"]

@@ -5,11 +5,32 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
+  "generated_at_commit": "3483760771c2dfab885a9e94a5cb3b7ca5080584",
   "units": {
-    "cpu": {
-      "name": "cpu",
-      "summary": "CPU load in the bar, opens btop on click",
+    "accents": {
+      "name": "accents",
+      "summary": "Type accented characters with AltGr",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Hardware",
+      "tags": [
+        "hyprland",
+        "keyboard"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/accents",
+      "files": 2,
+      "hash": "c386a203ebf3183e68e6489d561e91ba4da69f26b467112da19d52a8b8388732",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "cpu-meter": {
+      "name": "cpu-meter",
+      "summary": "CPU load in the bar, click for btop",
       "version": "0.1.0",
       "kind": "plugin",
       "category": "System",
@@ -22,38 +43,17 @@
         "btop"
       ],
       "keys": [],
-      "pluginId": "bo.cpu",
-      "path": "units/cpu",
+      "pluginId": "bo.cpu-meter",
+      "path": "units/cpu-meter",
       "files": 3,
-      "hash": "66bd9a3d8f46639fe59520d8d4f2db5e63f4fc92ba12a55cb2310d295d8b6fcb",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "7280d73882802df0a47ca2f005b126f2530217bde1fc6be513942c921666fa15",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
-    "keyboard-intl": {
-      "name": "keyboard-intl",
-      "summary": "US keyboard with AltGr accents (altgr-intl)",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Hardware",
-      "tags": [
-        "hyprland",
-        "keyboard"
-      ],
-      "author": "pehcastro",
-      "needs": [],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/keyboard-intl",
-      "files": 2,
-      "hash": "a752a8c57dd93a5366304dd24814b9bf9aa5ecce1dc653d901ba1664b47aab29",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "my-apps": {
-      "name": "my-apps",
-      "summary": "App bindings that differ from Omarchy's defaults",
+    "familiar-keys": {
+      "name": "familiar-keys",
+      "summary": "Alt+F4 closes, Super+E files, Super+B browser",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -64,19 +64,22 @@
       "author": "pehcastro",
       "needs": [],
       "keys": [
-        "SUPER+SHIFT+W"
+        "ALT+F4",
+        "SUPER+E",
+        "SUPER+B",
+        "SUPER+R"
       ],
       "pluginId": "",
-      "path": "units/my-apps",
+      "path": "units/familiar-keys",
       "files": 2,
-      "hash": "dfa34aab5e0c361fb9fcd6f0247726bc90916ca850cdd86caa186c2046582faa",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "36753800292cd4eea8027e9b29cf53258219de836fa0f648d81190694c4d2024",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
-    "no-idle-lock": {
-      "name": "no-idle-lock",
-      "summary": "Never lock or start the screensaver on idle",
+    "stay-awake": {
+      "name": "stay-awake",
+      "summary": "Never lock or dim on idle",
       "version": "0.1.0",
       "kind": "setting",
       "category": "System",
@@ -90,16 +93,16 @@
       ],
       "keys": [],
       "pluginId": "",
-      "path": "units/no-idle-lock",
+      "path": "units/stay-awake",
       "files": 3,
-      "hash": "9de5c9d872d24942377fe4650be470f2fda935b66c49c42a048b42a54a0cfe7d",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "d2891dafbbc6a6a61680a17709a1d8f27ca852bb083aecc85c438764349822b5",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
-    "reopen": {
-      "name": "reopen",
-      "summary": "SUPER+Z reopens the window you closed last",
+    "undo-close": {
+      "name": "undo-close",
+      "summary": "Reopen the window you closed last",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -117,63 +120,16 @@
         "SUPER+Z"
       ],
       "pluginId": "",
-      "path": "units/reopen",
+      "path": "units/undo-close",
       "files": 4,
-      "hash": "c658e30a83e41a93c07014925b740f4ad96e838f43571134d58b83db71696cca",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "2de4ece189c2e85171ad59c4e4eb29e391737b262771afab43c10d1faf741b93",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
-    "single-window-zen": {
-      "name": "single-window-zen",
-      "summary": "One tiled window drops its gaps, border and rounding",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Appearance",
-      "tags": [
-        "hyprland",
-        "layout"
-      ],
-      "author": "pehcastro",
-      "needs": [],
-      "keys": [],
-      "pluginId": "",
-      "path": "units/single-window-zen",
-      "files": 2,
-      "hash": "c21e0833f197c4e73e78e5b6d1d9b39598c0a7e5928111a5cc0695298d5714bc",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "windows-keys": {
-      "name": "windows-keys",
-      "summary": "Windows habits: ALT+F4 closes, SUPER+E files, SUPER+B browser",
-      "version": "0.1.0",
-      "kind": "hypr",
-      "category": "Productivity",
-      "tags": [
-        "hyprland",
-        "keybindings"
-      ],
-      "author": "pehcastro",
-      "needs": [],
-      "keys": [
-        "ALT+F4",
-        "SUPER+E",
-        "SUPER+B",
-        "SUPER+R"
-      ],
-      "pluginId": "",
-      "path": "units/windows-keys",
-      "files": 2,
-      "hash": "05559c74c93015350b620117626fcbba0c773f1f7ed403b6a6aa403d0539221c",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "workspaces": {
-      "name": "workspaces",
-      "summary": "Workspace names in the bar, with an inline rename panel",
+    "workspace-names": {
+      "name": "workspace-names",
+      "summary": "Workspace names in the bar, with a rename panel",
       "version": "0.1.0",
       "kind": "plugin",
       "category": "Compositor",
@@ -189,13 +145,34 @@
       "keys": [
         "SUPER+F2"
       ],
-      "pluginId": "bo.workspaces",
-      "path": "units/workspaces",
+      "pluginId": "bo.workspace-names",
+      "path": "units/workspace-names",
       "files": 4,
-      "hash": "225073f34b485e0e9e0ef1c622dde3f3e1df02d74ff8e032e64179f507bc6d33",
-      "commit": "d5d89fe4451b327a1e7376eecb49190642abde47",
-      "updated": "2026-08-18T17:21:52-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
+      "hash": "a8492a99e20051f3ff2cd797072c6c55bc12cf034f3e233aeaad7bd4b846191a",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "zen-mode": {
+      "name": "zen-mode",
+      "summary": "A lone window fills the screen, no gaps or border",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Appearance",
+      "tags": [
+        "hyprland",
+        "layout"
+      ],
+      "author": "pehcastro",
+      "needs": [],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/zen-mode",
+      "files": 2,
+      "hash": "d098d5ed1cc561f3e08b663ca7571b1b381aa939db4b6df0bcd23b002e1e21d7",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     }
   }
 }

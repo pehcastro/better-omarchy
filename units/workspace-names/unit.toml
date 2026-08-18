@@ -1,10 +1,10 @@
-name     = "workspaces"
-summary  = "Workspace names in the bar, with an inline rename panel"
+name     = "workspace-names"
+summary  = "Workspace names in the bar, with a rename panel"
 version  = "0.1.0"
 category = "Compositor"
 tags     = ["bar","workspaces","hyprland"]
 author   = "pehcastro"
 kind     = "plugin"
-id       = "bo.workspaces"
+id       = "bo.workspace-names"
 needs    = ["hyprctl"]
 keys     = ["SUPER+F2"]
