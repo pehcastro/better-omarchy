@@ -16,7 +16,9 @@ Column {
   readonly property var current: launcher.rows.length > launcher.selectedIndex
     ? launcher.rows[launcher.selectedIndex] : null
 
-  readonly property int cellSize: Style.space(96)
+  // Big enough to tell one screenshot from another. A thumbnail you have to
+  // squint at is just a filename with extra steps.
+  readonly property int cellSize: Style.space(168)
   readonly property int columns: Math.max(1, Math.floor((width - Style.space(24)) / cellSize))
 
   spacing: 0
@@ -26,7 +28,7 @@ Column {
     width: view.width
     height: Math.min(
       Math.ceil(view.launcher.rows.length / view.columns),
-      3) * view.cellSize + Style.space(8)
+      2) * view.cellSize + Style.space(8)
     leftMargin: Style.space(12)
     rightMargin: Style.space(12)
     topMargin: Style.space(4)
@@ -58,7 +60,7 @@ Column {
 
       Image {
         anchors.fill: parent
-        anchors.margins: Style.space(10)
+        anchors.margins: Style.space(8)
         source: String(modelData.art || modelData.iconSource || "")
         fillMode: Image.PreserveAspectFit
         // Thumbnails are the whole point here, so they load off the main thread
