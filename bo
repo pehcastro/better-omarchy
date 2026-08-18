@@ -1232,12 +1232,14 @@ QML
 scaffold_apply() {
   scaffold_fill "$1" <<'SH'
 #!/bin/bash
-# Run once, by `bo add @NAME@`. bo records that a setting ran, not what it did,
-# so this has to be safe to run a second time.
+# Run once, by `bo add @NAME@`. bo records that a setting ran, not what it
+# did, so this has to be safe to run a second time.
 
 set -euo pipefail
 
-omarchy --version >/dev/null
+# The change itself goes here, for instance:
+#   omarchy toggle idle stay-awake >/dev/null
+true
 SH
 }
 
@@ -1249,7 +1251,9 @@ scaffold_revert() {
 
 set -euo pipefail
 
-omarchy --version >/dev/null
+# The undo goes here, for instance:
+#   omarchy toggle idle allow-idle >/dev/null
+true
 SH
 }
 

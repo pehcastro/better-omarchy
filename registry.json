@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+  "generated_at_commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
   "units": {
     "accents": {
       "name": "accents",
@@ -48,8 +48,8 @@
       "path": "units/clipboard-history",
       "files": 3,
       "hash": "f8520895df44a9537117f4f4dbbbba05354b7eea4b40bb5c3f6481f9523671ca",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "cpu-meter": {
@@ -145,8 +145,8 @@
       "path": "units/keys-additive",
       "files": 2,
       "hash": "dc45cccb12c7638e4317b94f98baddeb8158a8e550091d918c36406ab043408f",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-balanced": {
@@ -171,8 +171,8 @@
       "path": "units/keys-balanced",
       "files": 2,
       "hash": "6896be2f847f8e12697d8201f85da59f70ca033ea6c1b0305f7539cae3cb6da8",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-full": {
@@ -199,8 +199,8 @@
       "path": "units/keys-full",
       "files": 2,
       "hash": "840cbb6fae50bca18ce7798c86b6d1cdb501b991c665c874eb0cba15e48a748b",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "natural-commands": {
@@ -224,8 +224,8 @@
       "path": "units/natural-commands",
       "files": 6,
       "hash": "a3156e296bb284f8dc34e27bb186bdc84aeddbecc4d83c9a5217d28d2a0c1f25",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omacast": {
@@ -248,8 +248,8 @@
       "path": "units/omacast",
       "files": 22,
       "hash": "d113cead1a71408a47d29daad7dcb646c4d384cf9ea8b8ded4fe76859d58bece",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
@@ -273,8 +273,8 @@
       "path": "units/search-files",
       "files": 3,
       "hash": "5f3d4ca55b379c7fdb5bfba3ad3b70c1d0274b809190e946b0b9a74fd7cd1ea1",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-images": {
@@ -298,8 +298,8 @@
       "path": "units/search-images",
       "files": 3,
       "hash": "8d5d7fe7d6e01335e2d4493d758950fae0541c7f1f0e1738c800e014731832d9",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-music": {
@@ -323,8 +323,8 @@
       "path": "units/search-music",
       "files": 3,
       "hash": "e6c157e6eb4c6c622ed5b1fb51bf845ab268af9ba1b84e57498af4580e60f602",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-windows": {
@@ -348,8 +348,8 @@
       "path": "units/search-windows",
       "files": 3,
       "hash": "8239abab35010da56b2fad9be499f44d511bfca87eb67d8b9022a406ee70835d",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "spotify": {
@@ -372,9 +372,9 @@
       "pluginId": "",
       "path": "units/spotify",
       "files": 5,
-      "hash": "73f68e4781a64f1627e85448a44d8e82354d7687e8b08ff306d8ab8fb02199dc",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "hash": "9ec058c41a66071c89e20d22f0ff7be7e032206a04b195a7716e57b5ee60044d",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "stay-awake": {
@@ -420,8 +420,8 @@
       "path": "units/system-tools",
       "files": 7,
       "hash": "720d7e99d48aab1fe08fbc514bb320610b461ac31d1cb3aee47d6996ec0b3b87",
-      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
-      "updated": "2026-08-18T18:46:57-03:00",
+      "commit": "7d6a645118ee506b45d47a2e52028ff5d1164bb0",
+      "updated": "2026-08-18T18:47:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {

@@ -1,0 +1,211 @@
+#!/bin/bash
+# One time Spotify setup for OmaCast's `sp:` extension. Run it once by hand.
+#
+#   omacast-spotify-auth                asks for the client id
+#   omacast-spotify-auth <client-id>    takes it as an argument
+#
+# Authorization Code with PKCE, because it is the only Spotify flow that needs
+# no client secret, and a secret shipped inside a shell script on a laptop is
+# not a secret. Spotify's own desktop app token is not reachable by anything
+# else, so a personal developer app is the only way in. That part cannot be
+# automated: see the README.
+#
+# The browser is sent back to http://127.0.0.1:8888/callback, answered by a
+# python3 http server that serves one request and exits. Spotify stopped
+# accepting `localhost` as a redirect host in 2025, so it has to be the literal
+# 127.0.0.1. python3 rather than socat or nc: it is on every Omarchy install,
+# it can speak enough HTTP to close the tab politely, and it stops on its own.
+
+set -uo pipefail
+umask 077
+
+PORT=8888
+REDIRECT_URI="http://127.0.0.1:$PORT/callback"
+SCOPES="user-read-playback-state user-modify-playback-state user-read-private playlist-read-private user-library-read"
+AUTHORIZE_URL="https://accounts.spotify.com/authorize"
+TOKEN_URL="https://accounts.spotify.com/api/token"
+API_ME="https://api.spotify.com/v1/me"
+STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/omacast-spotify.json"
+
+die() { printf '%s\n' "$1" >&2; exit 1; }
+
+for tool in curl jq python3; do
+  command -v "$tool" >/dev/null 2>&1 || die "$tool is needed and is not installed."
+done
+
+enc() { jq -rn --arg v "${1:-}" '$v|@uri'; }
+
+client_id=${1:-}
+if [[ -z $client_id ]]; then
+  printf 'Spotify client id (from developer.spotify.com, see the unit README): '
+  read -r client_id
+fi
+client_id=${client_id//[[:space:]]/}
+[[ -n $client_id ]] || die "No client id given."
+[[ $client_id =~ ^[0-9a-fA-F]{32}$ ]] ||
+  printf 'That does not look like a Spotify client id, which is 32 hex characters. Continuing.\n' >&2
+
+# The verifier arrives over a pipe and leaves over curl's stdin, so it is never
+# an argument to anything. It is the one value in this flow that proves the
+# token request came from the same process that started the authorization.
+pkce=$(python3 - <<'PY'
+import base64, hashlib, secrets
+
+verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
+challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+print(verifier, challenge, secrets.token_urlsafe(16))
+PY
+) || die "Could not generate the PKCE material."
+
+read -r verifier challenge oauth_state <<<"$pkce"
+[[ -n ${verifier:-} && -n ${challenge:-} && -n ${oauth_state:-} ]] ||
+  die "Could not generate the PKCE material."
+
+authorize="$AUTHORIZE_URL?client_id=$(enc "$client_id")&response_type=code"
+authorize+="&redirect_uri=$(enc "$REDIRECT_URI")&scope=$(enc "$SCOPES")"
+authorize+="&code_challenge_method=S256&code_challenge=$(enc "$challenge")"
+authorize+="&state=$(enc "$oauth_state")"
+
+callback=$(mktemp "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/omacast-spotify-auth.XXXXXX") ||
+  die "Could not create a temporary file."
+chmod 600 "$callback" 2>/dev/null
+trap 'rm -f "$callback"' EXIT
+
+printf '\nApproving this in the browser. If nothing opens, paste this:\n\n%s\n\n' "$authorize"
+
+# The server binds before the browser is launched, from inside the same process,
+# so there is no window in which the redirect can arrive at a closed port.
+if ! python3 - "$PORT" "$authorize" "$callback" <<'PY'
+import http.server
+import subprocess
+import sys
+import time
+import urllib.parse
+
+port, authorize_url, out_path = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+result = {}
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        # Browsers ask for /favicon.ico too. Only the redirect ends the wait.
+        if parsed.path != "/callback":
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        result.update(urllib.parse.parse_qs(parsed.query))
+        body = b"Spotify is connected. You can close this tab and go back to the terminal.\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+try:
+    server = http.server.HTTPServer(("127.0.0.1", port), Handler)
+except OSError as exc:
+    sys.stderr.write("Cannot listen on 127.0.0.1:%d (%s)\n" % (port, exc))
+    sys.exit(1)
+
+# A one second poll so the deadline is checked even when nothing connects.
+server.timeout = 1
+
+try:
+    subprocess.Popen(["xdg-open", authorize_url],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+except OSError:
+    pass
+
+deadline = time.time() + 180
+while not result and time.time() < deadline:
+    server.handle_request()
+server.server_close()
+
+with open(out_path, "w") as handle:
+    for key in ("code", "state", "error"):
+        handle.write(result.get(key, [""])[0] + "\n")
+PY
+then
+  die "The local listener did not start. Is something already using port $PORT?"
+fi
+
+mapfile -t returned <"$callback"
+code=${returned[0]:-}
+returned_state=${returned[1]:-}
+error=${returned[2]:-}
+
+[[ -z $error ]] || die "Spotify refused the request: $error"
+[[ -n $code ]] || die "No authorization code came back. Nothing was saved."
+[[ $returned_state == "$oauth_state" ]] ||
+  die "The state value did not match. Nothing was saved."
+
+# Every secret in this request rides in on stdin. Anything in argv is readable
+# by `ps` from any account on the machine for as long as curl runs.
+response=$( {
+    printf 'silent\n'
+    printf 'request = "POST"\n'
+    printf 'url = "%s"\n' "$TOKEN_URL"
+    printf 'header = "Content-Type: application/x-www-form-urlencoded"\n'
+    printf 'data = "grant_type=authorization_code&code=%s&redirect_uri=%s&client_id=%s&code_verifier=%s"\n' \
+      "$(enc "$code")" "$(enc "$REDIRECT_URI")" "$(enc "$client_id")" "$(enc "$verifier")"
+  } | curl -K - --max-time 20 -w '\n%{http_code}' 2>/dev/null )
+
+status=${response##*$'\n'}
+body=${response%$'\n'*}
+
+if [[ $status != 200 ]]; then
+  detail=$(printf '%s' "$body" | jq -r '.error_description // .error // ""' 2>/dev/null)
+  die "Spotify would not issue a token (${status}). ${detail:-No detail given.}"
+fi
+
+access_token=$(printf '%s' "$body" | jq -r '.access_token // ""')
+refresh_token=$(printf '%s' "$body" | jq -r '.refresh_token // ""')
+scope=$(printf '%s' "$body" | jq -r '.scope // ""')
+expires_in=$(printf '%s' "$body" | jq -r '.expires_in // 3600')
+[[ $expires_in =~ ^[0-9]+$ ]] || expires_in=3600
+
+[[ -n $access_token && -n $refresh_token ]] ||
+  die "Spotify's answer had no tokens in it. Nothing was saved."
+
+mkdir -p "$(dirname "$STATE_FILE")" || die "Could not create $(dirname "$STATE_FILE")."
+chmod 700 "$(dirname "$STATE_FILE")" 2>/dev/null
+
+tmp=$(mktemp "$STATE_FILE.XXXXXX") || die "Could not write $STATE_FILE."
+# Stated rather than inherited: whoever can read this file is logged in as you.
+chmod 600 "$tmp" || { rm -f "$tmp"; die "Could not set the mode on $STATE_FILE."; }
+
+jq -n --arg cid "$client_id" --arg at "$access_token" --arg rt "$refresh_token" \
+      --arg sc "$scope" --argjson exp "$(( $(date +%s) + expires_in ))" \
+      '{client_id: $cid, access_token: $at, refresh_token: $rt,
+        expires_at: $exp, scope: $sc}' >"$tmp" ||
+  { rm -f "$tmp"; die "Could not write $STATE_FILE."; }
+
+mv -f "$tmp" "$STATE_FILE" || { rm -f "$tmp"; die "Could not write $STATE_FILE."; }
+
+me=$( {
+    printf 'silent\n'
+    printf 'url = "%s"\n' "$API_ME"
+    printf 'header = "Authorization: Bearer %s"\n' "$access_token"
+  } | curl -K - --max-time 10 -w '\n%{http_code}' 2>/dev/null )
+
+if [[ ${me##*$'\n'} == 200 ]]; then
+  who=$(printf '%s' "${me%$'\n'*}" | jq -r '.display_name // .id // ""')
+  product=$(printf '%s' "${me%$'\n'*}" | jq -r '.product // ""')
+  printf 'Connected as %s.\n' "${who:-your account}"
+  # Search works on any account. Starting playback is a Premium only endpoint,
+  # and it is better to hear that now than from a silent row later.
+  [[ $product == "premium" ]] ||
+    printf 'This account is not Premium, so search will work but playback will not.\n'
+else
+  printf 'Tokens saved, but the check call to Spotify did not answer.\n'
+fi
+
+printf 'Saved to %s (mode 600).\n' "$STATE_FILE"
+printf 'Open the launcher and type: sp:kind of blue\n'

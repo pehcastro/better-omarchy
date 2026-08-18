@@ -1,0 +1,16 @@
+{
+  "id": "spotify",
+  "title": "Spotify",
+  "keyword": "sp",
+  "aliases": ["spotify", "track", "album", "artist"],
+  "subtitle": "Spotify",
+  "glyph": "",
+  "search": "omacast-spotify search {query} {type}",
+  "when": "test -s \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/omacast-spotify.json\"",
+  "minChars": 2,
+  "debounceMs": 250,
+  "timeoutMs": 6000,
+  "maxRows": 9,
+  "tier": "substring",
+  "view": "cards"
+}

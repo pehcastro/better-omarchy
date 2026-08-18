@@ -56,6 +56,8 @@ Each is its own unit, so you take the ones you want.
 **search-music** answers `music:` with cover art, a progress bar and transport
 control over MPRIS, so it works with any player, not just Spotify.
 **clipboard-history** answers `ch:` from the history Omarchy already keeps.
+**natural-commands** answers `alarm:30 minutes and 45 seconds tea is ready`,
+and `theme:tokyo` to switch theme by name.
 
 ## The launcher
 
@@ -72,6 +74,7 @@ img: in:~/work             thumbnails from somewhere else
 win:chrome                 jump to that window
 music:                     what is playing, with the cover
 ch:token                   what you copied, with a preview
+alarm:25m tea              a reminder, said the way you would say it
 gh:omarchy plugin          your GitHub quicklink, with an argument
 ```
 
@@ -151,6 +154,10 @@ stays quiet unless it sets `"always": true`.
 Ship one as a unit by putting the JSON under
 `config/omarchy/omacast/extensions/` and the script under `bin/`.
 
+`bo new extension <name>` writes that unit for you, and what it writes already
+answers: add it, type `<name>:hello`, and the row comes back with hello in it.
+Replace the body of the script and keep the shape.
+
 ## bo
 
 ```
@@ -161,6 +168,9 @@ bo status               what is on, plus keybinding conflicts
 
 bo add [unit...]        turn units on (no argument opens a picker)
 bo remove [unit...]     turn units off (no argument opens a picker)
+
+bo new unit <name>      start a unit here, filled in and ready to add
+bo new extension <name> start a unit whose job is one launcher keyword
 
 bo update               fetch every marketplace, show what changed, apply
 bo outdated             linked units whose marketplace moved on
@@ -206,6 +216,15 @@ your `PATH` and QML into your shell process, unsandboxed. Read what you turn on.
 ## Writing a unit
 
 One folder. The only required file is `unit.toml`.
+
+```bash
+bo new unit my-thing                   hypr/*.lua
+bo new unit my-widget --kind plugin    plugin/manifest.json and Widget.qml
+bo new unit my-setting --kind setting  apply.sh and revert.sh
+```
+
+That writes the folder below, filled in, and refuses to touch one that already
+exists. It ends by printing the commands to run next.
 
 ```
 units/undo-close/
