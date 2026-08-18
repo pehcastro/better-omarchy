@@ -7,6 +7,23 @@ is a major, a new unit or command is a minor, a fix is a patch.
 A unit carries its own version in its unit.toml, bumped on its own schedule.
 This file is about bo and the marketplace itself.
 
+## Unreleased
+
+### Features
+
+- **omarchycast:** Add the launcher, with apps, maths, commands and web
+- **units:** Add keys presets, display-local, and unit dependencies
+- **omarchycast:** Answer keyword filters, and take extensions
+- **units:** Add file, window and music search extensions
+- **omarchycast:** Give results a view, actions, and settings
+- **units:** Play music properly, and search the clipboard
+- **omarchycast:** Add quicklinks and a grid view
+- **units:** Browse images from the launcher with img:
+
+### Documentation
+
+- **readme:** Cover the launcher, its filters and its extensions
+
 ## 0.1.0 (2026-08-18)
 
 ### Features
@@ -25,5 +42,6 @@ This file is about bo and the marketplace itself.
 ### Build and dependencies
 
 - **changelog:** Generate CHANGELOG.md with git-cliff
+- **changelog:** Cut v0.1.0
 
 
