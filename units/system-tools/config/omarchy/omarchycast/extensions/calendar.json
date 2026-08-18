@@ -2,14 +2,17 @@
   "id": "calendar",
   "title": "Calendar",
   "keyword": "cal",
-  "aliases": ["calendar", "month"],
+  "aliases": [
+    "calendar",
+    "month"
+  ],
   "subtitle": "Calendar",
   "glyph": "",
   "search": "omarchycast-calendar {query}",
   "when": "command -v cal",
   "minChars": 0,
   "debounceMs": 60,
-  "maxRows": 4,
+  "maxRows": 12,
   "tier": "prefix",
-  "view": "split"
+  "view": "calendar"
 }

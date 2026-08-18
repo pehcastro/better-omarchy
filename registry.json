@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "042f86cbd2be0b2951f4589840f67e187ee6bb7e",
+  "generated_at_commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
   "units": {
     "accents": {
       "name": "accents",
@@ -203,6 +203,31 @@
       "updated": "2026-08-18T17:49:29-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
+    "natural-commands": {
+      "name": "natural-commands",
+      "summary": "Set a reminder, or switch theme, by typing what you mean",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "reminder",
+        "theme"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "jq",
+        "omarchy"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/natural-commands",
+      "files": 6,
+      "hash": "13f2644103f53495bf48cd5bf9163b475c8e17044bf2f66747338bee1c9b97fb",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
     "omarchycast": {
       "name": "omarchycast",
       "summary": "A launcher: apps, math, settings, and the web in one box",
@@ -221,10 +246,10 @@
       "keys": [],
       "pluginId": "bo.omarchycast",
       "path": "units/omarchycast",
-      "files": 20,
-      "hash": "14cb753403c9713caae906911d7ebf36bbf45bd2088b6e99d460be13005f1bc3",
-      "commit": "155ef69b9f52dd49d54cef59df30e30e8ed445dd",
-      "updated": "2026-08-18T18:25:00-03:00",
+      "files": 22,
+      "hash": "74e4cc2c9321ee908008b38c2af93f676caafb2708ec78e387e0b4ba2f5e1eaf",
+      "commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
+      "updated": "2026-08-18T18:34:30-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
@@ -327,6 +352,31 @@
       "updated": "2026-08-18T17:59:07-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
+    "spotify": {
+      "name": "spotify",
+      "summary": "Search Spotify and start playback from the launcher, with sp:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Media",
+      "tags": [
+        "launcher",
+        "spotify",
+        "music"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "curl",
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/spotify",
+      "files": 4,
+      "hash": "fe4b295b3b3164af59ccee3fb26d4deb841e69bf1b32764e4debe3f1ae060d5f",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
     "stay-awake": {
       "name": "stay-awake",
       "summary": "Never lock or dim on idle",
@@ -369,10 +419,10 @@
       "pluginId": "",
       "path": "units/system-tools",
       "files": 7,
-      "hash": "31952e9767e919d63db7ddaa24ba31e0f74a55d4b1afb93972df5808b6106626",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "hash": "e2d16f5469d1ce709a4c40d1d361509da79a227b93631e7c6b29a26e9ffd54a5",
+      "commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
+      "updated": "2026-08-18T18:34:30-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
       "name": "undo-close",

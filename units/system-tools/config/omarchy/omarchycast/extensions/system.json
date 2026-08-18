@@ -10,5 +10,5 @@
   "debounceMs": 60,
   "maxRows": 12,
   "tier": "substring",
-  "view": "list"
+  "view": "dashboard"
 }

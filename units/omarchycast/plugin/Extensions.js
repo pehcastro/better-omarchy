@@ -131,6 +131,12 @@ function toRow(ext, raw, index) {
     // Preformatted text: a calendar's columns only line up in a fixed pitch.
     mono: raw.mono === true,
     progress: raw.progress,
+    // A month, drawn as a grid rather than as `cal` output.
+    year: raw.year,
+    month: raw.month,
+    today: raw.today,
+    weekStart: raw.weekStart,
+    marks: Array.isArray(raw.marks) ? raw.marks : null,
     actions: Array.isArray(raw.actions) ? raw.actions : null,
     tier: ext.tier,
     local: local,

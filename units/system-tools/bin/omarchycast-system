@@ -13,9 +13,20 @@ set -uo pipefail
 
 query="${1:-}"
 
+# A tile: the value, the label, the context beside it.
+#
+# `progress` is what makes a tile draw a bar, so it is sent only for the three
+# readings that are genuinely a proportion. Parsing a percentage back out of an
+# English subtitle would be the wrong place to solve that.
 row() {
-  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg a "$4" --arg e "$5" --argjson sc "$6" \
-    '{id: $id, title: $t, subtitle: $s, accessory: $a, exec: $e, score: $sc}'
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg d "$4" --arg a "$5" --arg e "$6" --argjson sc "$7" \
+    '{id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a, exec: $e, score: $sc}'
+}
+
+meter() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg d "$4" --arg a "$5" --arg e "$6" \
+    --argjson sc "$7" --argjson pr "$8" \
+    '{id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a, exec: $e, score: $sc, progress: $pr}'
 }
 
 matches() {
@@ -31,7 +42,8 @@ for supply in /sys/class/power_supply/BAT*; do
   capacity=$(<"$supply/capacity") || continue
   state=$(<"$supply/status")
   matches "battery power charge $state" || continue
-  row battery "$capacity%" "Battery  ·  $state" "$(basename "$supply")" "$(copy "$capacity%")" 95000
+  fraction=$(awk -v c="$capacity" 'BEGIN { printf "%.4f", c / 100 }')
+  meter battery "$capacity%" "Battery" "$state" "$(basename "$supply")" "$(copy "$capacity%")" 95000 "$fraction"
   break
 done
 
@@ -39,27 +51,29 @@ done
 if matches "uptime running since boot"; then
   up=$(uptime -p 2>/dev/null | sed 's/^up //')
   since=$(uptime -s 2>/dev/null)
-  [[ -n $up ]] && row uptime "$up" "Uptime  ·  since $since" "" "$(copy "$up")" 94000
+  [[ -n $up ]] && row uptime "$up" "Uptime" "since $since" "" "$(copy "$up")" 94000
 fi
 
 # ---- memory
 if matches "memory ram used free"; then
   read -r _ total used _ < <(free -h --si | awk 'NR==2')
   percent=$(free | awk 'NR==2 { printf "%d", $3 / $2 * 100 }')
-  row memory "$used of $total" "Memory  ·  ${percent}% used" "" "$(copy "$used of $total")" 93000
+  fraction=$(free | awk 'NR==2 { printf "%.4f", $3 / $2 }')
+  meter memory "$used of $total" "Memory" "${percent}% used" "" "$(copy "$used of $total")" 93000 "$fraction"
 fi
 
 # ---- disk
 if matches "disk storage space root free"; then
   read -r size used avail percent < <(df -h --output=size,used,avail,pcent / | awk 'NR==2')
-  row disk "$avail free" "Disk  ·  $used of $size used, $percent" "" "$(copy "$avail free")" 92000
+  fraction=$(df --output=pcent / | awk 'NR==2 { gsub("%",""); printf "%.4f", $1 / 100 }')
+  meter disk "$avail free" "Disk" "$used of $size used" "$percent" "$(copy "$avail free")" 92000 "$fraction"
 fi
 
 # ---- address
 if matches "ip address network local"; then
   address=$(ip -4 -json route get 1.1.1.1 2>/dev/null | jq -r '.[0].prefsrc // empty')
   interface=$(ip -4 -json route get 1.1.1.1 2>/dev/null | jq -r '.[0].dev // empty')
-  [[ -n $address ]] && row ip "$address" "Local address  ·  $interface" "" "$(copy "$address")" 91000
+  [[ -n $address ]] && row ip "$address" "Address" "$interface" "" "$(copy "$address")" 91000
 fi
 
 # ---- temperature
@@ -67,19 +81,19 @@ if matches "temperature heat cpu thermal"; then
   # sensors output varies wildly by chipset; take the first Celsius reading it
   # offers rather than guessing at a label that may not exist.
   temp=$(sensors 2>/dev/null | grep -oP '\+\K[0-9]+\.[0-9]+(?=°C)' | head -1)
-  [[ -n $temp ]] && row temp "${temp}°C" "Temperature" "" "$(copy "${temp}°C")" 90000
+  [[ -n $temp ]] && row temp "${temp}°C" "Temperature" "" "" "$(copy "${temp}°C")" 90000
 fi
 
 # ---- kernel and host
 if matches "kernel version host hostname os arch"; then
-  row kernel "$(uname -r)" "Kernel  ·  $(uname -m)" "" "$(copy "$(uname -r)")" 89000
-  row host "$(hostnamectl hostname 2>/dev/null || hostname)" "Hostname" "" "$(copy "$(hostname)")" 88000
+  row kernel "$(uname -r)" "Kernel" "$(uname -m)" "" "$(copy "$(uname -r)")" 89000
+  row host "$(hostnamectl hostname 2>/dev/null || hostname)" "Host" "" "" "$(copy "$(hostname)")" 88000
 fi
 
 # ---- omarchy
 if matches "omarchy version"; then
   version=$(omarchy version 2>/dev/null | head -1)
-  [[ -n $version ]] && row omarchy "$version" "Omarchy" "" "$(copy "$version")" 87000
+  [[ -n $version ]] && row omarchy "$version" "Omarchy" "" "" "$(copy "$version")" 87000
 fi
 
 exit 0

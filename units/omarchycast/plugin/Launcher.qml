@@ -103,7 +103,7 @@ Item {
     if (root.answerMode) return "answer"
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
-    return ["list", "hero", "cards", "split", "grid"].indexOf(wanted) >= 0 ? wanted : "list"
+    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar"].indexOf(wanted) >= 0 ? wanted : "list"
   }
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
@@ -601,9 +601,22 @@ Item {
   // How far one press of Up or Down travels. In a grid that is a whole row,
   // because moving one cell at a time down a wall of thumbnails is maddening.
   readonly property int verticalStep: {
-    if (root.activeView !== "grid") return 1
-    var perRow = Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(168)))
-    return perRow
+    if (root.activeView === "grid") {
+      return Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(168)))
+    }
+    if (root.activeView === "dashboard") {
+      return Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(190)))
+    }
+    return 1
+  }
+
+  // Move the cursor without activating. A calendar tab needs this: clicking
+  // "Next" should change which month is drawn, not copy it and close.
+  function select(index) {
+    if (index < 0 || index >= root.rows.length) return
+    root.cursorMoved = true
+    root.selectedIndex = index
+    root.selectedKey = root.rows[index].key
   }
 
   function move(delta) {
@@ -918,10 +931,12 @@ Item {
             } else if (event.key === Qt.Key_Backtab) {
               root.move(-1)
               event.accepted = true
-            } else if (root.activeView === "grid" && event.key === Qt.Key_Right) {
+            } else if ((root.activeView === "grid" || root.activeView === "dashboard" || root.activeView === "calendar")
+                       && event.key === Qt.Key_Right) {
               root.move(1)
               event.accepted = true
-            } else if (root.activeView === "grid" && event.key === Qt.Key_Left) {
+            } else if ((root.activeView === "grid" || root.activeView === "dashboard" || root.activeView === "calendar")
+                       && event.key === Qt.Key_Left) {
               root.move(-1)
               event.accepted = true
             } else if (event.key === Qt.Key_PageDown) {
@@ -986,6 +1001,8 @@ Item {
           case "cards": return cardsView
           case "split": return splitView
           case "grid": return gridView
+          case "dashboard": return dashboardView
+          case "calendar": return calendarView
           case "answer": return answerView
           default: return listView
           }
@@ -998,6 +1015,8 @@ Item {
       Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width } }
       Component { id: gridView;  ResultGrid  { launcher: root; width: resultsArea.width } }
       Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width } }
+      Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width } }
+      Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width } }
 
       // The hint bar: what Enter does, and that there is more on Ctrl+K.
       Item {

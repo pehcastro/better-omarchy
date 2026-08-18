@@ -1,0 +1,10 @@
+name     = "spotify"
+summary  = "Search Spotify and start playback from the launcher, with sp:"
+version  = "0.1.0"
+category = "Media"
+tags     = ["launcher", "spotify", "music"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["curl", "jq"]
+requires  = ["omarchycast"]
+keys     = []

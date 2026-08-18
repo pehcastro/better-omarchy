@@ -1,0 +1,10 @@
+name     = "natural-commands"
+summary  = "Set a reminder, or switch theme, by typing what you mean"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["launcher", "reminder", "theme"]
+author   = "pehcastro"
+kind     = "hypr"
+needs    = ["jq", "omarchy"]
+requires = ["omarchycast"]
+keys     = []
