@@ -27,7 +27,7 @@
           "id": "omarchy.menu"
         },
         {
-          "id": "bo.workspaces",
+          "id": "bo.workspace-names",
           "names": {
             "1": {
               "label": "desktop",
@@ -68,7 +68,7 @@
           "id": "omarchy.monitor"
         },
         {
-          "id": "bo.cpu"
+          "id": "bo.cpu-meter"
         },
         {
           "id": "omarchy.power"
@@ -83,8 +83,8 @@
     "screensaver": 150
   },
   "plugins": [
-    "bo.workspaces",
-    "bo.cpu"
+    "bo.workspace-names",
+    "bo.cpu-meter"
   ],
   "version": 1
 }
