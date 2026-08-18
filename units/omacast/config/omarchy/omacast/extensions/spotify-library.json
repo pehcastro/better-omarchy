@@ -9,7 +9,7 @@
     "artist"
   ],
   "subtitle": "Spotify",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-spotify search {query} {type}",
   "when": "test -s \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/omacast-spotify.json\"",
   "minChars": 2,

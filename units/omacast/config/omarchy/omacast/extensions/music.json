@@ -9,7 +9,7 @@
     "play"
   ],
   "subtitle": "Spotify",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-search-music {query}",
   "when": "busctl --user list --no-legend 2>/dev/null | grep -q org.mpris.MediaPlayer2",
   "minChars": 0,

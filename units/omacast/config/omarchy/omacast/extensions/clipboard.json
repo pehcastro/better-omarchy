@@ -2,9 +2,13 @@
   "id": "ch",
   "title": "Clipboard",
   "keyword": "ch",
-  "aliases": ["clip", "clipboard", "paste"],
+  "aliases": [
+    "clip",
+    "clipboard",
+    "paste"
+  ],
   "subtitle": "Clipboard",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-clipboard-history {query}",
   "when": "test -f \"$HOME/.local/state/omarchy/clipboard-history.json\"",
   "minChars": 0,

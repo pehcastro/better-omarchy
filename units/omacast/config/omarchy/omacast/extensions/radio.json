@@ -2,9 +2,13 @@
   "id": "radio",
   "title": "Radio",
   "keyword": "radio",
-  "aliases": ["fm", "station", "stream"],
+  "aliases": [
+    "fm",
+    "station",
+    "stream"
+  ],
   "subtitle": "Radio",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-search-radio {query}",
   "minChars": 2,
   "debounceMs": 250,

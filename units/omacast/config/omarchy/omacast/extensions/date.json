@@ -2,9 +2,12 @@
   "id": "date",
   "title": "Date",
   "keyword": "date",
-  "aliases": ["when", "day"],
+  "aliases": [
+    "when",
+    "day"
+  ],
   "subtitle": "Date",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-date {query}",
   "minChars": 3,
   "debounceMs": 120,

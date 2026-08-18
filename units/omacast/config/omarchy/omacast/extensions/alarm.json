@@ -2,9 +2,13 @@
   "id": "alarm",
   "title": "Reminder",
   "keyword": "alarm",
-  "aliases": ["timer", "remind", "reminder"],
+  "aliases": [
+    "timer",
+    "remind",
+    "reminder"
+  ],
   "subtitle": "Reminder",
-  "glyph": "󰢌",
+  "glyph": "",
   "search": "omacast-alarm {query}",
   "when": "command -v omarchy",
   "minChars": 0,

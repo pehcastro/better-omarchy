@@ -10,7 +10,7 @@
           "format": "dddd HH:mm",
           "formatAlt": "d MMMM 'W'ww yyyy",
           "id": "omarchy.clock",
-          "verticalFormat": "HH\n—\nmm"
+          "verticalFormat": "HH\n\u2014\nmm"
         },
         {
           "id": "omarchy.keyboard-layout"
@@ -30,24 +30,24 @@
           "id": "bo.workspace-names",
           "names": {
             "1": {
-              "label": "desktop",
+              "label": "general",
               "keepNumber": false
             },
             "2": {
-              "label": "coding",
-              "keepNumber": true
+              "keepNumber": true,
+              "label": "coding"
             },
             "3": {
-              "label": "spotify",
-              "keepNumber": false
+              "keepNumber": false,
+              "label": "spotify"
             },
             "4": {
-              "label": "browser",
+              "label": "4",
               "keepNumber": false
             },
             "9": {
-              "label": "claude workshop",
-              "keepNumber": false
+              "keepNumber": false,
+              "label": "claude workshop"
             }
           }
         }
@@ -72,25 +72,20 @@
           "id": "omarchy.monitor"
         },
         {
-          "id": "bo.cpu-meter"
-        },
-        {
           "id": "omarchy.power"
         }
       ]
     },
     "position": "top",
-    "transparent": false
+    "transparent": true
   },
   "idle": {
     "lock": 300,
     "screensaver": 150
   },
   "plugins": [
-    "bo.workspace-names",
-    "bo.cpu-meter",
     {
-      "id": "bo.omarchycast"
+      "id": "bo.workspace-names"
     },
     {
       "id": "bo.omacast"

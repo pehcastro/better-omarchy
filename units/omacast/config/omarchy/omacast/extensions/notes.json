@@ -2,9 +2,13 @@
   "id": "note",
   "title": "Notes",
   "keyword": "note",
-  "aliases": ["notes", "n", "notepad"],
+  "aliases": [
+    "notes",
+    "n",
+    "notepad"
+  ],
   "subtitle": "Note",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-note {query}",
   "minChars": 0,
   "debounceMs": 120,

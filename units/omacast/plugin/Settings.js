@@ -66,6 +66,9 @@ var DEFAULTS = {
   //   "extensions": { "radio": false, "theme": false }
   extensions: {},
 
+  // Rank by what you actually use. Set false to rank purely on match quality.
+  frecency: true,
+
   maxRows: 9,
   cardWidth: 620,
 

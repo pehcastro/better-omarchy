@@ -2,9 +2,14 @@
   "id": "img",
   "title": "Images",
   "keyword": "img",
-  "aliases": ["image", "images", "pic", "photo"],
+  "aliases": [
+    "image",
+    "images",
+    "pic",
+    "photo"
+  ],
   "subtitle": "Image",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-search-images {query} {in}",
   "minChars": 0,
   "debounceMs": 200,

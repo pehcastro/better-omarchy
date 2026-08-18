@@ -7,7 +7,7 @@
     "month"
   ],
   "subtitle": "Calendar",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-calendar {query}",
   "when": "command -v cal",
   "minChars": 0,

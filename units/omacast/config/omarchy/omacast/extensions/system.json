@@ -2,9 +2,14 @@
   "id": "sys",
   "title": "System",
   "keyword": "sys",
-  "aliases": ["system", "status", "battery", "info"],
+  "aliases": [
+    "system",
+    "status",
+    "battery",
+    "info"
+  ],
   "subtitle": "System",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-system {query}",
   "minChars": 0,
   "debounceMs": 60,

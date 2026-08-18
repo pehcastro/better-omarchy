@@ -42,6 +42,8 @@ Item {
     var arg = Query.argFor(q, ext.keyword, ext.aliases)
     if (arg.length < ext.minChars) return emit(q, [])
 
+    if (prov.launcher) prov.launcher.markWaiting(prov.id, true)
+
     prov.pendingEpoch = q.epoch
     prov.pendingArg = arg
     prov.pendingFilters = Query.extras(q, ext.keyword, ext.aliases)
@@ -50,6 +52,7 @@ Item {
   }
 
   function cancel() {
+    if (prov.launcher) prov.launcher.markWaiting(prov.id, false)
     prov.pendingEpoch = -1
     debounce.stop()
     killer.stop()

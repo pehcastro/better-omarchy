@@ -2,9 +2,14 @@
   "id": "theme",
   "title": "Theme",
   "keyword": "theme",
-  "aliases": ["themes", "colours", "colors", "appearance"],
+  "aliases": [
+    "themes",
+    "colours",
+    "colors",
+    "appearance"
+  ],
   "subtitle": "Theme",
-  "glyph": "󰸌",
+  "glyph": "",
   "search": "omacast-theme {query}",
   "when": "command -v omarchy",
   "minChars": 0,

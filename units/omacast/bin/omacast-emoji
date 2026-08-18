@@ -1,0 +1,86 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `emoji:` keyword: find an emoji by name and
+# copy the character.
+#
+#   emoji:          a starting set worth having one keypress away
+#   emoji:heart     every name and alias that matches
+#
+# The data is the list Omarchy's own emoji picker already ships, read in place.
+# A second copy would drift apart from the first the moment either side gained
+# a codepoint, and 105KB is not worth owning twice.
+
+set -uo pipefail
+
+query="${1:-}"
+DATA="/usr/share/omarchy/shell/plugins/emojis/emojis.json"
+
+[[ -f $DATA ]] || exit 0
+
+# With no query the answer is neither nothing nor all 1800 of them. These terms
+# resolve through the same matcher a typed search uses, so the default set is a
+# list of intentions rather than a second copy of the data.
+DEFAULTS='["heart","thumbs up","fire","tada","rocket","check mark","cross mark",
+           "warning","pray","clap","wave","hundred","thinking","sparkles",
+           "star","bulb","bug","wrench","laptop","calendar","coffee","pizza",
+           "brain","muscle","rainbow","robot","ghost","skull","eyes","joy",
+           "sob","cool","heart_eyes","grin","ok hand","shrug"]'
+
+jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" '
+  # A whole-word hit beats a prefix hit beats a substring hit. Inside a band an
+  # earlier and shorter keyword wins, which is what puts ⭐ "star" above
+  # 💫 "dizzy star" and 🔥 "fire burn" above 🚒 "fire_engine fire engine".
+  def rank($needle):
+    (.k | ascii_downcase) as $k
+    | ($k | split(" ")) as $words
+    | (if ($words | index($needle)) != null then 3000
+       elif any($words[]; startswith($needle)) then 2000
+       elif ($k | contains($needle)) then 1000
+       else 0 end) as $band
+    | if $band == 0 then 0
+      else
+        (($k | index($needle)) // 200) as $at
+        | $band + (200 - ([$at, 200] | min)) + (100 - ([($k | length), 100] | min))
+      end;
+
+  # The keyword string is a name followed by its aliases, and repeats words
+  # between them. Dropping the repeats leaves something that reads as a label.
+  def label:
+    (.k | gsub("_"; " ") | split(" "))
+    | reduce .[] as $w ([]; if index($w) then . else . + [$w] end)
+    | join(" ")
+    | .[0:64];
+
+  def row($score):
+    (label) as $name
+    | ("printf %s " + (.e | @sh) + " | wl-copy") as $copy
+    | {
+        id: .e,
+        title: $name,
+        glyph: .e,
+        exec: $copy,
+        score: $score,
+        actions: [
+          { title: "Copy Emoji", shortcut: "↵", exec: $copy },
+          # The launcher closes first, so the keystrokes need a window to
+          # land in by the time they are sent.
+          { title: "Type It", exec: ("sleep 0.2; wtype " + (.e | @sh)) },
+          { title: "Copy Name", exec: ("printf %s " + ($name | @sh) + " | wl-copy") }
+        ]
+      };
+
+  . as $all
+  | (if $q == "" then
+       [ $defaults[]
+         | . as $needle
+         | ([ $all[] | select(rank($needle) > 0) ] | max_by(rank($needle)))
+         | select(. != null)
+       ]
+     else
+       [ $all[] | select(rank($q) > 0) ] | sort_by(-(rank($q))) | .[0:40]
+     end)
+  | to_entries[]
+  | .key as $i
+  | .value
+  | row(90000 - ($i * 100))' "$DATA" 2>/dev/null
+
+exit 0

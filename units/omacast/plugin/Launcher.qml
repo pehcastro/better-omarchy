@@ -13,6 +13,7 @@ import "Commands.js" as Commands
 import "Extensions.js" as Extensions
 import "Settings.js" as Settings
 import "Quicklinks.js" as Quicklinks
+import "Frecency.js" as Frecency
 
 // OmaCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -43,6 +44,16 @@ Item {
   property var buckets: ({})
   property var rows: []
 
+  // Providers that have been asked and have not answered yet. A slow shell-out
+  // otherwise looks identical to one that found nothing.
+  property var waiting: ({})
+  readonly property bool busy: {
+    for (var key in root.waiting) {
+      if (root.waiting[key]) return true
+    }
+    return false
+  }
+
   // Enter pressed on a placeholder row. The engine fires it once the real row
   // arrives, so typing 1+1 and hitting Enter never launches an app instead.
   property string pendingActivate: ""
@@ -59,6 +70,10 @@ Item {
   // User settings, watched so an edit takes effect on the next keystroke with
   // no reload. Assigned as one object, so bindings re-evaluate once.
   property var config: Settings.DEFAULTS
+
+  // What you have launched, and when. Reordering only, never across a tier.
+  property var frecency: ({})
+  property bool frecencyLoaded: false
   readonly property string defaultEngine: String(root.config.defaultEngine || "google")
 
   // Which layout the current results want. A provider declares it, so `=2+2`
@@ -233,12 +248,28 @@ Item {
     var next = root.buckets
     next[providerId] = { epoch: epoch, rows: producedRows }
     root.buckets = next
+
+    var pending = root.waiting
+    pending[providerId] = false
+    root.waiting = pending
+
     root.rebuild()
+  }
+
+  function markWaiting(providerId, yes) {
+    var pending = root.waiting
+    pending[providerId] = yes === true
+    root.waiting = pending
   }
 
   function rebuild() {
     var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
-    root.rows = Rank.merge(root.buckets, query.scope, 60)
+    var merged = Rank.merge(root.buckets, query.scope, 60)
+    if (root.config.frecency !== false && root.frecencyLoaded) {
+      Frecency.apply(merged, root.frecency, Date.now())
+      merged.sort(Rank.byScore)
+    }
+    root.rows = merged
 
     if (!root.cursorMoved) {
       root.selectedIndex = 0
@@ -582,6 +613,8 @@ Item {
       return
     }
 
+    root.remember(row)
+
     // Dismiss before running. Launching while an exclusive-focus layer surface
     // is still mapped puts the new window behind it, and Omarchy's launch OSD
     // would render underneath this overlay.
@@ -695,6 +728,18 @@ Item {
     root.cursorMoved = true
     root.selectedIndex = index
     root.selectedKey = root.rows[index].key
+  }
+
+  // Rows whose key changes on every keystroke teach nothing: a calculator answer
+  // is keyed by its expression and a web search by its terms, so recording them
+  // would fill the file with entries that are never seen twice.
+  function remember(row) {
+    if (!row || !row.key) return
+    if (root.config.frecency === false) return
+    if (row.providerId === "calc" || row.providerId === "web") return
+
+    root.frecency = Frecency.record(root.frecency, row.key, Date.now())
+    frecencySave.restart()
   }
 
   function move(delta) {
@@ -827,6 +872,35 @@ Item {
   }
 
   FileView {
+    id: frecencyFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/omacast-frecency.json"
+    printErrors: false
+    atomicWrites: true
+    // Not watched: this file is written from here, and reacting to our own
+    // write would reload the ranking mid-keystroke for no gain.
+    onLoaded: {
+      root.frecency = Frecency.parse(text())
+      root.frecencyLoaded = true
+    }
+    onLoadFailed: {
+      root.frecency = ({})
+      root.frecencyLoaded = true
+    }
+  }
+
+  // Debounced, because activating a row is immediately followed by dismissing,
+  // and writing during that is the one moment the launcher should not be busy.
+  Timer {
+    id: frecencySave
+    interval: 1200
+    onTriggered: {
+      var pruned = Frecency.prune(root.frecency, Date.now())
+      root.frecency = pruned
+      frecencyFile.setText(JSON.stringify(pruned))
+    }
+  }
+
+  FileView {
     id: configFile
     path: Quickshell.env("HOME") + "/.config/omarchy/omacast.json"
     watchChanges: true
@@ -912,8 +986,10 @@ Item {
 
       anchors.horizontalCenter: parent.horizontalCenter
       y: Math.round(parent.height * 0.18)
-      height: header.height + ((root.rows.length > 0 || root.answerMode)
-        ? resultsArea.height + footer.height + Style.space(14) : 0)
+      height: header.height
+        + ((root.rows.length > 0 || root.answerMode)
+           ? resultsArea.height + footer.height + Style.space(14) : 0)
+        + emptyState.height
 
       Behavior on height {
         NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
@@ -951,6 +1027,26 @@ Item {
           text: root.scopeLabel
           foreground: root.foreground
           fontFamily: root.fontFamily
+        }
+
+        // A dot that pulses while something is still answering. Quieter than a
+        // spinner, and it sits where the eye already is.
+        Rectangle {
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(20)
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(6)
+          height: width
+          radius: width / 2
+          color: Color.accent
+          visible: root.busy && root.rows.length > 0
+
+          SequentialAnimation on opacity {
+            running: root.busy
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.2; duration: 450 }
+            NumberAnimation { to: 1.0; duration: 450 }
+          }
         }
 
         TextInput {
@@ -1068,6 +1164,31 @@ Item {
       // One Loader picks the layout the results asked for. Each view reads the
       // same rows and reports the same selection, so navigation is identical
       // whichever one is on screen.
+      // Nothing to show, and nothing still coming. Without this the card just
+      // collapses to a box with a cursor in it, which reads as broken rather
+      // than as no results.
+      Item {
+        id: emptyState
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: visible ? Style.space(64) : 0
+        visible: root.rows.length === 0 && !root.answerMode && root.queryText.trim() !== ""
+
+        Text {
+          anchors.centerIn: parent
+          horizontalAlignment: Text.AlignHCenter
+          color: Qt.darker(root.foreground, 1.9)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          text: root.busy
+            ? "Searching\u2026"
+            : (root.scopeLabel !== ""
+               ? "Nothing in " + root.scopeLabel + " matches \u201C" + root.queryText.replace(/^[a-z0-9_-]+:\s*/i, "") + "\u201D"
+               : "Nothing matches that")
+        }
+      }
+
       Loader {
         id: resultsArea
         anchors.top: header.bottom
