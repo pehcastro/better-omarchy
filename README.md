@@ -12,6 +12,11 @@ lets you pick what you want. Nothing turns on without you choosing it.
 
 ## Units
 
+**omarchycast** is the launcher. One box that answers with apps, arithmetic,
+Omarchy commands, your own links, or the web, and shows each of those the way it
+deserves rather than as one long list. `Ctrl+K` on any result shows what else it
+can do.
+
 **workspace-names** shows workspace names in the bar instead of numbers.
 `Super+F2` opens a rename panel under the workspace you are renaming, with a
 switch that decides between `coding` and `coding (2)`.
@@ -34,6 +39,90 @@ is unchanged: `'` and `"` do not wait for a second key.
 
 **stay-awake** never locks or dims on idle. It sets Omarchy's own flag, so
 `Super+Ctrl+I` still toggles it back.
+
+**display-local** holds your monitor layout, gitignored, since that one file is
+wrong on any other machine.
+
+**keys-full**, **keys-balanced** and **keys-additive** decide what opens the
+launcher. Exactly one at a time: `bo` refuses the second.
+
+### Launcher extensions
+
+Each is its own unit, so you take the ones you want.
+
+**search-files** answers `file:report format:pdf`.
+**search-images** answers `img:` with thumbnails, dimensions and size.
+**search-windows** answers `win:` and jumps to an open window.
+**search-music** answers `music:` with cover art, a progress bar and transport
+control over MPRIS, so it works with any player, not just Spotify.
+**clipboard-history** answers `ch:` from the history Omarchy already keeps.
+
+## The launcher
+
+Type anything. Apps, commands and your quicklinks come back ranked together.
+Type `2+2*10` or `10 usd to eur` and the answer arrives large, with the
+expression under it. Type something nothing matches and it offers to search the
+web.
+
+A `keyword:value` filter narrows to one source and tells it what you want:
+
+```
+file:report format:pdf     PDFs called report
+img: in:~/work             thumbnails from somewhere else
+win:chrome                 jump to that window
+music:                     what is playing, with the cover
+ch:token                   what you copied, with a preview
+gh:omarchy plugin          your GitHub quicklink, with an argument
+```
+
+`=`, `>`, `?` and `/` are shorthands for calc, commands, web and file.
+
+`Ctrl+K` opens everything else the selected result can do: copy the answer
+rather than the expression, ask ChatGPT rather than Google, copy a file's path
+rather than open it.
+
+Settings live in `~/.config/omarchy/omarchycast.json` and take effect as you
+save. That is where the default engine lives (Google), and your quicklinks:
+
+```json
+{
+  "defaultEngine": "google",
+  "quicklinks": [
+    { "title": "GitHub", "keyword": "gh", "tags": ["dev"],
+      "url": "https://github.com/search?q={}" },
+    { "title": "Downloads", "keyword": "dl",
+      "open": "nautilus --new-window ~/Downloads" }
+  ]
+}
+```
+
+### Writing an extension
+
+An extension is a JSON file in `~/.config/omarchy/omarchycast/extensions/`
+naming a keyword and a command. The command prints JSON rows, so it can be a
+shell script, a Python file, or anything else that writes to stdout.
+
+```json
+{
+  "id": "weather",
+  "keyword": "wx",
+  "title": "Weather",
+  "search": "my-weather-lookup {query}",
+  "when": "command -v my-weather-lookup",
+  "view": "hero"
+}
+```
+
+Each row is `{ id, title, subtitle, exec }`, plus optional `detail`,
+`accessory`, `art`, `score`, `progress` and its own `actions`. `view` picks the
+layout: `list`, `hero`, `cards`, `grid` or `split`.
+
+`when` is checked once when the extension loads, not per keystroke, so an
+extension for software you do not have costs nothing. Unscoped, an extension
+stays quiet unless it sets `"always": true`.
+
+Ship one as a unit by putting the JSON under
+`config/omarchy/omarchycast/extensions/` and the script under `bin/`.
 
 ## bo
 
@@ -97,6 +186,7 @@ units/undo-close/
   hypr/*.lua       linked into ~/.config/hypr/modules.d/
   bin/*            linked into ~/.local/bin/
   plugin/          linked into ~/.config/omarchy/plugins/<id>/   (kind = plugin)
+  config/*         mirrored into ~/.config, path for path
   apply.sh         run on add                                    (kind = setting)
   revert.sh        run on remove                                 (kind = setting)
 ```
@@ -118,8 +208,10 @@ line, so `bo` reads it with `sed` and no dependency. `needs` is what `bo doctor`
 checks; `keys` is what `bo status` uses to catch two units fighting over one
 binding.
 
-`kind` only decides the extra step. Any unit may carry `hypr/` and `bin/`
-whatever its kind, because a bar widget that also wants a keybinding is normal.
+`kind` only decides the extra step. Any unit may carry `hypr/`, `bin/` and
+`config/` whatever its kind, because a bar widget that also wants a keybinding
+is normal. `config/` is how one unit extends another program: a launcher
+extension is just `config/omarchy/omarchycast/extensions/thing.json`.
 
 Three things that will bite you:
 
