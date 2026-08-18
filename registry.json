@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "3483760771c2dfab885a9e94a5cb3b7ca5080584",
+  "generated_at_commit": "c387165e26638697f62d813baf6e5d14b51aff7a",
   "units": {
     "accents": {
       "name": "accents",
@@ -24,9 +24,9 @@
       "path": "units/accents",
       "files": 2,
       "hash": "c386a203ebf3183e68e6489d561e91ba4da69f26b467112da19d52a8b8388732",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "cpu-meter": {
       "name": "cpu-meter",
@@ -47,6 +47,29 @@
       "path": "units/cpu-meter",
       "files": 3,
       "hash": "7280d73882802df0a47ca2f005b126f2530217bde1fc6be513942c921666fa15",
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "display-local": {
+      "name": "display-local",
+      "summary": "Your monitor layout, kept out of git",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Hardware",
+      "tags": [
+        "hyprland",
+        "monitors"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "hyprctl"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/display-local",
+      "files": 4,
+      "hash": "85cfec611631f3851aa33a8c6ae4d5904c8b9fffb812ad01e8ab6a393a0e3a2c",
       "commit": "",
       "updated": "",
       "author_last": ""
@@ -73,6 +96,109 @@
       "path": "units/familiar-keys",
       "files": 2,
       "hash": "36753800292cd4eea8027e9b29cf53258219de836fa0f648d81190694c4d2024",
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "keys-additive": {
+      "name": "keys-additive",
+      "summary": "OmarchyCast on Super+Shift+K, nothing else changes",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "keybindings"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "omarchy-shell"
+      ],
+      "keys": [
+        "SUPER+SHIFT+K"
+      ],
+      "pluginId": "",
+      "path": "units/keys-additive",
+      "files": 2,
+      "hash": "c44ad8810c3ef760f6233fe568033951c3f85865fddcf42c340235e749a7a980",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "keys-balanced": {
+      "name": "keys-balanced",
+      "summary": "OmarchyCast on Super+K, everything else stays put",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "keybindings"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "omarchy-shell"
+      ],
+      "keys": [
+        "SUPER+K",
+        "SUPER+H"
+      ],
+      "pluginId": "",
+      "path": "units/keys-balanced",
+      "files": 2,
+      "hash": "d6f6d1d3c1fd305e4a032a41daac435ddab596eb87790438654a6b1a6a25ec8d",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "keys-full": {
+      "name": "keys-full",
+      "summary": "OmarchyCast on Super+K, and it replaces every other launcher",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "keybindings"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "omarchy-shell"
+      ],
+      "keys": [
+        "SUPER+K",
+        "SUPER+H",
+        "SUPER+SPACE",
+        "SUPER+ALT+SPACE"
+      ],
+      "pluginId": "",
+      "path": "units/keys-full",
+      "files": 2,
+      "hash": "1995086798d02f89acde74fb60a5a5343732eca205320fe7b75e0f4e8f19a155",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "omarchycast": {
+      "name": "omarchycast",
+      "summary": "A launcher: apps, math, settings, and the web in one box",
+      "version": "0.1.0",
+      "kind": "plugin",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "overlay",
+        "quickshell"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "qalc"
+      ],
+      "keys": [],
+      "pluginId": "bo.omarchycast",
+      "path": "units/omarchycast",
+      "files": 8,
+      "hash": "eba37cb5be18db31acb6d2c17a41a7c495e3f84c161875caf868902971839663",
       "commit": "",
       "updated": "",
       "author_last": ""
@@ -96,9 +222,9 @@
       "path": "units/stay-awake",
       "files": 3,
       "hash": "d2891dafbbc6a6a61680a17709a1d8f27ca852bb083aecc85c438764349822b5",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
       "name": "undo-close",
@@ -123,9 +249,9 @@
       "path": "units/undo-close",
       "files": 4,
       "hash": "2de4ece189c2e85171ad59c4e4eb29e391737b262771afab43c10d1faf741b93",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "workspace-names": {
       "name": "workspace-names",
@@ -149,9 +275,9 @@
       "path": "units/workspace-names",
       "files": 4,
       "hash": "a8492a99e20051f3ff2cd797072c6c55bc12cf034f3e233aeaad7bd4b846191a",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "zen-mode": {
       "name": "zen-mode",
@@ -170,9 +296,9 @@
       "path": "units/zen-mode",
       "files": 2,
       "hash": "d098d5ed1cc561f3e08b663ca7571b1b381aa939db4b6df0bcd23b002e1e21d7",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "e299d2de03cc76066476df00b426f02836f5d0b6",
+      "updated": "2026-08-18T17:39:14-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     }
   }
 }
