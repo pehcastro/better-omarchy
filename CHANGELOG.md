@@ -25,6 +25,7 @@ This file is about bo and the marketplace itself.
 - **units:** Search Spotify and start playback with sp:
 - **units:** Add notes, alarms, theme switching, and hover selection
 - **units:** Add notes, and select a result on hover
+- **omacast:** Make music a player, and search it with no setup at all
 
 ### Fixes
 
@@ -40,6 +41,7 @@ This file is about bo and the marketplace itself.
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
