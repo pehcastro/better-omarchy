@@ -1,0 +1,13 @@
+{
+  "id": "win",
+  "title": "Windows",
+  "keyword": "win",
+  "aliases": ["window", "windows", "w"],
+  "subtitle": "Window",
+  "glyph": "",
+  "search": "omarchycast-search-windows {query}",
+  "minChars": 0,
+  "debounceMs": 0,
+  "maxRows": 10,
+  "tier": "substring"
+}

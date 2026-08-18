@@ -1,0 +1,10 @@
+name     = "search-files"
+summary  = "Find files from the launcher with file: and format:"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["launcher", "files", "search"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["fd", "jq"]
+requires  = ["omarchycast"]
+keys     = []

@@ -1,0 +1,10 @@
+name     = "search-windows"
+summary  = "Jump to an open window from the launcher with win:"
+version  = "0.1.0"
+category = "Compositor"
+tags     = ["launcher", "windows", "hyprland"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["hyprctl", "jq"]
+requires  = ["omarchycast"]
+keys     = []

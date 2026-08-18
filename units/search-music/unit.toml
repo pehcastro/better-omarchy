@@ -1,0 +1,10 @@
+name     = "search-music"
+summary  = "Control whatever is playing, from the launcher, with music:"
+version  = "0.1.0"
+category = "Media"
+tags     = ["launcher", "music", "mpris"]
+author   = "pehcastro"
+kind     = "hypr"
+needs     = ["busctl", "jq"]
+requires  = ["omarchycast"]
+keys     = []

@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "751690d8946173befbc1097b20e9be85eca6e98f",
+  "generated_at_commit": "7ce650c86d3f66915d09281f40aa47b69978a4e0",
   "units": {
     "accents": {
       "name": "accents",
@@ -199,8 +199,8 @@
       "path": "units/omarchycast",
       "files": 10,
       "hash": "c968a3be5940656fa1671b369fcbb6e14cd6c5e311e6dcb831efe6153a3cddc4",
-      "commit": "7f0c1603d490318235141a8432e6fad16d3a4aa7",
-      "updated": "2026-08-18T17:49:29-03:00",
+      "commit": "7ce650c86d3f66915d09281f40aa47b69978a4e0",
+      "updated": "2026-08-18T17:59:07-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
