@@ -10,6 +10,7 @@ import "Rank.js" as Rank
 import "Score.js" as Score
 import "Calc.js" as Calc
 import "Commands.js" as Commands
+import "Extensions.js" as Extensions
 
 // OmarchyCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -46,6 +47,13 @@ Item {
 
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
+  // Extensions, loaded from ~/.config/omarchy/omarchycast/extensions/*.json.
+  // A unit drops a file there through its config/ folder, so a new source of
+  // results needs no QML and no rebuild.
+  readonly property string extensionsDir: Quickshell.env("HOME") + "/.config/omarchy/omarchycast/extensions"
+  property var extensions: []
+  property var extensionProviders: []
+
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
   readonly property color background: Color.menu.background
@@ -64,6 +72,7 @@ Item {
 
   function open(payloadJson) {
     pinScreen()
+    loadExtensions()
     root.opened = true
     root.queryText = ""
     root.pendingActivate = ""
@@ -79,6 +88,9 @@ Item {
   function close() {
     root.opened = false
     calc.cancel()
+    for (var i = 0; i < root.extensionProviders.length; i++) {
+      root.extensionProviders[i].cancel()
+    }
     root.buckets = ({})
     root.rows = []
     root.pendingActivate = ""
@@ -125,19 +137,30 @@ Item {
     queryWeb(query)
     calc.run(query)
 
+    for (var i = 0; i < root.extensionProviders.length; i++) {
+      root.extensionProviders[i].query(query)
+    }
+
     rebuild()
   }
 
   function put(providerId, query, producedRows) {
-    if (query.epoch !== root.epoch) return
+    putRaw(providerId, query.epoch, producedRows)
+  }
+
+  // Every result carries the epoch it was asked for. A slow extension finishing
+  // two keystrokes late is dropped here, which is the whole staleness story.
+  function putRaw(providerId, epoch, producedRows) {
+    if (epoch !== root.epoch) return
     var next = root.buckets
-    next[providerId] = { epoch: query.epoch, text: query.text, rows: producedRows }
+    next[providerId] = { epoch: epoch, rows: producedRows }
     root.buckets = next
+    root.rebuild()
   }
 
   function rebuild() {
     var query = Query.parse(root.queryText, root.epoch)
-    root.rows = Rank.merge(root.buckets, query.mode, 60)
+    root.rows = Rank.merge(root.buckets, query.scope, 60)
 
     if (!root.cursorMoved) {
       root.selectedIndex = 0
@@ -168,11 +191,11 @@ Item {
   // ------------------------------------------------------------ providers
 
   function queryApps(query) {
-    if (!Query.routesTo(query, "apps") || query.empty || !root.appLibrary) {
+    if (!Query.routesTo(query, "apps", ["app", "launch"]) || query.empty || !root.appLibrary) {
       return put("apps", query, [])
     }
 
-    var found = root.appLibrary.sortedEntries(query.text)
+    var found = root.appLibrary.sortedEntries(Query.argFor(query, "apps", ["app", "launch"]))
     var out = []
     for (var i = 0; i < found.length && i < 20; i++) {
       var entry = found[i].entry
@@ -196,14 +219,14 @@ Item {
   }
 
   function queryCommands(query) {
-    if (!Query.routesTo(query, "commands") || query.empty) {
+    if (!Query.routesTo(query, "run", ["command", "commands"]) || query.empty) {
       return put("commands", query, [])
     }
 
     var out = []
     for (var i = 0; i < Commands.COMMANDS.length; i++) {
       var command = Commands.COMMANDS[i]
-      var fuzzy = Score.fuzzy(Commands.asEntry(command), query.text)
+      var fuzzy = Score.fuzzy(Commands.asEntry(command), Query.argFor(query, "run", ["command", "commands"]))
       if (fuzzy < 0) continue
 
       out.push({
@@ -230,11 +253,12 @@ Item {
   }
 
   function queryWeb(query) {
-    if (!Query.routesTo(query, "web") || query.empty) {
+    if (!Query.routesTo(query, "web", ["search", "google", "ddg"]) || query.empty) {
       return put("web", query, [])
     }
 
-    var text = query.text
+    var text = Query.argFor(query, "web", ["search", "google", "ddg"])
+    if (text === "") return put("web", query, [])
     put("web", query, [{
       key: "web:" + text,
       providerId: "web",
@@ -291,24 +315,25 @@ Item {
     property string pendingText: ""
 
     function run(query) {
-      if (!Query.routesTo(query, "calc") || query.empty) {
+      if (!Query.routesTo(query, "calc", ["math", "="]) || query.empty) {
         cancel()
         return root.put("calc", query, [])
       }
 
-      if (query.mode !== "calc" && !Calc.looksLikeMath(query.text)) {
+      var expression = Query.argFor(query, "calc", ["math"])
+      if (query.scope !== "calc" && !Calc.looksLikeMath(expression)) {
         cancel()
         return root.put("calc", query, [])
       }
 
       // Synchronous placeholder, scored to the top, so Enter cannot fall
       // through to an app while qalc is still running.
-      var row = Calc.placeholder(query.text)
+      var row = Calc.placeholder(expression)
       row.score = Rank.score(Rank.TIER.calc, 0, 0)
       root.put("calc", query, [row])
 
       calc.pendingEpoch = query.epoch
-      calc.pendingText = query.text
+      calc.pendingText = expression
       debounce.restart()
     }
 
@@ -367,6 +392,65 @@ Item {
       onExited: if (calc.pendingEpoch >= 0) Qt.callLater(calc.start)
     }
   }
+
+
+  // ------------------------------------------------------------ extensions
+
+  // Read every extension file as one JSON object per line. jq does the
+  // per-file parsing so a malformed extension fails alone rather than taking
+  // the rest of the directory with it.
+  function loadExtensions() {
+    if (extensionLoader.running) return
+    extensionLoader.command = ["bash", "-lc",
+      "shopt -s nullglob; for f in " + Util.shellQuote(root.extensionsDir) + "/*.json; do " +
+      "jq -c --arg src \"$f\" '. + {__source: $src}' \"$f\" 2>/dev/null; done"]
+    extensionLoader.running = true
+  }
+
+  function applyExtensions(text) {
+    var parsed = Extensions.parseRows(text)
+    var loaded = []
+    for (var i = 0; i < parsed.length; i++) {
+      var ext = Extensions.normalize(parsed[i], parsed[i].__source)
+      if (ext) loaded.push(ext)
+    }
+    root.extensions = loaded
+  }
+
+  Process {
+    id: extensionLoader
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyExtensions(text)
+    }
+  }
+
+  // One provider per extension. Instantiator rebuilds the set whenever the
+  // extension list changes, which is how a newly linked unit shows up without
+  // restarting the shell.
+  Instantiator {
+    model: root.extensions
+    delegate: ExtensionProvider {
+      required property var modelData
+      launcher: root
+      ext: modelData
+    }
+    onObjectAdded: function (index, object) {
+      var next = root.extensionProviders.slice()
+      next.push(object)
+      root.extensionProviders = next
+    }
+    onObjectRemoved: function (index, object) {
+      object.cancel()
+      var next = []
+      for (var i = 0; i < root.extensionProviders.length; i++) {
+        if (root.extensionProviders[i] !== object) next.push(root.extensionProviders[i])
+      }
+      root.extensionProviders = next
+    }
+  }
+
+  Component.onCompleted: root.loadExtensions()
 
   // ------------------------------------------------------------ window
 

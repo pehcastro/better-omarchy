@@ -410,6 +410,42 @@ link_bin() {
   shopt -u nullglob
 }
 
+# A unit's config/ mirrors into ~/.config, path for path. This is how a unit
+# extends another program without bo knowing anything about it: a launcher
+# extension is just config/omarchy/omarchycast/extensions/thing.json.
+#
+# Files link individually here, unlike a plugin folder, because two units will
+# want to drop files into the same directory.
+config_files() {
+  local base
+  base="$(ref_dir "$1")/config"
+  [[ -d $base ]] || return 0
+  find "$base" -type f -printf '%P\n' 2>/dev/null
+}
+
+link_config() {
+  local ref="$1" rel base
+  base="$(ref_dir "$ref")/config"
+  while read -r rel; do
+    [[ -z $rel ]] && continue
+    link_path "$base/$rel" "$CONFIG_HOME/$rel"
+  done < <(config_files "$ref")
+}
+
+unlink_config() {
+  local ref="$1" rel dir
+  while read -r rel; do
+    [[ -z $rel ]] && continue
+    unlink_path "$CONFIG_HOME/$rel"
+    # Leave no empty directory behind that only existed for this unit.
+    dir=$(dirname "$CONFIG_HOME/$rel")
+    while [[ $dir != "$CONFIG_HOME" && $dir != "/" ]]; do
+      rmdir "$dir" 2>/dev/null || break
+      dir=$(dirname "$dir")
+    done
+  done < <(config_files "$ref")
+}
+
 unlink_bin() {
   local file
   shopt -s nullglob
@@ -503,6 +539,7 @@ link_unit() {
 
   link_hypr "$ref"
   link_bin "$ref"
+  link_config "$ref"
   mark_linked "$ref"
   record_installed "$ref"
   say "$(green on) $ref $(dim "$(meta "$ref" version)")"
@@ -524,6 +561,7 @@ unlink_unit() {
 
   unlink_hypr "$ref"
   unlink_bin "$ref"
+  unlink_config "$ref"
   mark_unlinked "$ref"
   forget_installed "$ref"
   say "$(dim off) $ref"
@@ -963,6 +1001,7 @@ cmd_relink() {
 
     link_hypr "$ref"
     link_bin "$ref"
+    link_config "$ref"
     [[ $(meta "$ref" kind) == plugin ]] && rescan_plugins
     record_installed "$ref"
     say "$(cyan relinked) $ref $(dim "$(meta "$ref" version)")"

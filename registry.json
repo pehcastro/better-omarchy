@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "7f0c1603d490318235141a8432e6fad16d3a4aa7",
+  "generated_at_commit": "751690d8946173befbc1097b20e9be85eca6e98f",
   "units": {
     "accents": {
       "name": "accents",
@@ -70,9 +70,9 @@
       "path": "units/display-local",
       "files": 3,
       "hash": "503c6eeb115d16ad87da08c1f67dbcf67587f0bb7378a07d2fd2f04d83b96ecb",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
+      "updated": "2026-08-18T17:49:29-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "familiar-keys": {
       "name": "familiar-keys",
@@ -121,9 +121,9 @@
       "path": "units/keys-additive",
       "files": 2,
       "hash": "c44ad8810c3ef760f6233fe568033951c3f85865fddcf42c340235e749a7a980",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
+      "updated": "2026-08-18T17:49:29-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-balanced": {
       "name": "keys-balanced",
@@ -147,9 +147,9 @@
       "path": "units/keys-balanced",
       "files": 2,
       "hash": "d6f6d1d3c1fd305e4a032a41daac435ddab596eb87790438654a6b1a6a25ec8d",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
+      "updated": "2026-08-18T17:49:29-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-full": {
       "name": "keys-full",
@@ -175,9 +175,9 @@
       "path": "units/keys-full",
       "files": 2,
       "hash": "1995086798d02f89acde74fb60a5a5343732eca205320fe7b75e0f4e8f19a155",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
+      "updated": "2026-08-18T17:49:29-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omarchycast": {
       "name": "omarchycast",
@@ -197,11 +197,86 @@
       "keys": [],
       "pluginId": "bo.omarchycast",
       "path": "units/omarchycast",
-      "files": 8,
-      "hash": "eba37cb5be18db31acb6d2c17a41a7c495e3f84c161875caf868902971839663",
+      "files": 10,
+      "hash": "c968a3be5940656fa1671b369fcbb6e14cd6c5e311e6dcb831efe6153a3cddc4",
       "commit": "7f0c1603d490318235141a8432e6fad16d3a4aa7",
       "updated": "2026-08-18T17:49:29-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
+    },
+    "search-files": {
+      "name": "search-files",
+      "summary": "Find files from the launcher with file: and format:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Productivity",
+      "tags": [
+        "launcher",
+        "files",
+        "search"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "fd",
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/search-files",
+      "files": 3,
+      "hash": "381b8115da93cb3ca3deaec78f1bc1125c5b762499c70241b0c6f3ca326f9ad7",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "search-music": {
+      "name": "search-music",
+      "summary": "Control whatever is playing, from the launcher, with music:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Media",
+      "tags": [
+        "launcher",
+        "music",
+        "mpris"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "busctl",
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/search-music",
+      "files": 3,
+      "hash": "4ac08064d3cf20f3019858310a8776887a55fe4370d63110b50b6b1774142a11",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
+    "search-windows": {
+      "name": "search-windows",
+      "summary": "Jump to an open window from the launcher with win:",
+      "version": "0.1.0",
+      "kind": "hypr",
+      "category": "Compositor",
+      "tags": [
+        "launcher",
+        "windows",
+        "hyprland"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "hyprctl",
+        "jq"
+      ],
+      "keys": [],
+      "pluginId": "",
+      "path": "units/search-windows",
+      "files": 3,
+      "hash": "8f019c094e1b6b563ca32ab617941693bb07255721415f96c9d27fa88e636b4d",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
     },
     "stay-awake": {
       "name": "stay-awake",
