@@ -1,0 +1,18 @@
+{
+  "id": "calendar",
+  "title": "Calendar",
+  "keyword": "cal",
+  "aliases": [
+    "calendar",
+    "month"
+  ],
+  "subtitle": "Calendar",
+  "glyph": "",
+  "search": "omacast-calendar {query}",
+  "when": "command -v cal",
+  "minChars": 0,
+  "debounceMs": 60,
+  "maxRows": 12,
+  "tier": "prefix",
+  "view": "calendar"
+}

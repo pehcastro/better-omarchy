@@ -1,0 +1,13 @@
+{
+  "id": "file",
+  "title": "Files",
+  "keyword": "file",
+  "aliases": ["files", "f"],
+  "subtitle": "File",
+  "glyph": "",
+  "search": "omacast-search-files {query} {format} {in}",
+  "minChars": 2,
+  "debounceMs": 180,
+  "maxRows": 8,
+  "tier": "file"
+}

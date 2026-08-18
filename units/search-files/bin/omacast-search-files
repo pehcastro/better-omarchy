@@ -1,0 +1,63 @@
+#!/bin/bash
+# Emits one JSON row per line for OmaCast's `file:` keyword.
+#
+#   file:report              anything called report
+#   file:report format:pdf   only PDFs
+#   file:notes in:~/Sync     only under that directory
+#
+# fd's --max-results short-circuits the walk, so the first N hits are traversal
+# order, not relevance. It takes a wide slice here and the ranking happens
+# below, or the answer is whatever the filesystem happened to reach first.
+
+set -uo pipefail
+
+query="${1:-}"
+format="${2:-}"
+root="${3:-$HOME}"
+
+[[ -z $query ]] && exit 0
+
+root="${root/#\~/$HOME}"
+[[ -d $root ]] || root="$HOME"
+
+args=(--ignore-case --hidden --type f --max-results 400 --follow)
+for skip in .git node_modules .cache .cargo .npm .rustup .local/share/Trash .venv target; do
+  args+=(--exclude "$skip")
+done
+
+# `format:pdf` and `format:.pdf` mean the same thing.
+[[ -n $format ]] && args+=(--extension "${format#.}")
+
+fd "${args[@]}" -- "$query" "$root" 2>/dev/null |
+  awk -v q="${query,,}" -v home="$HOME" '
+    {
+      path = $0
+      n = split(path, parts, "/")
+      base = parts[n]
+      lower = tolower(base)
+
+      # Depth is a decent proxy for "the one you meant": a file you named sits
+      # nearer the top than a build artefact buried in a dependency tree.
+      score = 60000 - (n * 1500)
+
+      at = index(lower, q)
+      if (at == 1) score += 25000
+      else if (at > 1) score += 12000 - (at * 200)
+
+      if (score < 1000) score = 1000
+
+      display = path
+      sub("^" home, "~", display)
+
+      dir = display
+      sub("/[^/]*$", "", dir)
+
+      printf "%d\t%s\t%s\t%s\n", score, base, dir, path
+    }' |
+  sort -rn |
+  head -20 |
+  while IFS=$'\t' read -r score base dir path; do
+    jq -cn --arg id "$path" --arg t "$base" --arg s "$dir" \
+      --arg e "xdg-open $(printf '%q' "$path")" --argjson sc "$score" \
+      '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc}'
+  done

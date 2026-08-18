@@ -1,0 +1,10 @@
+name     = "omacast"
+summary  = "A launcher: apps, math, settings, and the web in one box"
+version  = "0.1.0"
+category = "Productivity"
+tags     = ["launcher", "overlay", "quickshell"]
+author   = "pehcastro"
+kind     = "plugin"
+id       = "bo.omacast"
+needs    = ["qalc"]
+keys     = []

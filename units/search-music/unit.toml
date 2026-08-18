@@ -6,5 +6,5 @@ tags     = ["launcher", "music", "mpris"]
 author   = "pehcastro"
 kind     = "hypr"
 needs     = ["busctl", "jq"]
-requires  = ["omarchycast"]
+requires  = ["omacast"]
 keys     = []

@@ -1,0 +1,15 @@
+{
+  "id": "alarm",
+  "title": "Reminder",
+  "keyword": "alarm",
+  "aliases": ["timer", "remind", "reminder"],
+  "subtitle": "Reminder",
+  "glyph": "󰢌",
+  "search": "omacast-alarm {query}",
+  "when": "command -v omarchy",
+  "minChars": 0,
+  "debounceMs": 80,
+  "maxRows": 12,
+  "tier": "prefix",
+  "view": "hero"
+}

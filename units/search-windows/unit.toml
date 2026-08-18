@@ -6,5 +6,5 @@ tags     = ["launcher", "windows", "hyprland"]
 author   = "pehcastro"
 kind     = "hypr"
 needs     = ["hyprctl", "jq"]
-requires  = ["omarchycast"]
+requires  = ["omacast"]
 keys     = []

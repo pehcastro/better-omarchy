@@ -412,7 +412,7 @@ link_bin() {
 
 # A unit's config/ mirrors into ~/.config, path for path. This is how a unit
 # extends another program without bo knowing anything about it: a launcher
-# extension is just config/omarchy/omarchycast/extensions/thing.json.
+# extension is just config/omarchy/omacast/extensions/thing.json.
 #
 # Files link individually here, unlike a plugin folder, because two units will
 # want to drop files into the same directory.
@@ -1057,6 +1057,378 @@ cmd_sync() {
   fi
 }
 
+# ---------------------------------------------------------------- scaffolding
+#
+# A first unit is boilerplate you would otherwise reverse-engineer out of three
+# other units, so bo writes it. Everything scaffolded here is valid as it
+# stands: `bo add` links it without an edit, and a scaffolded extension answers
+# its keyword the moment the launcher reloads.
+
+# unit.toml is written a line at a time rather than from a template, so the =
+# column lands where every other unit in this repo has it.
+toml_line() { printf '%-8s = %s\n' "$1" "$2"; }
+toml_string() { toml_line "$1" "\"$2\""; }
+
+toml_array() {
+  local key="$1" out="" item
+  shift
+  for item in "$@"; do
+    [[ -n $out ]] && out+=", "
+    out+="\"$item\""
+  done
+  toml_line "$key" "[$out]"
+}
+
+scaffold_author() {
+  local who
+  who=$(git -C "$SELF_ROOT" config user.name 2>/dev/null)
+  printf '%s' "${who:-${USER:-you}}"
+}
+
+# search-files -> Search Files, for the human-facing half of a plugin manifest.
+scaffold_title() { printf '%s' "${1//-/ }" | sed -E 's/(^| )([a-z])/\1\u\2/g'; }
+
+# The checks every scaffold shares: this has to be a marketplace checkout, the
+# name has to be one `bo add` can resolve, and an existing folder is never
+# written into, because the folder is somebody's work.
+scaffold_dir() {
+  local name="$1" dir
+  [[ -n $name ]] || die "no name. Try: bo new unit <name>"
+  [[ $name =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
+    die "'$name' will not do as a unit name: lowercase letters, digits and dashes"
+  [[ -d "$SELF_ROOT/units" ]] || die "bo is not running from a marketplace checkout"
+
+  dir="$SELF_ROOT/units/$name"
+  [[ -e $dir ]] && die "units/$name already exists. Pick another name, or edit that one."
+  printf '%s' "$dir"
+}
+
+scaffold_toml() {
+  local name="$1" kind="$2" author
+  author=$(scaffold_author)
+
+  toml_string name "$name"
+  toml_string summary "What this does, in one line"
+  toml_string version "0.1.0"
+
+  case "$kind" in
+  plugin)
+    toml_string category "System"
+    toml_array tags bar
+    toml_string author "$author"
+    toml_string kind plugin
+    toml_string id "bo.$name"
+    toml_array needs
+    ;;
+  setting)
+    toml_string category "System"
+    toml_array tags system
+    toml_string author "$author"
+    toml_string kind setting
+    toml_array needs omarchy
+    ;;
+  extension)
+    toml_string category "Productivity"
+    toml_array tags launcher
+    toml_string author "$author"
+    toml_string kind hypr
+    toml_array needs jq wl-copy
+    toml_array requires omacast
+    ;;
+  *)
+    toml_string category "Compositor"
+    toml_array tags hyprland
+    toml_string author "$author"
+    toml_string kind hypr
+    toml_array needs
+    ;;
+  esac
+
+  toml_array keys
+}
+
+# Markdown and QML carry $ and backticks of their own, so the text is written
+# verbatim and the name substituted after. A name is checked against
+# [a-z0-9-] above, so nothing in it can mean anything to sed.
+scaffold_fill() { sed "s/@NAME@/$1/g; s/@TITLE@/$(scaffold_title "$1")/g"; }
+
+scaffold_readme() {
+  scaffold_fill "$1" <<'TXT'
+# @NAME@
+
+One line on what this turns on.
+
+```bash
+bo add @NAME@
+```
+
+What it changes while it is on, and what comes back when you turn it off.
+TXT
+}
+
+scaffold_lua() {
+  scaffold_fill "$1" <<'LUA'
+-- @NAME@: what this changes, and why it is worth changing.
+--
+-- Linked into ~/.config/hypr/modules.d/ and read by bo's own loader, so this is
+-- ordinary Omarchy Lua config. Delete the file if this unit never touches the
+-- compositor: bo links whatever .lua it finds here and nothing if there is
+-- none.
+
+-- o.bind("SUPER + J", "What it does", "some-command")
+-- hl.config({ general = { gaps_in = 4 } })
+LUA
+}
+
+scaffold_manifest() {
+  local name="$1"
+  jq -n --arg id "bo.$name" --arg title "$(scaffold_title "$name")" \
+    --arg author "$(scaffold_author)" \
+    --arg what "What this widget shows, in one line" \
+    '{
+       schemaVersion: 1, id: $id, name: $title, version: "1.0.0",
+       author: $author, description: $what,
+       kinds: ["bar-widget"],
+       entryPoints: { barWidget: "Widget.qml" },
+       barWidget: {
+         displayName: $title, description: $what,
+         category: "System", allowMultiple: false
+       }
+     }'
+}
+
+scaffold_widget() {
+  scaffold_fill "$1" <<'QML'
+import QtQuick
+import qs.Commons
+import qs.Ui
+
+// One bar widget. Omarchy scans ~/.config/omarchy/plugins for a manifest and
+// loads whatever entryPoints names, so the file name here and the one in
+// manifest.json have to agree.
+BarWidget {
+  id: root
+  moduleName: "bo.@NAME@"
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    text: "󰋙"
+    slotSize: Style.bar.statusSlot
+    fontSize: Style.font.caption
+    tooltipText: "@TITLE@"
+    onPressed: if (root.bar) root.bar.run("omarchy-notification-send '@TITLE@' 'Replace this'")
+  }
+}
+QML
+}
+
+# apply.sh and revert.sh take -e, unlike the extension scripts, because bo reads
+# their exit status: a setting that half applied has to say so rather than pass.
+scaffold_apply() {
+  scaffold_fill "$1" <<'SH'
+#!/bin/bash
+# Run once, by `bo add @NAME@`. bo records that a setting ran, not what it did,
+# so this has to be safe to run a second time.
+
+set -euo pipefail
+
+omarchy --version >/dev/null
+SH
+}
+
+scaffold_revert() {
+  scaffold_fill "$1" <<'SH'
+#!/bin/bash
+# Run by `bo remove @NAME@`. It puts back whatever apply.sh changed, which is
+# the whole reason a setting unit can be turned off at all.
+
+set -euo pipefail
+
+omarchy --version >/dev/null
+SH
+}
+
+scaffold_extension_json() {
+  local name="$1"
+  jq -n --arg id "$name" --arg title "$(scaffold_title "$name")" \
+    --arg search "omacast-$name {query}" \
+    '{
+       id: $id, title: $title, keyword: $id, aliases: [],
+       subtitle: $title, glyph: "", search: $search,
+       minChars: 0, debounceMs: 120, maxRows: 8,
+       tier: "prefix", view: "list"
+     }'
+}
+
+scaffold_extension_script() {
+  scaffold_fill "$1" <<'SH'
+#!/bin/bash
+# Emits one JSON row per line for OmaCast's `@NAME@:` keyword.
+#
+#   @NAME@:hello    one row, echoing hello back
+#   @NAME@:         the same row, with nothing typed yet
+#
+# This answers as it stands, so the round trip is visible before any of it is
+# yours: add the unit, open the launcher, type `@NAME@:`. Replace the body with
+# the real lookup and keep the shape, which is one JSON object per line, each
+# { id, title, subtitle, exec }, and a `score` deciding the order among them.
+
+set -uo pipefail
+
+query="${1:-}"
+
+if [[ -z $query ]]; then
+  jq -cn --arg t "@TITLE@" --arg s "Type something after @NAME@:" \
+    '{id: "@NAME@-hint", title: $t, subtitle: $s, exec: "", score: 90000}'
+  exit 0
+fi
+
+jq -cn --arg id "@NAME@:$query" --arg t "$query" \
+  --arg s "Echoed by omacast-@NAME@" \
+  --arg e "printf %s $(printf '%q' "$query") | wl-copy" \
+  '{id: $id, title: $t, subtitle: $s, exec: $e, score: 90000}'
+SH
+}
+
+scaffold_extension_readme() {
+  scaffold_fill "$1" <<'TXT'
+# @NAME@
+
+Answers `@NAME@:` in the launcher.
+
+```bash
+bo add @NAME@
+```
+
+Then open the launcher and type `@NAME@:hello`. The rows come from
+`bin/omacast-@NAME@`, one JSON object per line; the JSON under
+`config/omarchy/omacast/extensions/` is what tells the launcher the keyword
+exists and which script answers for it.
+
+`view` in that JSON picks the layout: `list`, `hero`, `cards`, `grid` or
+`split`. `minChars` is how much has to be typed before the script runs at all,
+and `when` is a test run once on load, so an extension for software you do not
+have costs nothing.
+TXT
+}
+
+# What to do next, as the commands themselves. A scaffold that leaves you
+# guessing the order has only moved the problem somewhere else.
+scaffold_done() {
+  local name="$1" dir="$2" edit="$3" try="${4:-}" file
+  say "$(green new) units/$name"
+  while read -r file; do
+    say "  $(dim "${file#"$SELF_ROOT/"}")"
+  done < <(find "$dir" -type f | sort)
+
+  printf '\n%s\n' "$(bold Next)"
+  say "  \$EDITOR $edit"
+  say "  bo add $name"
+  say "  bo registry $(dim '# before you commit, so bo update sees it')"
+  [[ -n $try ]] && printf '\nThen open the launcher and type %s\n' "$(cyan "$try")"
+  return 0
+}
+
+cmd_new_unit() {
+  local name="" kind="hypr" dir edit
+  while (($# > 0)); do
+    case "$1" in
+    --kind)
+      shift
+      kind="${1:-}"
+      ;;
+    --kind=*) kind="${1#--kind=}" ;;
+    -*) die "unknown option: $1" ;;
+    *)
+      [[ -z $name ]] || die "one name at a time"
+      name="$1"
+      ;;
+    esac
+    shift
+  done
+
+  case "$kind" in
+  hypr | plugin | setting) ;;
+  *) die "kind is hypr, plugin or setting, not '${kind:-<empty>}'" ;;
+  esac
+
+  dir=$(scaffold_dir "$name") || exit 1
+  mkdir -p "$dir/hypr"
+  scaffold_toml "$name" "$kind" >"$dir/unit.toml"
+  scaffold_readme "$name" >"$dir/README.md"
+  scaffold_lua "$name" >"$dir/hypr/$name.lua"
+  edit="units/$name/hypr/$name.lua"
+
+  case "$kind" in
+  plugin)
+    mkdir -p "$dir/plugin"
+    scaffold_manifest "$name" >"$dir/plugin/manifest.json"
+    scaffold_widget "$name" >"$dir/plugin/Widget.qml"
+    edit="units/$name/plugin/Widget.qml"
+    ;;
+  setting)
+    scaffold_apply "$name" >"$dir/apply.sh"
+    scaffold_revert "$name" >"$dir/revert.sh"
+    chmod +x "$dir/apply.sh" "$dir/revert.sh"
+    edit="units/$name/apply.sh"
+    ;;
+  esac
+
+  scaffold_done "$name" "$dir" "$edit"
+}
+
+cmd_new_extension() {
+  local name="" dir
+  while (($# > 0)); do
+    case "$1" in
+    -*) die "unknown option: $1" ;;
+    *)
+      [[ -z $name ]] || die "one name at a time"
+      name="$1"
+      ;;
+    esac
+    shift
+  done
+
+  dir=$(scaffold_dir "$name") || exit 1
+  mkdir -p "$dir/bin" "$dir/config/omarchy/omacast/extensions"
+  scaffold_toml "$name" extension >"$dir/unit.toml"
+  scaffold_extension_readme "$name" >"$dir/README.md"
+  scaffold_extension_json "$name" >"$dir/config/omarchy/omacast/extensions/$name.json"
+  scaffold_extension_script "$name" >"$dir/bin/omacast-$name"
+  chmod +x "$dir/bin/omacast-$name"
+
+  scaffold_done "$name" "$dir" "units/$name/bin/omacast-$name" "$name:"
+}
+
+new_usage() {
+  cat <<'TXT'
+  bo new unit <name>       a unit folder, filled in and ready to add
+                           (--kind hypr, plugin or setting)
+  bo new extension <name>  a unit whose whole job is one launcher keyword
+TXT
+}
+
+cmd_new() {
+  local what="${1:-}"
+  shift 2>/dev/null || true
+  case "$what" in
+  unit) cmd_new_unit "$@" ;;
+  extension | ext) cmd_new_extension "$@" ;;
+  "" | -h | --help | help) new_usage ;;
+  *)
+    say "unknown: bo new $what"
+    new_usage
+    return 1
+    ;;
+  esac
+}
+
 cmd_version() {
   local root
   printf 'bo             %s\n' "$(git -C "$SELF_ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
@@ -1076,6 +1448,9 @@ bo - Omarchy customizations, from any marketplace
 
   bo add [unit...]        turn units on (no argument opens a picker)
   bo remove [unit...]     turn units off (no argument opens a picker)
+
+  bo new unit <name>      start a unit here, filled in and ready to add
+  bo new extension <name> start a unit whose job is one launcher keyword
 
   bo update               fetch every marketplace, show what changed, apply
   bo outdated             linked units whose marketplace moved on
@@ -1100,6 +1475,7 @@ info | show) shift; cmd_info "$@" ;;
 status) cmd_status ;;
 add | install) shift; cmd_add "$@" ;;
 remove | rm | uninstall) shift; cmd_remove "$@" ;;
+new | create) shift; cmd_new "$@" ;;
 update | upgrade) cmd_update ;;
 outdated) cmd_outdated ;;
 relink) cmd_relink ;;

@@ -6,5 +6,5 @@ tags     = ["launcher", "reminder", "theme"]
 author   = "pehcastro"
 kind     = "hypr"
 needs    = ["jq", "omarchy"]
-requires = ["omarchycast"]
+requires = ["omacast"]
 keys     = []

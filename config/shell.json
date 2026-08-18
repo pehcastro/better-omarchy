@@ -10,7 +10,7 @@
           "format": "dddd HH:mm",
           "formatAlt": "d MMMM 'W'ww yyyy",
           "id": "omarchy.clock",
-          "verticalFormat": "HH\n\u2014\nmm"
+          "verticalFormat": "HH\n—\nmm"
         },
         {
           "id": "omarchy.keyboard-layout"
@@ -91,6 +91,9 @@
     "bo.cpu-meter",
     {
       "id": "bo.omarchycast"
+    },
+    {
+      "id": "bo.omacast"
     }
   ],
   "version": 1

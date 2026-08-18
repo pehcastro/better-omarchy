@@ -1,0 +1,45 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `theme:` keyword: switch theme by name.
+#
+#   theme:            every theme, the current one first
+#   theme:tokyo       the ones that match
+#
+# `omarchy theme set` lowercases whatever it is given and turns spaces into
+# dashes, so the prettified names `omarchy theme list` prints go straight back
+# in with no translation here.
+
+set -uo pipefail
+
+query="${1:-}"
+command -v omarchy >/dev/null || exit 0
+
+current=$(omarchy theme current 2>/dev/null)
+needle=${query,,}
+# "tokyo night", "tokyonight" and "tokyo-night" should all find the same theme,
+# because nobody remembers which spelling a theme shipped with.
+squashed_needle=${needle//[ -]/}
+rank=90000
+
+while IFS= read -r theme; do
+  [[ -z $theme ]] && continue
+
+  lower=${theme,,}
+  squashed=${lower//[ -]/}
+  if [[ -n $needle ]]; then
+    [[ $lower == *"$needle"* || $squashed == *"$squashed_needle"* ]] || continue
+  fi
+
+  if [[ $theme == "$current" ]]; then
+    subtitle="Current theme"
+    score=$((rank + 5000))
+  else
+    subtitle="Theme"
+    score=$rank
+  fi
+
+  jq -cn --arg id "$theme" --arg t "$theme" --arg s "$subtitle" \
+    --arg e "omarchy theme set $(printf '%q' "$theme")" --argjson sc "$score" \
+    '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, glyph: "󰸌"}'
+
+  rank=$((rank - 100))
+done < <(omarchy theme list 2>/dev/null)

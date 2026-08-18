@@ -1,11 +1,11 @@
 name     = "keys-balanced"
-summary  = "OmarchyCast on Super+K, everything else stays put"
+summary  = "OmaCast on Super+K, everything else stays put"
 version  = "0.1.0"
 category = "Productivity"
 tags     = ["launcher", "keybindings"]
 author   = "pehcastro"
 kind     = "hypr"
 needs     = ["omarchy-shell"]
-requires  = ["omarchycast"]
+requires  = ["omacast"]
 keys      = ["SUPER+K", "SUPER+H"]
 conflicts = ["keys-full", "keys-additive"]

@@ -12,7 +12,7 @@ lets you pick what you want. Nothing turns on without you choosing it.
 
 ## Units
 
-**omarchycast** is the launcher. One box that answers with apps, arithmetic,
+**omacast** is the launcher. One box that answers with apps, arithmetic,
 Omarchy commands, your own links, or the web, and shows each of those the way it
 deserves rather than as one long list. `Ctrl+K` on any result shows what else it
 can do.
@@ -108,7 +108,7 @@ works, including a curl to an API you host. The launcher runs it with stdin
 closed and stderr folded in, so a CLI that would otherwise wait for input
 answers straight away and a real failure is visible rather than silent.
 
-Settings live in `~/.config/omarchy/omarchycast.json` and take effect as you
+Settings live in `~/.config/omarchy/omacast.json` and take effect as you
 save. That is where the default engine lives (Google), and your quicklinks:
 
 ```json
@@ -125,7 +125,7 @@ save. That is where the default engine lives (Google), and your quicklinks:
 
 ### Writing an extension
 
-An extension is a JSON file in `~/.config/omarchy/omarchycast/extensions/`
+An extension is a JSON file in `~/.config/omarchy/omacast/extensions/`
 naming a keyword and a command. The command prints JSON rows, so it can be a
 shell script, a Python file, or anything else that writes to stdout.
 
@@ -149,7 +149,7 @@ extension for software you do not have costs nothing. Unscoped, an extension
 stays quiet unless it sets `"always": true`.
 
 Ship one as a unit by putting the JSON under
-`config/omarchy/omarchycast/extensions/` and the script under `bin/`.
+`config/omarchy/omacast/extensions/` and the script under `bin/`.
 
 ## bo
 
@@ -238,7 +238,7 @@ binding.
 `kind` only decides the extra step. Any unit may carry `hypr/`, `bin/` and
 `config/` whatever its kind, because a bar widget that also wants a keybinding
 is normal. `config/` is how one unit extends another program: a launcher
-extension is just `config/omarchy/omarchycast/extensions/thing.json`.
+extension is just `config/omarchy/omacast/extensions/thing.json`.
 
 Three things that will bite you:
 

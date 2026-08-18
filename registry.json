@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
+  "generated_at_commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
   "units": {
     "accents": {
       "name": "accents",
@@ -47,9 +47,9 @@
       "pluginId": "",
       "path": "units/clipboard-history",
       "files": 3,
-      "hash": "88773391c53ab5dae28f1a3812afd5f6a7fc32e88a8e1f33ed1dc8c21fa2df58",
-      "commit": "2509b9ab6e2237051ca0f1025fc15e1116b55970",
-      "updated": "2026-08-18T18:14:32-03:00",
+      "hash": "f8520895df44a9537117f4f4dbbbba05354b7eea4b40bb5c3f6481f9523671ca",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "cpu-meter": {
@@ -126,7 +126,7 @@
     },
     "keys-additive": {
       "name": "keys-additive",
-      "summary": "OmarchyCast on Super+Shift+K, nothing else changes",
+      "summary": "OmaCast on Super+Shift+K, nothing else changes",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -144,14 +144,14 @@
       "pluginId": "",
       "path": "units/keys-additive",
       "files": 2,
-      "hash": "c44ad8810c3ef760f6233fe568033951c3f85865fddcf42c340235e749a7a980",
-      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
-      "updated": "2026-08-18T17:49:29-03:00",
+      "hash": "dc45cccb12c7638e4317b94f98baddeb8158a8e550091d918c36406ab043408f",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-balanced": {
       "name": "keys-balanced",
-      "summary": "OmarchyCast on Super+K, everything else stays put",
+      "summary": "OmaCast on Super+K, everything else stays put",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -170,14 +170,14 @@
       "pluginId": "",
       "path": "units/keys-balanced",
       "files": 2,
-      "hash": "d6f6d1d3c1fd305e4a032a41daac435ddab596eb87790438654a6b1a6a25ec8d",
-      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
-      "updated": "2026-08-18T17:49:29-03:00",
+      "hash": "6896be2f847f8e12697d8201f85da59f70ca033ea6c1b0305f7539cae3cb6da8",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "keys-full": {
       "name": "keys-full",
-      "summary": "OmarchyCast on Super+K, and it replaces every other launcher",
+      "summary": "OmaCast on Super+K, and it replaces every other launcher",
       "version": "0.1.0",
       "kind": "hypr",
       "category": "Productivity",
@@ -198,9 +198,9 @@
       "pluginId": "",
       "path": "units/keys-full",
       "files": 2,
-      "hash": "1995086798d02f89acde74fb60a5a5343732eca205320fe7b75e0f4e8f19a155",
-      "commit": "751690d8946173befbc1097b20e9be85eca6e98f",
-      "updated": "2026-08-18T17:49:29-03:00",
+      "hash": "840cbb6fae50bca18ce7798c86b6d1cdb501b991c665c874eb0cba15e48a748b",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "natural-commands": {
@@ -223,13 +223,13 @@
       "pluginId": "",
       "path": "units/natural-commands",
       "files": 6,
-      "hash": "13f2644103f53495bf48cd5bf9163b475c8e17044bf2f66747338bee1c9b97fb",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "hash": "a3156e296bb284f8dc34e27bb186bdc84aeddbecc4d83c9a5217d28d2a0c1f25",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
-    "omarchycast": {
-      "name": "omarchycast",
+    "omacast": {
+      "name": "omacast",
       "summary": "A launcher: apps, math, settings, and the web in one box",
       "version": "0.1.0",
       "kind": "plugin",
@@ -244,12 +244,12 @@
         "qalc"
       ],
       "keys": [],
-      "pluginId": "bo.omarchycast",
-      "path": "units/omarchycast",
+      "pluginId": "bo.omacast",
+      "path": "units/omacast",
       "files": 22,
-      "hash": "74e4cc2c9321ee908008b38c2af93f676caafb2708ec78e387e0b4ba2f5e1eaf",
-      "commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
-      "updated": "2026-08-18T18:34:30-03:00",
+      "hash": "d113cead1a71408a47d29daad7dcb646c4d384cf9ea8b8ded4fe76859d58bece",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-files": {
@@ -272,9 +272,9 @@
       "pluginId": "",
       "path": "units/search-files",
       "files": 3,
-      "hash": "381b8115da93cb3ca3deaec78f1bc1125c5b762499c70241b0c6f3ca326f9ad7",
-      "commit": "25f6e43c279027db8da4c55cd36e6e3588f9d146",
-      "updated": "2026-08-18T17:59:07-03:00",
+      "hash": "5f3d4ca55b379c7fdb5bfba3ad3b70c1d0274b809190e946b0b9a74fd7cd1ea1",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-images": {
@@ -297,9 +297,9 @@
       "pluginId": "",
       "path": "units/search-images",
       "files": 3,
-      "hash": "78774bc649afc2553bc334d91754596e63285aad839906f56a8d07787f8b5029",
-      "commit": "02d343a8dbfac8fd11e9317471bf5a1e58d33664",
-      "updated": "2026-08-18T18:17:46-03:00",
+      "hash": "8d5d7fe7d6e01335e2d4493d758950fae0541c7f1f0e1738c800e014731832d9",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-music": {
@@ -322,9 +322,9 @@
       "pluginId": "",
       "path": "units/search-music",
       "files": 3,
-      "hash": "212d74e27096fc9c05c695511b24d9ca4414d98c3da5e38c8c05a63e645b0dc9",
-      "commit": "2509b9ab6e2237051ca0f1025fc15e1116b55970",
-      "updated": "2026-08-18T18:14:32-03:00",
+      "hash": "e6c157e6eb4c6c622ed5b1fb51bf845ab268af9ba1b84e57498af4580e60f602",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "search-windows": {
@@ -347,9 +347,9 @@
       "pluginId": "",
       "path": "units/search-windows",
       "files": 3,
-      "hash": "8f019c094e1b6b563ca32ab617941693bb07255721415f96c9d27fa88e636b4d",
-      "commit": "25f6e43c279027db8da4c55cd36e6e3588f9d146",
-      "updated": "2026-08-18T17:59:07-03:00",
+      "hash": "8239abab35010da56b2fad9be499f44d511bfca87eb67d8b9022a406ee70835d",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "spotify": {
@@ -371,11 +371,11 @@
       "keys": [],
       "pluginId": "",
       "path": "units/spotify",
-      "files": 4,
-      "hash": "fe4b295b3b3164af59ccee3fb26d4deb841e69bf1b32764e4debe3f1ae060d5f",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "files": 5,
+      "hash": "73f68e4781a64f1627e85448a44d8e82354d7687e8b08ff306d8ab8fb02199dc",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "stay-awake": {
       "name": "stay-awake",
@@ -419,9 +419,9 @@
       "pluginId": "",
       "path": "units/system-tools",
       "files": 7,
-      "hash": "e2d16f5469d1ce709a4c40d1d361509da79a227b93631e7c6b29a26e9ffd54a5",
-      "commit": "bbbe10ea6bd88ea8a19c53f6c97214406775caab",
-      "updated": "2026-08-18T18:34:30-03:00",
+      "hash": "720d7e99d48aab1fe08fbc514bb320610b461ac31d1cb3aee47d6996ec0b3b87",
+      "commit": "2ff387d5256c62700f96d0f21874c1b2fc79306a",
+      "updated": "2026-08-18T18:46:57-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {

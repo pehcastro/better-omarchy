@@ -6,5 +6,5 @@ tags     = ["launcher", "clipboard"]
 author   = "pehcastro"
 kind     = "hypr"
 needs     = ["jq", "wl-copy"]
-requires  = ["omarchycast"]
+requires  = ["omacast"]
 keys     = []

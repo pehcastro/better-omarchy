@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "bo.omacast",
+  "name": "OmaCast",
+  "version": "0.1.0",
+  "author": "pehcastro",
+  "description": "A launcher: apps, math, settings, and the web in one box",
+  "license": "MIT",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": { "overlay": "Launcher.qml" }
+}
