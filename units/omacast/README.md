@@ -33,7 +33,11 @@ tells it what you want.
 | `27 november 2027`, `next friday` | the day of week, the week number, how far away |
 | `file:report format:pdf` | files, filtered by extension |
 | `img:` or `img:holiday in:~/work` | thumbnails, with dimensions and size |
-| `win:chrome` | jump to that open window |
+| `win:chrome` | jump to that open window, or close it |
+| `kill:chrome` | a running process, with its memory, and the signal to end it |
+| `emoji:` or `emoji:heart` | the emoji, copied |
+| `snip:sig` | a snippet of text you keep retyping |
+| `recent:` | the files you opened lately, in any app |
 | `spotify:` | the player: cover, scrubber, transport |
 | `spotify:daft punk` | search and play, no account needed |
 | `radio:jazz` | internet radio, through mpv |
@@ -109,6 +113,22 @@ arrives in an update starts working rather than waiting to be listed.
 Engines merge by id rather than replacing the list, so adding one does not mean
 restating Google, DuckDuckGo, ChatGPT, Perplexity, YouTube and GitHub.
 
+## Snippets
+
+`snip:` reads `~/.config/omarchy/omacast-snippets.json`, a flat object of name
+to text:
+
+```json
+{
+  "sig": "Luiz\nhttps://nkz.md",
+  "addr": "1 Example Street\nLisbon"
+}
+```
+
+`Enter` copies one. `Ctrl+K` offers typing it into whatever window had focus,
+through `wtype`. Until that file exists the keyword is not loaded at all, so an
+empty snippet list costs nothing and says nothing.
+
 ## The built-in extensions
 
 These ship inside this unit because none of them works without it. They are
@@ -120,7 +140,11 @@ when writing your own.
 |---|---|---|
 | `file:` `format:` `in:` | `omacast-search-files` | fd, re-ranked by depth and match position |
 | `img:` | `omacast-search-images` | newest first, dimensions from ImageMagick when present |
-| `win:` | `omacast-search-windows` | hyprctl, focuses through the Lua dispatcher |
+| `win:` | `omacast-search-windows` | hyprctl, focuses and closes through the Lua dispatcher |
+| `kill:` | `omacast-kill` | biggest first, two characters minimum |
+| `emoji:` | `omacast-emoji` | reads Omarchy's own emoji data in place |
+| `snip:` | `omacast-snippet` | silent until the snippets file exists |
+| `recent:` | `omacast-recent` | recently-used.xbel, minus what has since been deleted |
 | `spotify:` `music:` | `omacast-search-music` | MPRIS for the player, Deezer for search |
 | `radio:` | `omacast-search-radio` | radio-browser.info, plays through mpv |
 | `ch:` | `omacast-clipboard-history` | reads the file Omarchy's own overlay writes |

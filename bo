@@ -1245,7 +1245,7 @@ ext_answer() {
 rows_word() { ((${1:-0} == 1)) && printf '1 row' || printf '%s rows' "${1:-0}"; }
 
 test_extension() {
-  local file="$1" name binary secs when problem detail cmd
+  local file="$1" dir="$2" name binary secs when problem detail cmd
   local -a info result queries counts=()
   name=$(basename "$file" .json)
 
@@ -1261,8 +1261,15 @@ test_extension() {
   [[ -n ${info[4]:-} ]] && queries+=("${info[4]}")
   when="${info[5]:-}"
 
+  # A script the unit ships but has not linked is the common case here, and it
+  # is worth saying which of the two problems it is: the launcher runs whatever
+  # is on PATH and knows nothing about bin/.
   command -v "$binary" >/dev/null || {
-    test_line fail "$name" "search names $binary, which is not on PATH"
+    if [[ -e "$dir/bin/$binary" ]]; then
+      test_line fail "$name" "search names $binary, which this unit ships and has not linked: bo relink"
+    else
+      test_line fail "$name" "search names $binary, which is not on PATH"
+    fi
     return 1
   }
 
@@ -1339,13 +1346,15 @@ test_unit_toml() {
 }
 
 test_unit() {
-  local ref="$1" file bad=0
+  local ref="$1" dir file bad=0
+  dir=$(ref_dir "$ref")
+
   say "$(bold "$ref")"
   test_unit_toml "$ref" || bad=1
 
   shopt -s nullglob
-  for file in "$(ref_dir "$ref")"/config/omarchy/omacast/extensions/*.json; do
-    test_extension "$file" || bad=1
+  for file in "$dir"/config/omarchy/omacast/extensions/*.json; do
+    test_extension "$file" "$dir" || bad=1
   done
   shopt -u nullglob
 

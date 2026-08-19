@@ -31,15 +31,26 @@ while read -r pid rss cpu comm args; do
   # Kernel threads have no command line worth showing and cannot be signalled.
   [[ $args == \[*\] ]] && continue
 
-  # Never offer to kill the thing that is drawing this list, or the shell it
-  # runs inside: the row would work exactly once.
+  # Never offer to kill the thing that is drawing this list, the process that
+  # launched it, or its watchers: the row would work exactly once. The middle
+  # wildcard is what also catches omarchy-launch-shell.
   case $args in
-    *quickshell*|*omarchy-shell*|*omacast*) continue ;;
+    *quickshell*|*omarchy*shell*|*omacast*) continue ;;
   esac
 
   [[ ${comm,,} == *"$needle"* || ${args,,} == *"$needle"* ]] || continue
 
   memory=$(numfmt --to=iec --from-unit=1024 --suffix=B "$rss" 2>/dev/null || printf '%sK' "$rss")
+
+  # The kernel keeps 15 characters of a process name and no more, so anything
+  # that long is probably cut off. The binary's own name finishes the word when
+  # it agrees with what is left of comm.
+  name=$comm
+  if ((${#comm} >= 15)); then
+    binary=${args%% *}
+    binary=${binary##*/}
+    [[ $binary == "$comm"* ]] && name=$binary
+  fi
 
   # The full command line of a browser tab is several hundred characters of
   # sandbox flags. The first part of it is the part that identifies it.
@@ -47,7 +58,7 @@ while read -r pid rss cpu comm args; do
   line="${line/#$HOME/\~}"
   ((${#line} > 88)) && line="${line:0:88}…"
 
-  jq -cn --arg id "$pid" --arg t "$comm" --arg s "$line" \
+  jq -cn --arg id "$pid" --arg t "$name" --arg s "$line" \
     --arg d "PID $pid  ·  ${cpu}% CPU" --arg a "$memory" \
     --arg term "kill -TERM $pid" --arg force "kill -KILL $pid" \
     --arg pid "$pid" --argjson sc "$rank" \
