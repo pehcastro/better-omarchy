@@ -182,9 +182,26 @@ Column {
         onClicked: view.launcher.activate(modelData)
       }
 
+      // A leading value, when the row carries one. `tz:` moved the clock out of
+      // the title so its own view could lay it out, and this tail was still
+      // drawing titles alone: the hero showed Tokyo's time and the cities under
+      // it showed no times at all.
       Text {
+        id: lead
+        visible: String(modelData.clock || "") !== ""
         anchors.left: parent.left
         anchors.leftMargin: Style.space(24)
+        anchors.verticalCenter: parent.verticalCenter
+        width: visible ? Style.space(58) : 0
+        text: String(modelData.clock || "")
+        color: parent.selected ? view.launcher.selectedText : view.launcher.foreground
+        font.family: view.launcher.fontFamily
+        font.pixelSize: Style.font.body
+      }
+
+      Text {
+        anchors.left: lead.visible ? lead.right : parent.left
+        anchors.leftMargin: lead.visible ? Style.space(10) : Style.space(24)
         anchors.right: hint.left
         anchors.rightMargin: Style.space(12)
         anchors.verticalCenter: parent.verticalCenter

@@ -56,11 +56,28 @@ if ((${#zones[@]} == 0)); then
 fi
 
 ALL_ZONES=""
+ZONE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/zones"
+
+# The IANA list is 598 lines that change when the tzdata package does, which is
+# a few times a year. Asking timedatectl for it on every keystroke is the whole
+# cost of this keyword: nothing here touches the network, and the only slow part
+# was re-reading a list that had not changed since the last time we read it.
 load_zones() {
   [[ -n $ALL_ZONES ]] && return 0
+
+  # Older than the tzdata files themselves means the package moved under us.
+  if [[ -s $ZONE_CACHE && $ZONE_CACHE -nt /usr/share/zoneinfo/UTC ]]; then
+    ALL_ZONES=$(<"$ZONE_CACHE")
+    [[ -n $ALL_ZONES ]] && return 0
+  fi
+
   ALL_ZONES=$(timedatectl list-timezones --no-pager 2>/dev/null)
   [[ -z $ALL_ZONES ]] && ALL_ZONES=$(find /usr/share/zoneinfo/posix -type f -printf '%P\n' 2>/dev/null)
-  [[ -n $ALL_ZONES ]]
+  [[ -z $ALL_ZONES ]] && return 1
+
+  mkdir -p "${ZONE_CACHE%/*}"
+  printf '%s\n' "$ALL_ZONES" > "$ZONE_CACHE" 2>/dev/null
+  return 0
 }
 
 # A zone name, loosely. The IANA list spells cities in full and with

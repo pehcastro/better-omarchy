@@ -166,3 +166,40 @@ number cannot lift an extension above a calculator answer.
 `title` is the label, `accessory` is the formatted current value, and `setExec`
 keeps its literal `{value}` until the drag ends. `min` and `max` default to 0
 and 100, `step` to 1.
+
+
+## Cases
+
+`bo test` proves an extension runs and returns valid JSON. That is not enough.
+Moving the clock out of a `tz:` row title into its own field kept every row
+valid and left the hero drawing cities with no times against them, and nothing
+caught it until a screen recording did, two hours later.
+
+An extension may ship `<name>.cases.json` beside its own JSON: queries, and what
+the answer has to look like.
+
+```json
+[
+  { "why": "a city gives a hero with a clock",
+    "query": "tokyo",
+    "minRows": 2,
+    "row": 0,
+    "view": "hero",
+    "fields": ["clock", "title"],
+    "matches": { "clock": "^[0-9]{2}:[0-9]{2}$" } }
+]
+```
+
+| | |
+|---|---|
+| `query` | what to ask |
+| `minRows`, `maxRows` | how many rows the answer must have |
+| `row` | which row the rest of the case is about, default 0 |
+| `view` | that row's view |
+| `fields` | must be present and non-empty |
+| `absent` | must not be |
+| `matches` | a regex per field |
+| `why` | printed when it fails |
+
+`why` matters more than it looks. A failing assertion should say what it was
+protecting, not only which key was wrong.

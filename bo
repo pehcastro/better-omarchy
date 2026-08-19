@@ -1572,6 +1572,137 @@ test_extension() {
   detail="$(rows_word "${counts[0]}")"
   [[ -n ${counts[1]:-} ]] && detail+=", ${counts[1]} bare"
   test_line ok "$name" "$detail"
+
+  test_cases "$file" "$binary" "$secs" || return 1
+}
+
+# Cases: what an extension must still answer after somebody changes it.
+#
+# `bo test` already proves an extension runs and returns valid JSON. That is not
+# enough. Moving the clock out of a `tz:` row title into its own field kept every
+# row valid and left the hero drawing cities with no times against them, and
+# nothing caught it until a screen recording did, two hours later.
+#
+# So an extension may ship `<name>.cases.json` beside its own JSON: a list of
+# queries and what the answer has to look like.
+#
+#   [
+#     { "why": "a city gives a hero with a clock",
+#       "query": "tokyo",
+#       "minRows": 2,
+#       "row": 0,
+#       "view": "hero",
+#       "fields": ["clock", "title"],
+#       "matches": { "clock": "^[0-9]{2}:[0-9]{2}$" } }
+#   ]
+#
+# `fields` must be present and non-empty. `matches` is a regex per field.
+# `absent` is the other direction. `row` picks which row to look at, default 0.
+# `why` is printed when it fails, because a failing assertion should say what it
+# was protecting rather than only which key was wrong.
+CASES_PY='
+import json, re, subprocess, sys
+
+path, binary, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+
+with open(path) as fh:
+    cases = json.load(fh)
+
+failures = []
+for case in cases:
+    query = case.get("query", "")
+    try:
+        out = subprocess.run([binary, query], capture_output=True, text=True,
+                             timeout=timeout).stdout
+    except subprocess.TimeoutExpired:
+        failures.append((case, "did not answer in %gs" % timeout))
+        continue
+
+    rows = []
+    text = out.strip()
+    if text.startswith("["):
+        try:
+            rows = json.loads(text)
+        except Exception as exc:
+            failures.append((case, "output is not JSON: %s" % exc))
+            continue
+    else:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception as exc:
+                failures.append((case, "a line is not JSON: %s" % exc))
+                break
+
+    need = case.get("minRows")
+    if need is not None and len(rows) < need:
+        failures.append((case, "%d rows, wanted at least %d" % (len(rows), need)))
+        continue
+
+    if case.get("maxRows") is not None and len(rows) > case["maxRows"]:
+        failures.append((case, "%d rows, wanted at most %d" % (len(rows), case["maxRows"])))
+        continue
+
+    if not rows:
+        continue
+
+    index = case.get("row", 0)
+    if index >= len(rows):
+        failures.append((case, "no row %d, there are %d" % (index, len(rows))))
+        continue
+    row = rows[index]
+
+    want_view = case.get("view")
+    if want_view is not None and str(row.get("view", "")) != want_view:
+        failures.append((case, "row %d is view %r, wanted %r"
+                         % (index, row.get("view", ""), want_view)))
+        continue
+
+    bad = False
+    for field in case.get("fields", []):
+        value = row.get(field)
+        if value in (None, "", [], {}):
+            failures.append((case, "row %d has no %s" % (index, field)))
+            bad = True
+    for field in case.get("absent", []):
+        if row.get(field) not in (None, "", [], {}):
+            failures.append((case, "row %d still carries %s" % (index, field)))
+            bad = True
+    for field, pattern in (case.get("matches") or {}).items():
+        value = str(row.get(field, ""))
+        if not re.search(pattern, value):
+            failures.append((case, "row %d %s is %r, wanted /%s/" % (index, field, value, pattern)))
+            bad = True
+    if bad:
+        continue
+
+print(len(cases))
+for case, why in failures:
+    print("!%s  (%s)" % (why, case.get("why") or case.get("query", "")))
+'
+
+# Runs an extension's cases, if it has any.
+test_cases() {
+  local file="$1" binary="$2" secs="$3" name cases total
+  local -a lines
+  name=$(basename "$file" .json)
+  cases="${file%.json}.cases.json"
+  [[ -f $cases ]] || return 0
+
+  mapfile -t lines < <(python3 -c "$CASES_PY" "$cases" "$binary" "$secs" 2>&1)
+  total="${lines[0]:-0}"
+
+  if ((${#lines[@]} <= 1)); then
+    test_line ok "$name cases" "$total held"
+    return 0
+  fi
+
+  test_line fail "$name cases" "$((${#lines[@]} - 1)) of $total broke"
+  printf '%s\n' "${lines[@]:1}" | sed 's/^!/          /'
+  return 1
 }
 
 # A unit.toml that is wrong fails later and further away: bo registry refuses to
@@ -1632,6 +1763,9 @@ test_unit() {
 
   shopt -s nullglob
   for file in "$dir"/config/omarchy/omacast/extensions/*.json; do
+    # `<name>.cases.json` belongs to the extension beside it and is checked as
+    # part of it, not loaded as an extension of its own.
+    [[ $file == *.cases.json ]] && continue
     test_extension "$file" "$dir" || bad=1
   done
   shopt -u nullglob
