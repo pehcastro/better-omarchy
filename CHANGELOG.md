@@ -7,31 +7,46 @@ is a major, a new unit or command is a minor, a fix is a patch.
 A unit carries its own version in its unit.toml, bumped on its own schedule.
 This file is about bo and the marketplace itself.
 
-## Unreleased
+## 0.2.0 (2026-08-19)
 
 ### Features
 
-- **omarchycast:** Add the launcher, with apps, maths, commands and web
+- **omacast:** Add the launcher, with apps, maths, commands and web
 - **units:** Add keys presets, display-local, and unit dependencies
-- **omarchycast:** Answer keyword filters, and take extensions
+- **omacast:** Answer keyword filters, and take extensions
 - **units:** Add file, window and music search extensions
-- **omarchycast:** Give results a view, actions, and settings
+- **omacast:** Give results a view, actions, and settings
 - **units:** Play music properly, and search the clipboard
-- **omarchycast:** Add quicklinks and a grid view
+- **omacast:** Add quicklinks and a grid view
 - **units:** Browse images from the launcher with img:
-- **omarchycast:** Ask a model on ctrl+enter, and stream the answer
+- **omacast:** Ask a model on ctrl+enter, and stream the answer
 - **units:** Add dates, a calendar and system status
-- **omarchycast:** Draw system status and the calendar properly
+- **omacast:** Draw system status and the calendar properly
 - **units:** Search Spotify and start playback with sp:
 - **units:** Add notes, alarms, theme switching, and hover selection
 - **units:** Add notes, and select a result on hover
 - **omacast:** Make music a player, and search it with no setup at all
 - **spotify:** Make spotify a provider, and finish the transport
 - **nkz-keys:** Copy a selected file's path with ctrl+shift+g
+- **nkz-keys:** Copy a selected file's path with ctrl+b
+- **omacast:** Rank by what you use, and say when there is nothing
+- **nkz-keys:** Super+grave returns to the workspace you came from
+- **omacast:** Add emoji, kill, snip and recent
+- **bo:** Add bo test, and split the docs by audience
+- **bo:** Keep bo itself current, and stop claiming a pull when ahead
+- **bo:** Install plain Omarchy plugin repos too
+- **bo:** An interactive bo, and tell the shell when its config changes
+- **setup:** Make setup explain itself, and pick units with checkboxes
 
 ### Fixes
 
-- **omarchycast:** Make image thumbnails readable
+- **omacast:** Make image thumbnails readable
+- **nkz-keys:** Hold the monitor scale at 1x
+- **nkz-keys:** Unbind the monitor scaling keys
+- **nkz-keys:** Stop the screen waking at 2x, and drop the screensaver
+- **nkz-keys:** Let the Display panel and the config agree on scale
+- **bo:** Escape means back everywhere, never quit
+- **bo:** One marketplace per name, decided at the source
 
 ### Refactors
 
@@ -42,9 +57,12 @@ This file is about bo and the marketplace itself.
 ### Documentation
 
 - **readme:** Cover the launcher, its filters and its extensions
+- **marketplace:** Say why marketplaces exist at all
+- Frame this as what Omarchy's plugins do not cover, not as a rival
 
 ### Build and dependencies
 
+- **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate

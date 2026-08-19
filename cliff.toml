@@ -34,6 +34,13 @@ body = """
 {% endfor %}\n
 """
 footer = ""
+
+# The launcher was renamed after those commits were written, and a changelog
+# that names it twice is a changelog nobody can search. The scope is rewritten
+# on the way out rather than by editing history that is already pushed.
+postprocessors = [
+  { pattern = "\\*\\*omarchycast:\\*\\*", replace = "**omacast:**" },
+]
 trim = true
 
 [git]
