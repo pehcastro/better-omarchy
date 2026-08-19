@@ -67,6 +67,14 @@ Item {
     // that actually produces rows arms it again.
     refresher.stop()
 
+    // And this provider is not waiting for anything until it decides otherwise
+    // a few lines down. Every early return below is a decision not to run, and
+    // each of them used to leave a flag set from the previous query: typing
+    // `tz:` and then deleting it left the launcher spinning forever, because
+    // the provider that raised the flag no longer claimed the query and never
+    // reached the code that lowers it.
+    if (prov.launcher) prov.launcher.markWaiting(prov.id, false)
+
     if (!ext) return emit(q, [])
 
     if (!prov.available) {
