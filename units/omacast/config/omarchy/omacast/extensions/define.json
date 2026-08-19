@@ -17,5 +17,12 @@
   "timeoutMs": 7000,
   "maxRows": 12,
   "tier": "prefix",
-  "view": "split"
+  "view": "split",
+  "settings": [
+    {
+      "key": "cacheDays",
+      "label": "Keep definitions for (days)",
+      "value": "30"
+    }
+  ]
 }

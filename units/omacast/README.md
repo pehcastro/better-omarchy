@@ -56,6 +56,12 @@ tells it what you want.
 | `theme:tokyo` | switch theme by name |
 | `cal:` or `cal:november 2027` | a month, drawn |
 | `sys:` | battery, memory, disk, uptime, address, kernel |
+| `calc:` | the sums you have already done, newest first |
+| `pass:github` | an entry from `pass` or 1Password, copied, cleared after 45s |
+| `bt:` | paired bluetooth devices, connected first, connect and disconnect |
+| `wifi:` | networks in range, with signal, and the saved ones connected in one key |
+| `vol:` | output and input volume, as sliders |
+| `bri:` | screen brightness, as a slider |
 | `?` | every keyword the launcher knows, built from what is loaded |
 | nothing at all | the last twenty queries that led somewhere |
 | anything with no match | search the web |
@@ -217,6 +223,12 @@ when writing your own.
 | `unit:` | `omacast-unit` | qalc again, but scoped, so the gate can be permissive |
 | `def:` | `omacast-define` | dictionaryapi.dev, keyless, cached for a month |
 | `sys:` | `omacast-system` | every reading optional, skipped when absent |
+| `calc:` | `omacast-calc-history` | written by `record` when an answer is accepted, never by a keystroke |
+| `pass:` | `omacast-pass` | `pass` or `op`, whichever is there; the secret only ever reaches wl-copy |
+| `bt:` | `omacast-bluetooth` | bluetoothctl reads, `omarchy-bluetooth-device` acts, so rfkill is handled |
+| `wifi:` | `omacast-wifi` | saved networks connect from the row, new ones go to the network panel |
+| `vol:` | `omacast-volume` | sliders; output resolved through any DSP sink to the real one |
+| `bri:` | `omacast-brightness` | a slider, through `omarchy-brightness-display`, which knows DDC from backlight |
 
 ## Playing music without an account
 

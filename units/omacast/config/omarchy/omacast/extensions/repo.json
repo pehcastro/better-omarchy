@@ -8,7 +8,7 @@
     "projects"
   ],
   "subtitle": "Repo",
-  "glyph": "",
+  "glyph": "\uf1d3",
   "search": "omacast-repo {query} {branch}",
   "when": "command -v git >/dev/null && command -v fd >/dev/null",
   "minChars": 0,
@@ -16,5 +16,13 @@
   "timeoutMs": 5000,
   "maxRows": 12,
   "tier": "substring",
-  "view": "list"
+  "view": "list",
+  "settings": [
+    {
+      "key": "roots",
+      "label": "Where your repos live",
+      "value": "",
+      "placeholder": "~/localhost:~/work"
+    }
+  ]
 }

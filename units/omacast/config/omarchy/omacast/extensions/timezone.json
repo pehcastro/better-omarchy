@@ -16,5 +16,13 @@
   "debounceMs": 80,
   "maxRows": 12,
   "tier": "prefix",
-  "view": "list"
+  "view": "list",
+  "settings": [
+    {
+      "key": "zones",
+      "label": "Zones to show",
+      "value": "",
+      "placeholder": "UTC, New York, Tokyo"
+    }
+  ]
 }
