@@ -6,11 +6,11 @@
     "branch"
   ],
   "subtitle": "Git",
-  "glyph": "",
+  "glyph": "\uf126",
   "search": "omacast-git {query}",
   "when": "command -v git >/dev/null",
   "minChars": 0,
-  "debounceMs": 100,
+  "debounceMs": 60,
   "timeoutMs": 5000,
   "maxRows": 24,
   "tier": "substring",

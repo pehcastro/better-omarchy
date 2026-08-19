@@ -16,6 +16,13 @@
 set -uo pipefail
 
 query="${1:-}"
+
+# Trimmed. `git:tmux ` with the space you type before the next word is the same
+# question as `git:tmux`, and an untrimmed needle matched no repo, fell back to
+# the current one, and then filtered its commits by "tmux " which matches
+# nothing: the answer vanished as soon as you reached for the space bar.
+query="${query#"${query%%[![:space:]]*}"}"
+query="${query%"${query##*[![:space:]]}"}"
 needle="${query,,}"
 
 command -v git >/dev/null 2>&1 || exit 0

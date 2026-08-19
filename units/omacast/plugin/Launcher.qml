@@ -62,7 +62,11 @@ Item {
 
   Timer {
     id: slowTimer
-    interval: 400
+    // Long enough that ordinary typing never reaches it. A word takes about
+    // 350ms to type, and the debounce only starts counting when the typing
+    // stops, so a 400ms threshold fired on every local query and drew a
+    // skeleton over an answer that was 130ms away.
+    interval: 700
     onTriggered: root.slowBusy = root.busy
   }
 
@@ -331,7 +335,7 @@ Item {
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
-    "gitrepo", "agent", "loading"]
+    "gitrepo", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -2110,7 +2114,6 @@ Item {
           case "timegrid": return timeGridView
           case "zones": return zonesView
           case "gitrepo": return gitRepoView
-          case "agent": return agentView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2132,7 +2135,6 @@ Item {
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: gitRepoView;   ResultGitRepo   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
-      Component { id: agentView;     ResultAgent     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }

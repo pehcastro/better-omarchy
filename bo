@@ -1339,7 +1339,7 @@ ext_meta() {
   python3 - "$1" "$2" <<'PY'
 import json, re, shlex, sys
 
-VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player", "answer", "slider", "form", "timegrid", "zones", "gitrepo", "agent")
+VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player", "answer", "slider", "form", "timegrid", "zones", "gitrepo")
 TIERS = ("calc", "forced", "prefix", "substring", "weak", "file", "web")
 NUMBERS = ("minChars", "debounceMs", "timeoutMs", "maxRows")
 

@@ -12,7 +12,7 @@
   "search": "omacast-repo {query} {branch}",
   "when": "command -v git >/dev/null && command -v fd >/dev/null",
   "minChars": 0,
-  "debounceMs": 100,
+  "debounceMs": 60,
   "timeoutMs": 5000,
   "maxRows": 12,
   "tier": "substring",
