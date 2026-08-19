@@ -1334,17 +1334,26 @@ Item {
       }
     }
 
+    // An action that only changes something the launcher will show next does
+    // not close it. "Pin for git:" writes a file and nothing else, and closing
+    // on it left the user staring at their wallpaper wondering whether it
+    // worked. `keepOpen` says so; without it an action still closes, because
+    // most of them start something elsewhere and the overlay is in the way.
+    var stayOpen = action.keepOpen === true
+
     if (typeof action.run === "function") {
-      if (followUp === "") dismiss()
+      if (followUp === "" && !stayOpen) dismiss()
       Qt.callLater(action.run)
       if (followUp !== "") requery(followUp)
+      else if (stayOpen) requery(root.queryText)
       return
     }
     if (action.exec) {
       var command = String(action.exec)
-      if (followUp === "") dismiss()
+      if (followUp === "" && !stayOpen) dismiss()
       Qt.callLater(function () { Util.execDetached(command) })
       if (followUp !== "") requery(followUp)
+      else if (stayOpen) requery(root.queryText)
       return
     }
     if (action.row) return root.activate(action.row)

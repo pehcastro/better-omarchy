@@ -443,7 +443,7 @@ while IFS=$'\t' read -r score touched repo gitdir; do
           + (if $web == "" then [] else
                [{ title: "Open on GitHub",
                   exec: ("omarchy-launch-browser " + ($web | @sh)) }] end)
-          + [{ title: "Pin for git:", exec: $pin }]
+          + [{ title: "Pin for git:", exec: $pin, keepOpen: true }]
         )
       }'
 done < <(printf '%s\n' "${ranked[@]}" | sort -t$'\t' -k1,1rn -k2,2rn | head -"$MAX_ROWS")
