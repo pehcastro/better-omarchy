@@ -62,10 +62,19 @@ load_zones() {
 
 # A zone name, loosely. The IANA list spells cities in full and with
 # underscores, and nobody types "America/Sao_Paulo" into a launcher.
+# Fold accents, so "são paulo" and "sao paulo" are the same word. The IANA list
+# is pure ASCII and the person typing is not: nobody in Brazil spells it Sao.
+fold_accents() {
+  printf '%s' "$1" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null | tr -d "'\`^~\"" ||
+    printf '%s' "$1"
+}
+
 resolve_zone() {
   local needle="${1,,}"
+  needle="$(fold_accents "$needle")"
   needle="${needle//[[:space:]]/_}"
   needle="${needle//-/_}"
+  needle="${needle//./}"
   needle="${needle#/}"
   [[ -z $needle ]] && return 1
 
@@ -92,7 +101,55 @@ resolve_zone() {
     cst|cdt|ct) printf 'America/Chicago'; return 0 ;;
     mst|mdt|mt) printf 'America/Denver'; return 0 ;;
     cet|cest) printf 'Europe/Berlin'; return 0 ;;
-    bst|uk|gb|england) printf 'Europe/London'; return 0 ;;
+    bst|uk|gb|england|britain) printf 'Europe/London'; return 0 ;;
+
+    # Countries, by the city almost everyone in them means. The IANA list is a
+    # list of cities, so a country either misses entirely (germany, france) or
+    # matches the wrong thing: "spain" found Port of Spain, in Trinidad, and
+    # "canada" found Yukon. Naming a colleague's country is the most natural way
+    # to ask this question and it was the least reliable.
+    spain|es) printf 'Europe/Madrid'; return 0 ;;
+    germany|de|deutschland) printf 'Europe/Berlin'; return 0 ;;
+    france|fr) printf 'Europe/Paris'; return 0 ;;
+    italy|it) printf 'Europe/Rome'; return 0 ;;
+    netherlands|nl|holland) printf 'Europe/Amsterdam'; return 0 ;;
+    poland|pl) printf 'Europe/Warsaw'; return 0 ;;
+    sweden|se) printf 'Europe/Stockholm'; return 0 ;;
+    norway|no) printf 'Europe/Oslo'; return 0 ;;
+    ireland|ie) printf 'Europe/Dublin'; return 0 ;;
+    ukraine|ua) printf 'Europe/Kyiv'; return 0 ;;
+    turkey|tr) printf 'Europe/Istanbul'; return 0 ;;
+    china|cn) printf 'Asia/Shanghai'; return 0 ;;
+    japan|jp) printf 'Asia/Tokyo'; return 0 ;;
+    korea|kr|southkorea) printf 'Asia/Seoul'; return 0 ;;
+    india|in_|bharat) printf 'Asia/Kolkata'; return 0 ;;
+    singapore|sg) printf 'Asia/Singapore'; return 0 ;;
+    indonesia|id) printf 'Asia/Jakarta'; return 0 ;;
+    philippines|ph) printf 'Asia/Manila'; return 0 ;;
+    vietnam|vn) printf 'Asia/Ho_Chi_Minh'; return 0 ;;
+    thailand|th) printf 'Asia/Bangkok'; return 0 ;;
+    israel|il) printf 'Asia/Jerusalem'; return 0 ;;
+    uae|dubai|ae) printf 'Asia/Dubai'; return 0 ;;
+    brazil|br|brasil) printf 'America/Sao_Paulo'; return 0 ;;
+    argentina|ar) printf 'America/Argentina/Buenos_Aires'; return 0 ;;
+    chile|cl) printf 'America/Santiago'; return 0 ;;
+    colombia|co) printf 'America/Bogota'; return 0 ;;
+    peru|pe) printf 'America/Lima'; return 0 ;;
+    mexico|mx) printf 'America/Mexico_City'; return 0 ;;
+    canada|ca) printf 'America/Toronto'; return 0 ;;
+    australia|au) printf 'Australia/Sydney'; return 0 ;;
+    newzealand|nz) printf 'Pacific/Auckland'; return 0 ;;
+    southafrica|za) printf 'Africa/Johannesburg'; return 0 ;;
+    nigeria|ng) printf 'Africa/Lagos'; return 0 ;;
+    egypt|eg) printf 'Africa/Cairo'; return 0 ;;
+    kenya|ke) printf 'Africa/Nairobi'; return 0 ;;
+    portugal|pt) printf 'Europe/Lisbon'; return 0 ;;
+
+    # American cities the list spells differently, or not at all.
+    washington|dc|washingtondc) printf 'America/New_York'; return 0 ;;
+    seattle|wa) printf 'America/Los_Angeles'; return 0 ;;
+    austin|dallas|houston|texas) printf 'America/Chicago'; return 0 ;;
+    boston|philly|philadelphia|miami|atlanta) printf 'America/New_York'; return 0 ;;
     ist|india) printf 'Asia/Kolkata'; return 0 ;;
     jst|japan) printf 'Asia/Tokyo'; return 0 ;;
     kst|korea) printf 'Asia/Seoul'; return 0 ;;
@@ -381,6 +438,52 @@ fi
 if [[ $trimmed =~ ^\<t:([0-9]{1,12})(:[tTdDfFsSR])?\>$ ]]; then
   zone_column "${BASH_REMATCH[1]}" 95000
   exit 0
+fi
+
+# Two or more `name:place` pairs is a meeting, not a lookup.
+#
+#   tz: john:tokyo maria:spain ana:sp ronaldo:washington
+#
+# The question behind that typing is never "what time is it for John", it is
+# "when can all of us talk", and a column of four times answers the first while
+# leaving the second to the reader. So this draws a day: one row per person, one
+# cell per hour, shaded by whether that hour is reasonable where they are. The
+# hours where every row is reasonable are the answer, and they are visible
+# without reading a single number.
+pair_count=$(grep -oE '(^|[[:space:]])[A-Za-z0-9_-]+:' <<<"$trimmed" | wc -l)
+
+if ((pair_count >= 2)); then
+  people_names=() people_zones=()
+
+  # One pair per line. A place may hold spaces ("new york"), so the split is on
+  # the next `name:` rather than on whitespace, and sed is the honest tool for
+  # "put a newline before each of these".
+  while IFS= read -r pair; do
+    [[ -z $pair ]] && continue
+    who="${pair%%:*}"
+    where="${pair#*:}"
+    where="${where#"${where%%[![:space:]]*}"}"
+    where="${where%"${where##*[![:space:]]}"}"
+    [[ -z $who || -z $where ]] && continue
+
+    zone=$(resolve_zone "$where") || continue
+    people_names+=("$who")
+    people_zones+=("$zone")
+  done < <(sed -E 's/(^|[[:space:]])([A-Za-z0-9_-]+:)/\n\2/g' <<<"$trimmed")
+
+  if ((${#people_names[@]} >= 2)); then
+    OMACAST_NAMES="$(printf '%s\n' "${people_names[@]}")" \
+    OMACAST_ZONES="$(printf '%s\n' "${people_zones[@]}")" \
+    OMACAST_HOME="$local_zone" \
+    python3 "$(dirname "$(readlink -f "$0")")/omacast-timezone-plan"
+    exit 0
+  fi
+
+  # Named somebody whose place is not a zone. Saying which one is wrong beats
+  # falling through to a search for the whole string.
+  if ((${#people_names[@]} == 1)); then
+    fail_row "Only one of those places is a timezone" "Try tz: ana:tokyo john:london"
+  fi
 fi
 
 # A bare unix timestamp, in the range that is a plausible date rather than a

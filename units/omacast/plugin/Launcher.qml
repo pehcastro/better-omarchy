@@ -285,9 +285,15 @@ Item {
     if (root.answerMode) return "answer"
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
-    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar",
-            "player", "slider", "form"].indexOf(wanted) >= 0 ? wanted : "list"
+    return root.knownViews.indexOf(wanted) >= 0 ? wanted : "list"
   }
+
+  // Every view that has a component below. This was a second list written by
+  // hand, and adding a view meant remembering both: `timegrid` shipped with its
+  // component wired up and its name missing here, so its rows silently drew as
+  // a plain list and looked like the script was wrong.
+  readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
+    "dashboard", "calendar", "player", "slider", "form", "timegrid"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -1891,7 +1897,7 @@ Item {
             } else if (event.key === Qt.Key_Backtab) {
               root.move(-1)
               event.accepted = true
-            } else if (root.activeView === "slider"
+            } else if ((root.activeView === "slider" || root.activeView === "timegrid")
                        && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
               // Left and right belong to the text cursor everywhere else, and
               // are taken back only while the thing on screen is a row of
@@ -2032,6 +2038,7 @@ Item {
           case "grid": return gridView
           case "dashboard": return dashboardView
           case "calendar": return calendarView
+          case "timegrid": return timeGridView
           case "player": return playerView
           case "slider": return sliderView
           case "form": return formView
@@ -2049,6 +2056,7 @@ Item {
       Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: formView;      ResultForm      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
@@ -2102,7 +2110,14 @@ Item {
             // First, because it is the way out of somewhere you were led, and
             // nothing else on this bar is about leaving.
             if (root.flowStack.length > 0) parts.push("\u238B  Back")
-            if (actions.length > 1) parts.push("\u21E7\u21B5  " + String(actions[1].title))
+            // Truncated here rather than elided by the Text, because this line
+            // is three labels sharing one row: a long second action drew on top
+            // of the first instead of running out of room on its own.
+            if (actions.length > 1) {
+              var second = String(actions[1].title)
+              if (second.length > 22) second = second.slice(0, 21) + "\u2026"
+              parts.push("\u21E7\u21B5  " + second)
+            }
             if (root.answerAvailable && input.text.trim() !== "") parts.push("\u2303\u21B5  Ask " + root.answerModel)
             if (actions.length > 1) parts.push("\u2303K  Actions")
             return parts.join("     ")

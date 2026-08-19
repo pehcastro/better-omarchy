@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Draw a day as a grid, one row per person, so a meeting time is visible.
+
+A column of times answers "what time is it for John". It does not answer "when
+can the four of us talk", which is the only reason anyone types four names. So
+this emits one row carrying the whole day for everybody, and the view shades
+each hour by whether it is reasonable where that person is.
+
+The shading is the argument. Nobody reads twenty-four numbers per person and
+works out the overlap; they look for the band of colour that runs all the way
+down. Four bands and a gap means there is no good hour, which is itself the
+answer and is worth seeing in one glance rather than deducing.
+"""
+
+import json
+import os
+import sys
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# What an hour is worth, where somebody is. Not a preference: these are the
+# hours a person can be asked to take a call in without it being a favour.
+ASLEEP, EARLY, WORK, EVENING = "asleep", "early", "work", "evening"
+
+
+def band(hour):
+    if hour < 7 or hour >= 23:
+        return ASLEEP
+    if hour < 9:
+        return EARLY
+    if hour < 18:
+        return WORK
+    return EVENING
+
+
+def main():
+    names = [n for n in os.environ.get("OMACAST_NAMES", "").split("\n") if n]
+    zones = [z for z in os.environ.get("OMACAST_ZONES", "").split("\n") if z]
+    home = os.environ.get("OMACAST_HOME") or "UTC"
+
+    if len(names) < 2 or len(names) != len(zones):
+        return 0
+
+    try:
+        home_tz = ZoneInfo(home)
+    except Exception:
+        home_tz = ZoneInfo("UTC")
+
+    # The grid runs over the next twenty-four hours from the top of this hour,
+    # rather than over "today", because a meeting is scheduled forward and a
+    # grid that starts at midnight spends its first third on hours nobody can
+    # use any more.
+    now = datetime.now(home_tz).replace(minute=0, second=0, microsecond=0)
+
+    people = []
+    for who, zone in zip(names, zones):
+        try:
+            tz = ZoneInfo(zone)
+        except Exception:
+            continue
+
+        cells = []
+        for step in range(24):
+            moment = now + timedelta(hours=step)
+            there = moment.astimezone(tz)
+            cells.append({
+                "hour": there.hour,
+                "label": there.strftime("%H:%M"),
+                "band": band(there.hour),
+                # The day only matters when it is not the same as the reader's,
+                # and it is the thing people get wrong.
+                "day": there.strftime("%a") if there.date() != moment.date() else "",
+            })
+
+        offset = there.utcoffset() - datetime.now(home_tz).utcoffset()
+        hours = int(offset.total_seconds() // 3600)
+        people.append({
+            "name": who,
+            "zone": zone,
+            "city": zone.split("/")[-1].replace("_", " "),
+            "delta": "same time" if hours == 0
+                     else f"{abs(hours)}h {'ahead' if hours > 0 else 'behind'}",
+            "cells": cells,
+        })
+
+    if len(people) < 2:
+        return 0
+
+    # The overlap, reported rather than judged. An earlier version said "no
+    # hour suits everyone", which is a verdict about other people's days that
+    # this program is in no position to make: plenty of people take a call at
+    # eight in the evening. What it can say is who is awake when, and let the
+    # reader decide what to ask of whom.
+    awake, working = [], []
+    for step in range(24):
+        bands = [p["cells"][step]["band"] for p in people]
+        if all(b != ASLEEP for b in bands):
+            awake.append(step)
+        if all(b == WORK for b in bands):
+            working.append(step)
+
+    def when(step):
+        return (now + timedelta(hours=step)).strftime("%H:%M")
+
+    def run_of(steps):
+        """The longest unbroken stretch, as text. Six scattered hours and six in
+        a row are different answers and a count alone hides which one it is."""
+        if not steps:
+            return ""
+        best_start, best_len = steps[0], 1
+        start, length = steps[0], 1
+        for a, b in zip(steps, steps[1:]):
+            if b == a + 1:
+                length += 1
+            else:
+                start, length = b, 1
+            if length > best_len:
+                best_start, best_len = start - length + 1, length
+        if best_len == 1:
+            return when(best_start)
+        return when(best_start) + " to " + when(best_start + best_len)
+
+    if awake:
+        headline = f"Everyone awake for {len(awake)} hour" + ("s" if len(awake) > 1 else "")
+        detail = "Your " + run_of(awake)
+        if working:
+            detail += "   ·   all at work " + run_of(working)
+    else:
+        headline = "No hour with everyone awake"
+        detail = "The closest you get is asking someone early or late"
+
+    best, ok = working, awake
+    stamps = [int((now + timedelta(hours=s)).timestamp()) for s in (awake or range(24))]
+
+    row = {
+        "id": "tz-plan",
+        "title": headline,
+        "subtitle": ", ".join(p["name"] for p in people),
+        "detail": detail,
+        "view": "timegrid",
+        "score": 99000,
+        "people": people,
+        "startsAt": int(now.timestamp()),
+        "best": best,
+        "ok": ok,
+        "exec": "",
+        "actions": [],
+    }
+
+    if stamps:
+        first = stamps[0]
+        row["exec"] = f"printf %s '<t:{first}:t>' | wl-copy"
+        row["actions"] = [
+            {"title": "Copy the Time", "shortcut": "↵",
+             "exec": f"printf %s '<t:{first}:t>' | wl-copy"},
+            {"title": "Copy Date and Time",
+             "exec": f"printf %s '<t:{first}:F>' | wl-copy"},
+            {"title": "Copy Every Good Hour",
+             "exec": "printf %s " + repr(" ".join(f"<t:{s}:t>" for s in stamps[:8])) + " | wl-copy"},
+        ]
+
+    print(json.dumps(row))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
