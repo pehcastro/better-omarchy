@@ -181,14 +181,48 @@ short_age() {
   fi
 }
 
-if [[ -n ${VISUAL:-} ]]; then
-  # Deliberately unquoted where it is used: VISUAL routinely carries flags, as
-  # in "zeditor --wait". setsid keeps a --wait style editor from holding on to
-  # the launcher's child.
+# What "open this repo" means, in order of who has said so most deliberately.
+#
+# Opening a project is the start of working on it, and everybody starts
+# differently: an editor, a terminal already in the directory, an agent waiting
+# in that directory. So it is a setting, and it takes the path as an argument or
+# as {} anywhere in the command.
+#
+#   "repoOpen": "zeditor {}"
+#   "repoOpen": "setsid uwsm-app -- ghostty --working-directory={}"
+#   "repoOpen": "omarchy-launch-tui --app-id=org.omarchy.claude claude --cwd {}"
+#
+# Deliberately unquoted where it is used: these routinely carry flags. setsid
+# keeps a --wait style editor from holding on to the launcher's child.
+config_file="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast.json"
+repo_open=""
+[[ -f $config_file ]] && repo_open=$(jq -r '.repoOpen // empty' "$config_file" 2>/dev/null)
+
+if [[ -n $repo_open ]]; then
+  EDITOR_PREFIX=""   # the command carries its own placeholder
+elif [[ -n ${VISUAL:-} ]]; then
   EDITOR_PREFIX="setsid $VISUAL"
 else
   EDITOR_PREFIX="omarchy-launch-editor"
 fi
+
+# The command that opens one repo. `{}` is the path; a command without one gets
+# the path appended, which is what every editor expects anyway.
+open_command() {
+  local path="$1" quoted
+  quoted=$(printf '%q' "$path")
+
+  if [[ -n $repo_open ]]; then
+    if [[ $repo_open == *"{}"* ]]; then
+      printf '%s' "${repo_open//\{\}/$quoted}"
+    else
+      printf '%s %s' "$repo_open" "$quoted"
+    fi
+    return
+  fi
+
+  printf '%s %s' "$EDITOR_PREFIX" "$quoted"
+}
 
 # --paths and --current, for the other extensions
 # ------------------------------------------------------------------
@@ -421,7 +455,7 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     --arg detail "$display" \
     --arg subtitle "$state" \
     --arg accessory "$(short_age $((now - committed)))" \
-    --arg open "$EDITOR_PREFIX $quoted" \
+    --arg open "$(open_command "$repo")" \
     --arg term "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
     --arg log "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted log --oneline --graph --decorate -40" \
     --arg branch "$branch" --arg ahead "${ahead_txt:-}" --arg behind "${behind_txt:-}" \
