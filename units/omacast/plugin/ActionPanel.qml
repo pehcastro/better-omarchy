@@ -17,8 +17,23 @@ BorderSurface {
   readonly property var actions: launcher.currentActions()
   readonly property int rowHeight: Style.space(36)
 
+  // How much room is left below the card. The keyword extensions can attach a
+  // dozen actions to one row, and seven of those already reach past the bottom
+  // of a 1080p screen once the results are long, so the count that fits is a
+  // fact about the screen rather than a constant.
+  property int maxHeight: 0
+
+  readonly property int visibleRows: {
+    var room = panel.maxHeight > 0
+      ? Math.floor((panel.maxHeight - Style.space(16)) / panel.rowHeight)
+      : 7
+    // Two rows is the floor: a panel showing one row of twelve reads as broken
+    // rather than as scrollable.
+    return Math.max(2, Math.min(actions.length, Math.min(7, room)))
+  }
+
   width: Style.space(300)
-  height: Math.min(actions.length, 7) * rowHeight + Style.space(16)
+  height: visibleRows * rowHeight + Style.space(16)
   radius: Style.cornerRadius
   color: launcher.background
   borderSpec: launcher.borderSpec
@@ -49,6 +64,10 @@ BorderSurface {
     currentIndex: panel.index
     highlightMoveDuration: 0
     model: panel.actions
+
+    // Nothing else scrolls this: the panel has no focus and takes no wheel
+    // events, so moving the selection is the only way the list moves.
+    onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
 
     delegate: Item {
       required property var modelData

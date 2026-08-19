@@ -1371,11 +1371,18 @@ Item {
           color: Qt.darker(root.foreground, 1.9)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          text: root.busy
-            ? "Searching\u2026"
-            : (root.scopeLabel !== ""
-               ? "Nothing in " + root.scopeLabel + " matches \u201C" + root.queryText.replace(/^[a-z0-9_-]+:\s*/i, "") + "\u201D"
-               : "Nothing matches that")
+          text: {
+            if (root.busy) return "Searching\u2026"
+            if (root.scopeLabel === "") return "Nothing matches that"
+
+            // A bare keyword has nothing to quote back. `docker:` on a machine
+            // with no containers was reading `matches ""`, which blames the
+            // query for an empty answer the query did not cause.
+            var term = root.queryText.replace(/^[a-z0-9_-]+:\s*/i, "")
+            return term === ""
+              ? "Nothing in " + root.scopeLabel
+              : "Nothing in " + root.scopeLabel + " matches \u201C" + term + "\u201D"
+          }
         }
       }
 
@@ -1472,6 +1479,7 @@ Item {
         // the screen as soon as the results are short.
         anchors.top: footer.bottom
         anchors.topMargin: Style.space(6)
+        maxHeight: panel.height - (card.y + card.height + Style.space(6)) - Style.space(12)
       }
     }
   }
