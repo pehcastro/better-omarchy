@@ -2038,6 +2038,38 @@ scaffold_extension_json() {
      }'
 }
 
+# The cases the stub already passes. A scaffold that starts red teaches you to
+# ignore the test; one that starts with nothing teaches you tests are optional.
+# These three hold against the script beside them, so the first thing you do to
+# them is edit them into what your extension actually promises.
+scaffold_extension_cases() {
+  scaffold_fill "$1" <<'TXT'
+[
+  { "why": "a bare @NAME@: still answers, with the hint that says what to type",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["id", "title", "subtitle"],
+    "matches": { "id": "^@NAME@-hint$" } },
+
+  { "why": "what was typed comes back as the title of one row, not two and not none",
+    "query": "hello",
+    "minRows": 1,
+    "maxRows": 1,
+    "row": 0,
+    "fields": ["id", "title", "subtitle"],
+    "matches": { "title": "^hello$" } },
+
+  { "why": "the row does something: Enter copies the answer rather than nothing",
+    "query": "hello",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["exec"],
+    "matches": { "exec": "wl-copy$" } }
+]
+TXT
+}
+
 scaffold_extension_script() {
   scaffold_fill "$1" <<'SH'
 #!/bin/bash
@@ -2087,6 +2119,16 @@ exists and which script answers for it.
 `split`. `minChars` is how much has to be typed before the script runs at all,
 and `when` is a test run once on load, so an extension for software you do not
 have costs nothing.
+
+```bash
+bo test @NAME@
+```
+
+That runs the script and reads the answer the way the launcher does, then runs
+the cases in `@NAME@.cases.json`: queries, and what the answer to each has to
+look like. Three are there already and they pass against the stub, so as you
+replace the body, rewrite them into what your extension promises instead.
+`units/omacast/EXTENSIONS.md` has the field list.
 TXT
 }
 
@@ -2102,6 +2144,9 @@ scaffold_done() {
   printf '\n%s\n' "$(bold Next)"
   say "  \$EDITOR $edit"
   say "  bo add $name"
+  # Linking first, because the cases run the script by the name the launcher
+  # uses and that name is only on PATH once the unit is on.
+  [[ -n $try ]] && say "  bo test $name $(dim '# the answer, and the cases beside it')"
   say "  bo registry $(dim '# before you commit, so bo update sees it')"
   [[ -n $try ]] && printf '\nThen open the launcher and type %s\n' "$(cyan "$try")"
   return 0
@@ -2173,6 +2218,7 @@ cmd_new_extension() {
   scaffold_toml "$name" extension >"$dir/unit.toml"
   scaffold_extension_readme "$name" >"$dir/README.md"
   scaffold_extension_json "$name" >"$dir/config/omarchy/omacast/extensions/$name.json"
+  scaffold_extension_cases "$name" >"$dir/config/omarchy/omacast/extensions/$name.cases.json"
   scaffold_extension_script "$name" >"$dir/bin/omacast-$name"
   chmod +x "$dir/bin/omacast-$name"
 

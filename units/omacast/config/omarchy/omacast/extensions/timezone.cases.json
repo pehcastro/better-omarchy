@@ -1,61 +1,130 @@
 [
-  { "why": "a city gives a hero, and the hero carries a clock",
+  {
+    "why": "a city gives a hero, and the hero carries a clock",
     "query": "tokyo",
     "minRows": 2,
     "row": 0,
     "view": "hero",
-    "fields": ["clock", "title"],
-    "matches": { "clock": "^[0-9]{2}:[0-9]{2}$" } },
-
-  { "why": "the zones under the hero carry their own clocks, not just names",
+    "fields": [
+      "clock",
+      "title"
+    ],
+    "matches": {
+      "clock": "^[0-9]{2}:[0-9]{2}$"
+    }
+  },
+  {
+    "why": "the zones under the hero carry their own clocks, not just names",
     "query": "tokyo",
     "row": 1,
-    "fields": ["clock", "title", "zoneid"],
-    "matches": { "clock": "^[0-9]{2}:[0-9]{2}$" } },
-
-  { "why": "a bare query lists the configured zones in the zones view",
+    "fields": [
+      "clock",
+      "title",
+      "zoneid"
+    ],
+    "matches": {
+      "clock": "^[0-9]{2}:[0-9]{2}$"
+    }
+  },
+  {
+    "why": "a bare query lists the configured zones in the zones view",
     "query": "",
     "minRows": 4,
     "view": "zones",
-    "fields": ["clock", "title", "zoneid", "subtitle"] },
-
-  { "why": "UTC is not in the default set: it is a reference, not a place",
+    "fields": [
+      "clock",
+      "title",
+      "zoneid",
+      "subtitle"
+    ]
+  },
+  {
+    "why": "UTC is not in the default set: it is a reference, not a place",
     "query": "",
     "minRows": 4,
-    "matches": { "zoneid": "^(?!UTC$)" } },
-
-  { "why": "two people is a meeting, and draws the grid rather than a list",
+    "matches": {
+      "zoneid": "^(?!UTC$)"
+    }
+  },
+  {
+    "why": "two people is a meeting, and draws the grid rather than a list",
     "query": "john:tokyo maria:spain",
     "minRows": 1,
     "view": "timegrid",
-    "fields": ["people", "title", "detail"] },
-
-  { "why": "me: puts you in the grid",
+    "fields": [
+      "people",
+      "title",
+      "detail"
+    ]
+  },
+  {
+    "why": "me: puts you in the grid",
     "query": "me: john:tokyo",
     "view": "timegrid",
-    "fields": ["people"] },
-
-  { "why": "a country resolves to the city people in it mean",
+    "fields": [
+      "people"
+    ]
+  },
+  {
+    "why": "a country resolves to the city people in it mean",
     "query": "spain",
     "row": 0,
-    "matches": { "detail": "Madrid" } },
-
-  { "why": "accents and spacing do not change what a place is",
+    "matches": {
+      "detail": "Madrid"
+    }
+  },
+  {
+    "why": "accents and spacing do not change what a place is",
     "query": "sao paulo",
     "row": 0,
-    "matches": { "detail": "Sao_Paulo" } },
-
-  { "why": "a Discord timestamp reads as an instant, not as a search",
+    "matches": {
+      "detail": "Sao_Paulo"
+    }
+  },
+  {
+    "why": "a Discord timestamp reads as an instant, not as a search",
     "query": "<t:1735689600:F>",
     "minRows": 3,
-    "view": "zones" },
-
-  { "why": "nonsense answers, and says so, rather than staying silent",
+    "view": "zones"
+  },
+  {
+    "why": "nonsense answers, and says so, rather than staying silent",
     "query": "zzznotazone",
     "minRows": 1,
-    "matches": { "title": "No timezone matches" } },
-
-  { "why": "a half-typed Discord paste is not yet a question",
+    "matches": {
+      "title": "No timezone matches"
+    }
+  },
+  {
+    "why": "a half-typed Discord paste is not yet a question",
     "query": "<t:17356",
-    "maxRows": 0 }
+    "maxRows": 0
+  },
+  {
+    "why": "one name is a person, not a place: maria:saopaulo answered 'no timezone matches'",
+    "query": "maria:saopaulo",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ]
+  },
+  {
+    "why": "one person somewhere else is compared against you, so you are a row",
+    "query": "maria:tokyo",
+    "view": "timegrid",
+    "matches": {
+      "people": "'name': 'you'"
+    }
+  },
+  {
+    "why": "four people still draw one grid, which is what the recording needs",
+    "query": "john:tokyo maria:spain ana:saopaulo ronaldo:washington",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people",
+      "startsAt"
+    ]
+  }
 ]

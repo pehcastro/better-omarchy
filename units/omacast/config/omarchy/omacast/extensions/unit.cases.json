@@ -1,0 +1,51 @@
+[
+  { "why": "in is the preposition, not inches: qalc on its own reads it as a unit and answers in cubic metres",
+    "query": "5 km in miles",
+    "minRows": 1,
+    "row": 0,
+    "view": "hero",
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^3\\.1[0-9]* mi$" } },
+
+  { "why": "a bare f is Fahrenheit, not farads",
+    "query": "180f in c",
+    "minRows": 1,
+    "row": 0,
+    "view": "hero",
+    "matches": { "title": "^82\\.2[0-9]* °C$" } },
+
+  { "why": "a bare k is kelvin only when the other side is already a temperature",
+    "query": "100c in k",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "title": "^373\\.15 K$" } },
+
+  { "why": "one number, not a mixed-unit sum: without conv none this reads 11 lb + 0.369810 oz",
+    "query": "5 kg to pound",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "title": "^[0-9.]+ lb$" } },
+
+  { "why": "the hero carries the rate, which is what stops the next four queries",
+    "query": "20 miles in km",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["detail"],
+    "matches": { "detail": "^1 mile = 1\\.6" } },
+
+  { "why": "a temperature carries no rate: a scale with an offset does not have one",
+    "query": "180f in c",
+    "minRows": 1,
+    "row": 0,
+    "absent": ["detail"] },
+
+  { "why": "a quantity with no target still offers its own family",
+    "query": "20 miles",
+    "minRows": 3,
+    "row": 0,
+    "matches": { "title": " km$", "subtitle": "^20 miles$" } },
+
+  { "why": "a word that is not a unit answers nothing rather than qalc's guess at it: qalc -t firefox is 0 B",
+    "query": "firefox",
+    "maxRows": 0 }
+]

@@ -477,7 +477,11 @@ fi
 # without reading a single number.
 pair_count=$(grep -oE '(^|[[:space:]])[A-Za-z0-9_-]+:' <<<"$trimmed" | wc -l)
 
-if ((pair_count >= 2)); then
+# One pair is a person too. Requiring two meant `maria:saopaulo` was not read as
+# naming anybody: it fell through to "is `maria:saopaulo` a place", which it is
+# not, and answered that no timezone matches. Naming one person is the smallest
+# way to ask this and it has to work.
+if ((pair_count >= 1)); then
   people_names=() people_zones=()
 
   # One pair per line. A place may hold spaces ("new york"), so the split is on
@@ -507,7 +511,19 @@ if ((pair_count >= 2)); then
     people_zones+=("$zone")
   done < <(sed -E 's/(^|[[:space:]])([A-Za-z0-9_-]+:)/\n\2/g' <<<"$trimmed")
 
-  if ((${#people_names[@]} >= 2)); then
+  # Naming one person is a comparison with you, so you are in it. Unless they
+  # are in your zone, where a second identical row says nothing. Two or more and
+  # you are only there if you asked with `me:`, because by then the question is
+  # about them.
+  if ((${#people_names[@]} == 1)) && [[ ${people_zones[0]} != "$local_zone" ]]; then
+    people_names=("you" "${people_names[0]}")
+    people_zones=("$local_zone" "${people_zones[0]}")
+  fi
+
+  # One person is a grid. Requiring two meant naming somebody in your own zone
+  # produced nothing at all, because the you-row was skipped as redundant and
+  # the count never reached two.
+  if ((${#people_names[@]} >= 1)); then
     OMACAST_NAMES="$(printf '%s\n' "${people_names[@]}")" \
     OMACAST_ZONES="$(printf '%s\n' "${people_zones[@]}")" \
     OMACAST_HOME="$local_zone" \
@@ -515,10 +531,10 @@ if ((pair_count >= 2)); then
     exit 0
   fi
 
-  # Named somebody whose place is not a zone. Saying which one is wrong beats
-  # falling through to a search for the whole string.
-  if ((${#people_names[@]} == 1)); then
-    fail_row "Only one of those places is a timezone" "Try tz: ana:tokyo john:london"
+  # Named people and placed none of them. Saying so beats falling through to a
+  # search for the whole string, which finds nothing and explains nothing.
+  if ((${#people_names[@]} == 0)); then
+    fail_row "None of those places is a timezone" "Try tz: ana:tokyo john:london"
   fi
 fi
 

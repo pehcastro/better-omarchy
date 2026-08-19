@@ -38,7 +38,9 @@ def main():
     zones = [z for z in os.environ.get("OMACAST_ZONES", "").split("\n") if z]
     home = os.environ.get("OMACAST_HOME") or "UTC"
 
-    if len(names) < 2 or len(names) != len(zones):
+    # One person is an answer: their day, against yours implicitly. Requiring
+    # two meant naming somebody in your own zone printed nothing at all.
+    if not names or len(names) != len(zones):
         return 0
 
     try:
@@ -83,7 +85,7 @@ def main():
             "cells": cells,
         })
 
-    if len(people) < 2:
+    if not people:
         return 0
 
     # The overlap, reported rather than judged. An earlier version said "no
