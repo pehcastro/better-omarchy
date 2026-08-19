@@ -84,6 +84,23 @@ canon() {
     knot | knots | kn | kt) printf 'knot' ;;
     hp | horsepower) printf 'horsepower' ;;
     mpg) printf 'mpg' ;;
+    # qalc reads "mb" as millibar and "gb" as gram·bel, so `2 gb in mb` came
+    # back as 5.08E-64 kg·m⁵. Data sizes are the units people type in lower
+    # case more than any other, so they are spelled out here.
+    b | byte | bytes) printf 'byte' ;;
+    kb | kilobyte | kilobytes) printf 'kilobyte' ;;
+    mb | megabyte | megabytes) printf 'megabyte' ;;
+    gb | gigabyte | gigabytes) printf 'gigabyte' ;;
+    tb | terabyte | terabytes) printf 'terabyte' ;;
+    pb | petabyte | petabytes) printf 'petabyte' ;;
+    kib | kibibyte | kibibytes) printf 'kibibyte' ;;
+    mib | mebibyte | mebibytes) printf 'mebibyte' ;;
+    gib | gibibyte | gibibytes) printf 'gibibyte' ;;
+    tib | tebibyte | tebibytes) printf 'tebibyte' ;;
+    bit | bits) printf 'bit' ;;
+    kbit | kilobit | kilobits) printf 'kilobit' ;;
+    mbit | megabit | megabits) printf 'megabit' ;;
+    gbit | gigabit | gigabits) printf 'gigabit' ;;
     *) printf '%s' "$1" ;;
   esac
 }

@@ -1605,7 +1605,7 @@ Item {
       calc.pendingEpoch = -1
       // -m bounds the calculation: qalc will otherwise chew on a pathological
       // expression for as long as it takes.
-      process.command = ["qalc", "-t", "-m", "200", "--", calc.pendingText]
+      process.command = ["qalc", "-t", "-m", "200", "--", Calc.forQalc(calc.pendingText)]
       process.running = true
     }
 

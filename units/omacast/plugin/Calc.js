@@ -17,6 +17,29 @@ function looksLikeMath(text) {
   return CONVERSION.test(text)
 }
 
+// qalc reads a lone `in` as inches, so `5 km in miles` comes back as 204387 m³
+// and `40 miles in km` as 1635094 m³. Both are wrong with exit code 0, and both
+// are how a person writes a conversion. `to` means only one thing to qalc, so
+// the word is swapped on the way in. Anything without a digit in front of it is
+// left alone, because `3 in` really is three inches.
+var DATA_UNITS = {
+  kb: "kilobyte", mb: "megabyte", gb: "gigabyte", tb: "terabyte", pb: "petabyte",
+  kib: "kibibyte", mib: "mebibyte", gib: "gibibyte", tib: "tebibyte",
+  kbit: "kilobit", mbit: "megabit", gbit: "gigabit"
+}
+
+function forQalc(text) {
+  var out = String(text).replace(/(\d\s*[^\s]*)\s+in\s+(?=[A-Za-z])/i, "$1 to ")
+
+  // And `mb` is millibar to qalc, `gb` is gram·bel: `2 gb to mb` answers
+  // 2000 mb·g. Data sizes are typed in lower case more than any other unit, so
+  // the short spellings are written out.
+  return out.replace(/\b([kmgtp]i?b(?:it)?)\b/gi, function (m) {
+    var full = DATA_UNITS[m.toLowerCase()]
+    return full === undefined ? m : full
+  })
+}
+
 function normalize(s) {
   return String(s).replace(/\s+/g, " ").trim()
 }
