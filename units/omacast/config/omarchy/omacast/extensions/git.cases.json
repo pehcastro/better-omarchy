@@ -29,8 +29,8 @@
     }
   },
   {
-    "why": "Enter shows the diff: opening a terminal answers a question nobody asked",
-    "query": "",
+    "why": "a repo with changes answers Enter with the diff: opening a terminal answers a question nobody asked, and the repo is named so the case does not depend on whether this checkout happens to be clean",
+    "query": "omacast-fixture",
     "minRows": 1,
     "row": 0,
     "matches": {
