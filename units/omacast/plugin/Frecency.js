@@ -74,10 +74,19 @@ function parse(text) {
 
 // Rows arrive already scored by match quality. This only reorders within a
 // tier, so what you use rises among equals and never above a better match.
+// Some rows are a fixed list in a deliberate order, not a set of things you
+// launch. The `/` actions are six items someone arranged, and letting use
+// reorder them meant "Clear Everything" climbed above "Clear Recent Queries"
+// because it had been run once during testing. A destructive action drifting to
+// the top of the list, under the cursor, is exactly the wrong reward for having
+// used it.
+var NEVER_REORDER = { actions: true }
+
 function apply(rows, store, nowMs) {
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i]
     if (!row.key) continue
+    if (NEVER_REORDER[row.providerId]) continue
 
     var extra = boost(store, row.key, nowMs)
     if (extra > 0) row.score += extra

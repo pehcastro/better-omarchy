@@ -17,7 +17,20 @@ var SIGILS = {
   "=": "calc",
   ">": "run",
   "?": "web",
-  "/": "file"
+  "/": "command"
+}
+
+// `/` means a command, the way it does in every other tool with a text box.
+// It used to mean a file search, and a path is the one thing that genuinely
+// starts with a slash, so a path still goes to files: anything with a second
+// slash or a dot in it is a path and not a command name.
+//
+// This is a heuristic and it is worth being honest about where it fails.
+// `/etc` is read as a command, finds nothing, and needs `files:etc`. That is
+// the price of one character, and it is cheaper than the alternative, which is
+// a command sigil nobody guesses.
+function looksLikePath(rest) {
+  return rest.indexOf("/") >= 0 || rest.indexOf(".") >= 0 || rest.indexOf("~") >= 0
 }
 
 // keyword:"quoted value", keyword:bare, or a bare keyword: with nothing after
@@ -52,6 +65,8 @@ function parse(raw, epoch, known) {
   if (trimmed.length > 0 && SIGILS[trimmed.charAt(0)]) {
     var keyword = SIGILS[trimmed.charAt(0)]
     var rest = trimmed.slice(1).trim()
+
+    if (keyword === "command" && looksLikePath(rest)) keyword = "file"
     filters[keyword] = rest
     order.push(keyword)
     return build(raw, "", filters, order, epoch)

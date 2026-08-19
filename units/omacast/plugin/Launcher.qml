@@ -10,6 +10,7 @@ import "Rank.js" as Rank
 import "Score.js" as Score
 import "Calc.js" as Calc
 import "Commands.js" as Commands
+import "Actions.js" as Actions
 import "Extensions.js" as Extensions
 import "Settings.js" as Settings
 import "Quicklinks.js" as Quicklinks
@@ -119,7 +120,7 @@ Item {
   // the word is in here.
   readonly property var knownKeywords: {
     var out = ["calc", "math", "run", "command", "commands", "web", "search",
-               "google", "ddg", "apps", "app", "launch", "settings",
+               "google", "ddg", "apps", "app", "launch", "settings", "action",
                // Extra filters the built-ins read alongside their own keyword.
                "format", "in", "type"]
 
@@ -368,6 +369,13 @@ Item {
   // ------------------------------------------------------------ querying
 
   function setQuery(text) {
+    // A confirmation belongs to the query that raised it. Typing anything else
+    // is walking away from the question, and a banner that outlives the query
+    // it asked about turns the next Enter into a surprise.
+    if (root.pendingAction && text.trim() !== "/" + root.pendingAction.id) {
+      root.pendingAction = null
+    }
+
     root.queryText = text
     var query = Query.parse(text, ++root.epoch, root.knownKeywords)
 
@@ -375,6 +383,7 @@ Item {
     queryPaste(query)
     querySettings(query)
     queryRecent(query)
+    queryActions(query)
     queryApps(query)
     queryCommands(query)
     queryQuicklinks(query)
@@ -778,14 +787,17 @@ Item {
   }
 
   function queryCommands(query) {
-    if (!Query.routesTo(query, "run", ["command", "commands"]) || query.empty) {
+    // `command` used to be an alias here. It is the `/` scope now, which is for
+    // what the launcher does to itself, so an Omarchy menu route reached
+    // through `/` would be two unrelated lists under one key.
+    if (!Query.routesTo(query, "run", ["commands"]) || query.empty) {
       return put("commands", query, [])
     }
 
     var out = []
     for (var i = 0; i < Commands.COMMANDS.length; i++) {
       var command = Commands.COMMANDS[i]
-      var fuzzy = Score.fuzzy(Commands.asEntry(command), Query.argFor(query, "run", ["command", "commands"]))
+      var fuzzy = Score.fuzzy(Commands.asEntry(command), Query.argFor(query, "run", ["commands"]))
       if (fuzzy < 0) continue
 
       out.push({
@@ -809,6 +821,111 @@ Item {
       })
     }
     put("commands", query, out)
+  }
+
+  // ------------------------------------------------------------ actions
+
+  // `/` and nothing else lists everything the launcher can do to itself.
+  // Scoped, always: an action is an instruction, and an instruction that turns
+  // up uninvited beside your search results is a way to clear your history by
+  // accident.
+  function queryActions(query) {
+    if (query.scope !== "command") return put("actions", query, [])
+
+    var arg = Query.argFor(query, "command", []).trim()
+    var list = Actions.all(root.extensions)
+    var out = []
+
+    for (var i = 0; i < list.length; i++) {
+      var action = list[i]
+      var fuzzy = arg === "" ? 0 : Score.fuzzy(Actions.asEntry(action), arg)
+      if (fuzzy < 0) continue
+
+      out.push({
+        key: "action:" + action.id,
+        providerId: "actions",
+        group: "Commands",
+        title: action.title,
+        subtitle: action.subtitle,
+        accessory: "",
+        iconSource: "",
+        iconGlyph: action.glyph,
+        // Declared order always, with the match used only to decide whether a
+        // row belongs in the answer at all. Ranking these by match quality put
+        // "Clear Everything" above "Clear Recent Queries" for `/clear`, because
+        // it is the shorter title, which is the opposite of what that typing
+        // means. There are six of them and their order is a decision someone
+        // made; a fuzzy score is not a better one.
+        // One tier for all of them, so declared order is the only thing that
+        // sorts. Deriving a tier from the match put "Clear Everything" above
+        // "Clear Recent Queries" for `/clear`: tier beats local score, and a
+        // shorter title matches a little better. Nothing else answers inside
+        // `/`, so there is no tier for these to be ranked against anyway.
+        score: Rank.score(Rank.TIER.forced, 900 - i, 0),
+        pending: false,
+        keepOpen: !action.exec,
+        run: (function (a) {
+          return function () { root.runLauncherAction(a) }
+        })(action)
+      })
+    }
+    put("actions", query, out)
+  }
+
+  // An action that cannot be undone asks first, in the launcher rather than in
+  // a dialog: a dialog would take the keyboard from an overlay that holds it
+  // exclusively, and the answer to "are you sure" belongs where the question
+  // was asked.
+  property var pendingAction: null
+
+  function runLauncherAction(action) {
+    if (action.confirm && root.pendingAction !== action) {
+      root.pendingAction = action
+      return root.setInput("/" + action.id + " ")
+    }
+    root.pendingAction = null
+
+    switch (action.effect) {
+    case "clear.recents":
+      root.recents = []
+      stateSave.restart()
+      return root.notify("Recent queries cleared")
+    case "clear.pins":
+      root.pins = ({})
+      stateSave.restart()
+      return root.notify("Pins cleared")
+    case "clear.all":
+      root.recents = []
+      root.pins = ({})
+      stateSave.restart()
+      return root.notify("History and pins cleared")
+    case "reload.extensions":
+      root.loadExtensions()
+      return root.notify("Extensions reloaded")
+    case "open.settings":
+      return root.setInput("settings:")
+    }
+
+    if (action.exec) {
+      Util.execDetached(action.exec)
+      root.dismiss()
+    }
+  }
+
+  // Say what happened without closing. An action with nothing to show would
+  // otherwise look like a key that did nothing at all.
+  property string notice: ""
+
+  function notify(text) {
+    root.notice = String(text)
+    noticeTimer.restart()
+    root.requery(root.queryText)
+  }
+
+  Timer {
+    id: noticeTimer
+    interval: 2400
+    onTriggered: root.notice = ""
   }
 
   // Quicklinks are found two ways, because people reach for both: by typing
@@ -1114,6 +1231,14 @@ Item {
     root.remember(row)
     root.rememberQuery(root.queryText)
 
+    // A row that changes the launcher rather than leaving it stays open, and
+    // runs before anything closes: clearing your history and having the window
+    // vanish looks the same as clearing your history and having nothing happen.
+    if (row.keepOpen === true) {
+      if (typeof row.run === "function") row.run()
+      return
+    }
+
     // Dismiss before running. Launching while an exclusive-focus layer surface
     // is still mapped puts the new window behind it, and Omarchy's launch OSD
     // would render underneath this overlay.
@@ -1269,6 +1394,10 @@ Item {
   // repeat, and returns the list unchanged when there is nothing to add, so the
   // save only fires when something really moved.
   function rememberQuery(text) {
+    // A `/` action is an instruction, not a question, and `/clear` recording
+    // itself means the history is never actually empty afterwards.
+    if (text.replace(/^\s+/, "").charAt(0) === "/") return
+
     var next = Recents.record(root.recents, text)
     if (next === root.recents) return
 
@@ -1844,15 +1973,22 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: visible ? Style.space(64) : 0
-        visible: root.rows.length === 0 && !root.answerMode && root.queryText.trim() !== ""
+        // A notice keeps this open even on an empty box: an action that clears
+        // your history leaves nothing to show, and a launcher that answers a
+        // keypress with a blank card has not told you it worked.
+        visible: root.notice !== "" || root.pendingAction !== null
+          || (root.rows.length === 0 && !root.answerMode && root.queryText.trim() !== "")
 
         Text {
           anchors.centerIn: parent
           horizontalAlignment: Text.AlignHCenter
-          color: Qt.darker(root.foreground, 1.9)
+          color: root.notice !== "" ? Color.accent : Qt.darker(root.foreground, 1.9)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           text: {
+            if (root.notice !== "") return root.notice
+            if (root.pendingAction) return String(root.pendingAction.confirm)
+              + "   \u21B5 again to confirm"
             if (root.busy) return "Searching\u2026"
             if (root.scopeLabel === "") return "Nothing matches that"
 
