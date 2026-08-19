@@ -20,7 +20,27 @@ needle="${query,,}"
 
 command -v git >/dev/null 2>&1 || exit 0
 
-repo=$(omacast-repo --current 2>/dev/null)
+# Which repo. Naming one is how you say so: `git:omarchy` is the repo called
+# omarchy, wherever it is. Naming nothing means the one you are in.
+#
+# There was a "Pin for git:" action that wrote the answer to a state file. It
+# was hidden, it had to be found, and it solved in two steps and a file what
+# typing the name solves in four characters.
+repo=""
+if [[ -n $needle ]]; then
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    candidate=$(jq -r '.detail // empty' <<<"$line" 2>/dev/null)
+    candidate="${candidate/#\~/$HOME}"
+    [[ -n $candidate && -e $candidate/.git ]] && { repo="$candidate"; break; }
+  done < <(omacast-repo "$needle" 2>/dev/null)
+
+  # A name that matches a repo is a repo. A name that does not is a filter on
+  # the repo you are in, which is what it was before.
+  [[ -n $repo ]] && needle=""
+fi
+
+[[ -n $repo ]] || repo=$(omacast-repo --current 2>/dev/null)
 [[ -n $repo && -e $repo/.git ]] || exit 0
 
 quoted=$(printf '%q' "$repo")

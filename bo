@@ -1339,7 +1339,7 @@ ext_meta() {
   python3 - "$1" "$2" <<'PY'
 import json, re, shlex, sys
 
-VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player", "answer", "slider", "form", "timegrid", "zones", "gitrepo")
+VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player", "answer", "slider", "form", "timegrid", "zones", "gitrepo", "agent")
 TIERS = ("calc", "forced", "prefix", "substring", "weak", "file", "web")
 NUMBERS = ("minChars", "debounceMs", "timeoutMs", "maxRows")
 
@@ -1573,7 +1573,134 @@ test_extension() {
   [[ -n ${counts[1]:-} ]] && detail+=", ${counts[1]} bare"
   test_line ok "$name" "$detail"
 
+  test_actions "$file" "$binary" "$secs" || return 1
   test_cases "$file" "$binary" "$secs" || return 1
+}
+
+# Every action on every row has to be able to run.
+#
+# An action that does nothing is the worst kind of broken: the panel lists it,
+# the key works, the row highlights, and then nothing happens and there is
+# nothing to see. It happened three times in one evening, and each time the
+# cause was mechanical and checkable: a command that is not installed, a script
+# the unit ships and has not linked, a `query` pointing at a keyword nobody
+# registered.
+#
+# So every exec is taken apart and its program looked for. This does not run
+# anything: it reads the first word out of the command, follows `sh -c` and the
+# omarchy launchers to the real program inside, and asks whether that exists.
+ACTIONS_PY='
+import json, os, re, shutil, subprocess, sys
+
+binary, query, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+
+try:
+    out = subprocess.run([binary, query], capture_output=True, text=True, timeout=timeout).stdout
+except Exception as exc:
+    print("!could not run: %s" % exc)
+    sys.exit(0)
+
+rows = []
+text = out.strip()
+if text.startswith("["):
+    try:
+        rows = json.loads(text)
+    except Exception:
+        rows = []
+else:
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            pass
+
+# Wrappers that take the real program as an argument. Checking the wrapper alone
+# would pass an action that runs a program nobody has.
+WRAPPERS = {
+    "omarchy-launch-tui", "omarchy-launch-browser", "omarchy-launch-editor",
+    "uwsm-app", "setsid", "timeout", "env", "nohup",
+}
+SKIP_ARG = re.compile(r"^(--?[A-Za-z0-9-]+(=.*)?)$")
+
+def program_of(command):
+    """The program an exec actually runs, or None when it is a shell fragment
+    whose first word is a variable, a builtin, or an assignment."""
+    parts = command.strip().split()
+    while parts:
+        head = parts[0]
+        if head in ("sh", "bash") and len(parts) > 2 and parts[1] in ("-c", "-lc"):
+            # The command is the quoted string after -c, and its first word is
+            # what runs.
+            inner = command.split(parts[1], 1)[1].strip().strip("\x27\"")
+            return program_of(inner) if inner else None
+        if head in WRAPPERS:
+            parts = [p for p in parts[1:] if not SKIP_ARG.match(p)]
+            # A browser launcher takes a URL, not a program. Unwrapping past it
+            # asked whether "https://github.com/tmux/tmux" was installed.
+            if parts and re.match(r"^[\x27\"]?[a-z]+://", parts[0]):
+                return None
+            continue
+        if "=" in head and not head.startswith("/"):
+            # `out=$(docker stop x)` is an assignment whose program is inside
+            # the substitution. Skipping the whole word left "stop" as the head
+            # and reported that stop was not installed.
+            after = head.split("=", 1)[1]
+            if after.startswith("$("):
+                return program_of(after[2:] + " " + " ".join(parts[1:]))
+            parts = parts[1:]
+            continue
+        if head in ("true", "false", ":", "printf", "echo", "cd", "exit", "test", "["):
+            return None
+        return head
+    return None
+
+missing = {}
+seen_rows = 0
+for row in rows:
+    seen_rows += 1
+    actions = row.get("actions") or []
+    for action in actions:
+        exec_ = str(action.get("exec") or "")
+        if not exec_:
+            if action.get("query") is None:
+                missing.setdefault("an action with neither exec nor query", set()).add(
+                    str(action.get("title") or "?"))
+            continue
+        program = program_of(exec_)
+        if program is None or program.startswith("$") or program.startswith("{"):
+            continue
+        if program.startswith("/") or program.startswith("~"):
+            if not os.path.exists(os.path.expanduser(program)):
+                missing.setdefault(program, set()).add(str(action.get("title") or "?"))
+            continue
+        if shutil.which(program) is None:
+            missing.setdefault(program, set()).add(str(action.get("title") or "?"))
+
+print(seen_rows)
+for program, titles in sorted(missing.items()):
+    print("!%s is not installed, used by: %s" % (program, ", ".join(sorted(titles))))
+'
+
+# Checks that every action an extension offers can actually run.
+test_actions() {
+  local file="$1" binary="$2" secs="$3" name probe
+  local -a lines
+  name=$(basename "$file" .json)
+  probe=$(json_get "$file" testQuery)
+  [[ -n $probe ]] || probe=""
+
+  mapfile -t lines < <(python3 -c "$ACTIONS_PY" "$binary" "$probe" "$secs" 2>&1)
+
+  if ((${#lines[@]} <= 1)); then
+    return 0
+  fi
+
+  test_line fail "$name actions" "$((${#lines[@]} - 1)) cannot run"
+  printf '%s\n' "${lines[@]:1}" | sed 's/^!/          /'
+  return 1
 }
 
 # Cases: what an extension must still answer after somebody changes it.

@@ -38,15 +38,6 @@
     }
   },
   {
-    "why": "typing after git: is a search again, and a panel cannot be filtered",
-    "query": "fix",
-    "minRows": 1,
-    "row": 0,
-    "matches": {
-      "group": "."
-    }
-  },
-  {
     "why": "GitHub is gh:, not git:. Remote rows here blurred local and remote into one keyword",
     "query": "",
     "minRows": 1,
@@ -60,5 +51,20 @@
     "why": "a filter that matches nothing answers nothing rather than the whole repo",
     "query": "zzznosuchthing",
     "maxRows": 0
+  },
+  {
+    "why": "a filter is a search, so it never returns the panel. Asserting a match instead depended on whichever repo happened to be pinned",
+    "query": "zzznosuchthing",
+    "maxRows": 0
+  },
+  {
+    "why": "naming a repo answers about that repo: pinning was hidden state solving this in two steps and a file",
+    "query": "gum",
+    "minRows": 1,
+    "row": 0,
+    "view": "gitrepo",
+    "matches": {
+      "repo": "'name': 'gum'"
+    }
   }
 ]

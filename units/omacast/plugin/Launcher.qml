@@ -325,7 +325,7 @@ Item {
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
-    "gitrepo", "loading"]
+    "gitrepo", "agent", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -1645,6 +1645,15 @@ Item {
       // ever used for drawing, and the settings list is only ever read by the
       // settings form, so neither has any reason to travel through the code
       // that builds search commands.
+      // A socket path is the one field an extension cannot write correctly
+      // without knowing whose machine it is on, so `~` is expanded here. Left
+      // literal, the field is unusable from a shipped extension: the launcher
+      // would fail to connect, silently fall back to `search`, and the daemon
+      // route would look like it did not work.
+      if (ext.socket.indexOf("~/") === 0) {
+        ext.socket = Quickshell.env("HOME") + ext.socket.slice(1)
+      }
+
       ext.accent = String(parsed[i].accent || "")
       ext.settings = Array.isArray(parsed[i].settings) ? parsed[i].settings : []
       loaded.push(ext)
@@ -1864,29 +1873,11 @@ Item {
           fontFamily: root.fontFamily
         }
 
-        // A dot that pulses while something is still answering. Quieter than a
-        // spinner, and it sits where the eye already is.
-        Rectangle {
-          anchors.right: parent.right
-          anchors.rightMargin: Style.space(20)
-          anchors.verticalCenter: parent.verticalCenter
-          width: Style.space(6)
-          height: width
-          radius: width / 2
-          color: Color.accent
-          // Only once the wait is long enough to be worth mentioning. `repo:`
-          // answers in about 250ms, so a dot tied straight to `busy` blinked on
-          // every keystroke and reported nothing: a spinner that is always on
-          // is decoration.
-          visible: root.slowBusy && root.rows.length > 0
-
-          SequentialAnimation on opacity {
-            running: root.busy
-            loops: Animation.Infinite
-            NumberAnimation { to: 0.2; duration: 450 }
-            NumberAnimation { to: 1.0; duration: 450 }
-          }
-        }
+        // There was a pulsing dot here that meant "something is still answering".
+        // It was on for every 250ms answer, which is nearly all of them, so it
+        // reported nothing and read as the launcher being unwell. The skeleton
+        // is the loading signal, and it only appears when there is genuinely
+        // nothing to show yet.
 
         TextInput {
           id: input
@@ -2105,6 +2096,7 @@ Item {
           case "timegrid": return timeGridView
           case "zones": return zonesView
           case "gitrepo": return gitRepoView
+          case "agent": return agentView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2126,6 +2118,7 @@ Item {
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: gitRepoView;   ResultGitRepo   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: agentView;     ResultAgent     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
