@@ -54,6 +54,13 @@ $EDITOR monitors.lua
 `hyprctl monitors all` lists what you have and every mode each one takes. `bo
 add` links whatever `.lua` it finds, so the example alone links nothing.
 
+The scale is re-applied on `monitor.added`, not just at load. Waking from sleep,
+closing and opening the lid, and plugging a display all re-add the output, and
+whatever scale Hyprland picks at that moment otherwise wins: the screen ends up
+at 2x and stays there until the next reload. `Super+/` also changes the scale,
+which is easy to hit by accident, and this puts it back on the next monitor
+event rather than leaving you squinting.
+
 ## Making your own
 
 ```bash
