@@ -81,7 +81,14 @@ stamp() {
   printf '%s' "$newest"
 }
 
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/git-branches"
+# A cache that outlives a change to how it is keyed will serve a wrong answer
+# forever. This number goes in the path, so bumping it retires every entry that
+# was written under the old scheme rather than hoping each key still means what
+# it used to. An empty answer cached during a broken run is exactly the fault
+# this prevents, and it cost two recordings before anybody looked.
+CACHE_FORMAT=2
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/v$CACHE_FORMAT/git-branches"
 mkdir -p "$cache_dir" 2>/dev/null
 cache_file="$cache_dir/$(printf '%s' "$repo" | md5sum | cut -c1-16)"
 want=$(stamp)

@@ -443,7 +443,14 @@ done
 # the spinner never stopped. A repo's state cannot change without .git/index or
 # a ref moving, so the cache key is the newest mtime in .git and a hit costs one
 # stat instead of two processes.
-state_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/repo-state"
+# A cache that outlives a change to how it is keyed will serve a wrong answer
+# forever. This number goes in the path, so bumping it retires every entry that
+# was written under the old scheme rather than hoping each key still means what
+# it used to. An empty answer cached during a broken run is exactly the fault
+# this prevents, and it cost two recordings before anybody looked.
+CACHE_FORMAT=2
+
+state_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/v$CACHE_FORMAT/repo-state"
 mkdir -p "$state_cache" 2>/dev/null
 
 repo_stamp() {
