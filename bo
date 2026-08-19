@@ -237,9 +237,18 @@ ref_exists() {
 
 # Every ref across every marketplace.
 all_refs() {
-  local root name dir
+  local root name dir seen=""
   while read -r root; do
     name=$(market_name "$root")
+
+    # Two checkouts can claim one name, which happens the moment somebody clones
+    # a marketplace they already develop in. market_root answers with the first,
+    # so the second's units are unreachable by ref: listing them anyway would
+    # show every unit twice and half of them would not install.
+    if printf '%s\n' "$seen" | grep -qxF "$name"; then
+      continue
+    fi
+    seen+="$name"$'\n' 
     for dir in "$root"/units/*/ "$root"/.bo/units/*/; do
       [[ -f "$dir/unit.toml" ]] || continue
       printf '%s/%s\n' "$name" "$(basename "$dir")"
@@ -691,6 +700,17 @@ unlink_unit() {
 
 cmd_list() {
   local ref state multi
+
+  # `--plain` drops the colour and the header, so something piping this into a
+  # picker can read the unit name off the front of a line rather than stripping
+  # escape codes out of it.
+  if [[ ${1:-} == "--plain" ]]; then
+    while read -r ref; do
+      printf '%-22s %s\n' "$(ref_unit "$ref")" "$(meta "$ref" summary)"
+    done < <(all_refs)
+    return 0
+  fi
+
   multi=$(market_names | wc -l)
 
   printf '%-30s %-9s %-13s %-7s %s\n' UNIT KIND CATEGORY VERSION SUMMARY
@@ -2275,7 +2295,7 @@ TXT
 }
 
 case "${1:-}" in
-list | ls) check_self_stale; cmd_list ;;
+list | ls) check_self_stale; shift; cmd_list "$@" ;;
 search | find) shift; cmd_search "$@" ;;
 info | show) shift; cmd_info "$@" ;;
 status) check_self_stale; cmd_status ;;
