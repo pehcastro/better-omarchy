@@ -11,6 +11,11 @@ import qs.Ui
 // The left gutter carries the row's number, which is what Ctrl+1 to Ctrl+9
 // run, and the right edge carries a star when the row is pinned.
 ListView {
+  // The card cannot hold a view that draws past its own height, and every view
+  // here computes that height from its content. Clipping at the root is the one
+  // thing that makes a wrong sum a short answer rather than rows spilling over
+  // the footer and onto the wallpaper.
+  clip: true
   id: view
 
   required property var launcher
@@ -75,8 +80,6 @@ ListView {
     return view.pad + Math.max(1, Math.floor(body / rowHeight)) * rowHeight
       + headerCount * headerHeight
   }
-
-  clip: true
 
   // Real margins, not extra room inside the view. The breathing space used to
   // be added to implicitHeight alone, which left a gap the next row peeked

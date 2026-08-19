@@ -6,6 +6,11 @@ import qs.Ui
 // picture is how you recognise the thing: tracks, albums, images. A 44px row
 // cannot hold cover art at a size worth showing.
 ListView {
+  // The card cannot hold a view that draws past its own height, and every view
+  // here computes that height from its content. Clipping at the root is the one
+  // thing that makes a wrong sum a short answer rather than rows spilling over
+  // the footer and onto the wallpaper.
+  clip: true
   id: view
 
   required property var launcher
@@ -16,7 +21,6 @@ ListView {
   readonly property int rowHeight: Style.space(64)
 
   implicitHeight: Math.min(count, Math.max(3, view.launcher.maxRows - 3)) * rowHeight
-  clip: true
   focus: false
   interactive: true
   currentIndex: launcher.selectedIndex

@@ -9,6 +9,11 @@ import qs.Ui
 // Anything after the first result still lists underneath, because "3 metres"
 // is the answer but "convert to feet" might be the next thing you want.
 Column {
+  // The card cannot hold a view that draws past its own height, and every view
+  // here computes that height from its content. Clipping at the root is the one
+  // thing that makes a wrong sum a short answer rather than rows spilling over
+  // the footer and onto the wallpaper.
+  clip: true
   id: view
 
   required property var launcher
@@ -18,6 +23,17 @@ Column {
 
   readonly property var hero: launcher.rows.length > 0 ? launcher.rows[0] : null
   readonly property var rest: launcher.rows.slice(1)
+
+  readonly property int heroHeight: view.hero !== null ? Style.space(120) : 0
+  readonly property int tailRowHeight: Style.space(40)
+
+  // The hero is a fixed block and the list under it takes what is left. Sizing
+  // the list from the row count alone drew its last row over the footer, and
+  // with no clip at the root that row landed on the wallpaper.
+  readonly property int tailRoom: {
+    if (view.maxHeight <= 0) return view.launcher.maxRows * view.tailRowHeight
+    return Math.max(0, view.maxHeight - view.heroHeight)
+  }
 
   spacing: 0
 
@@ -130,7 +146,12 @@ Column {
   ListView {
     id: tail
     width: view.width
-    height: Math.min(count, view.launcher.maxRows - 2) * Style.space(40)
+    // Whole rows only. A row cut through the middle at the bottom edge reads as
+    // a rendering fault rather than as "the list goes on".
+    height: Math.min(
+      Math.min(count, view.launcher.maxRows - 2),
+      Math.floor(view.tailRoom / view.tailRowHeight)
+    ) * view.tailRowHeight
     visible: count > 0
     clip: true
     focus: false
@@ -144,7 +165,7 @@ Column {
       required property int index
 
       width: tail.width
-      height: Style.space(40)
+      height: view.tailRowHeight
 
       readonly property bool selected: (index + 1) === view.launcher.selectedIndex
 

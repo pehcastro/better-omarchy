@@ -13,6 +13,11 @@ import qs.Ui
 // number would be absurd, so the clock runs here and the next real reading
 // corrects it.
 Item {
+  // The card cannot hold a view that draws past its own height, and every view
+  // here computes that height from its content. Clipping at the root is the one
+  // thing that makes a wrong sum a short answer rather than rows spilling over
+  // the footer and onto the wallpaper.
+  clip: true
   id: view
 
   required property var launcher
