@@ -14,10 +14,20 @@ Item {
   property var launcher: null
   property var ext: null
 
-  // A `when` condition is checked once, on load, not per keystroke. An
-  // extension for software you do not have should cost nothing at all.
+  // A `when` condition is checked on load, not per keystroke: an extension for
+  // software you do not have should cost nothing at all. But a machine changes
+  // under a shell that stays up for days. Writing an ~/.ssh/config, logging in
+  // with gh, starting a docker daemon: each of those makes a keyword real, and
+  // the keyword stayed silent until the next restart, which reads as broken
+  // rather than as unavailable.
+  //
+  // So a failed check is re-run when you actually type the keyword, at most
+  // every fifteen seconds. A passing check is never re-run: software rarely goes
+  // away mid-session, and the cost of being wrong there is one empty answer.
   property bool available: true
   property bool checked: false
+  property double lastCheck: 0
+  readonly property int recheckMs: 15000
 
   property int inflightEpoch: -1
   property int pendingEpoch: -1
@@ -32,7 +42,20 @@ Item {
   }
 
   function query(q) {
-    if (!ext || !prov.available) return emit(q, [])
+    if (!ext) return emit(q, [])
+
+    if (!prov.available) {
+      // Only a query that names this keyword pays for a re-check, so an
+      // unavailable extension still costs nothing while you type anything else.
+      if (ext.when !== "" && claims(q) && !availability.running
+          && Date.now() - prov.lastCheck > prov.recheckMs) {
+        prov.recheckQuery = q
+        prov.lastCheck = Date.now()
+        availability.command = ["bash", "-lc", ext.when]
+        availability.running = true
+      }
+      return emit(q, [])
+    }
 
     // Unscoped and not opted in: stay quiet. Shelling out to every extension on
     // every keystroke is how a launcher becomes slow enough to abandon.
@@ -96,12 +119,17 @@ Item {
     prov.launcher.putRaw(prov.id, prov.inflightEpoch, rows)
   }
 
+  // The query that triggered a re-check, replayed if the check now passes so
+  // the keystroke that made the extension available is also the one it answers.
+  property var recheckQuery: null
+
   Component.onCompleted: {
     if (!ext) return
     if (ext.when === "") {
       prov.checked = true
       return
     }
+    prov.lastCheck = Date.now()
     availability.command = ["bash", "-lc", ext.when]
     availability.running = true
   }
@@ -111,6 +139,11 @@ Item {
     onExited: function (code) {
       prov.available = code === 0
       prov.checked = true
+
+      var replay = prov.recheckQuery
+      prov.recheckQuery = null
+      if (prov.available && replay && prov.launcher
+          && replay.epoch === prov.launcher.epoch) prov.query(replay)
     }
   }
 
