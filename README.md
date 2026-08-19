@@ -118,7 +118,8 @@ bo relink               apply those changes
 
 bo market ...           add, remove and inspect marketplaces
 bo doctor               check every linked unit's dependencies exist
-bo test [unit]          run each launcher extension and check what it prints
+bo test [unit]          run each launcher extension, check what it prints,
+                        and run the cases it ships
 bo validate             run omarchy plugin validate on every plugin unit
 bo registry             rebuild registry.json (for marketplace authors)
 bo sync                 copy the live shell.json into this checkout

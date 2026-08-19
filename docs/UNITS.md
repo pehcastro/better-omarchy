@@ -194,7 +194,9 @@ bo new extension weather
 That writes a unit that already answers: add it, open the launcher, type
 `weather:hello`, and the row comes back with hello in it. Then replace the body
 of the script and keep the shape. The unit it writes carries
-`requires = ["omacast"]`, so adding it turns the launcher on first.
+`requires = ["omacast"]`, so adding it turns the launcher on first. It also
+writes a `weather.cases.json` whose cases pass against that stub, so the unit
+starts with a test you edit rather than one you have to remember to start.
 
 Run `bo test weather` after every change. Nothing else checks what a script
 prints: malformed JSON fails silently in the launcher and shows as an empty
@@ -367,6 +369,23 @@ the report.
 
 The command runs for real. An extension that writes something when it runs will
 write it.
+
+### Cases
+
+All of that proves an extension answers. None of it proves the answer is right:
+a field a view depends on can disappear and every row stays valid JSON. So an
+extension may ship `<name>.cases.json` beside its own JSON, a list of queries
+and what the answer to each has to look like, and `bo test` runs them after the
+extension itself.
+
+```
+ok      unit                   0 rows
+ok      unit cases             8 held
+```
+
+`bo new extension` writes one that already passes. What the cases can assert,
+when one is worth writing, and how to make a failure say what it was
+protecting: `units/omacast/EXTENSIONS.md`.
 
 Editing the QML wants a full `omarchy restart shell` to be certain. After each
 reload, check `journalctl --user -n 50 | grep -iE "TypeError|error"`: a

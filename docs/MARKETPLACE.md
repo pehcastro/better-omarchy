@@ -235,7 +235,7 @@ yours still sitting there. A unit that leaves something behind on remove is the
 bug users report and you never see.
 
 ```bash
-bo test            every extension answers, and every unit.toml is sound
+bo test            every extension answers its cases, and every unit.toml is sound
 bo validate        omarchy plugin validate over every plugin unit
 bo doctor          every linked unit's dependencies are on PATH
 ```
