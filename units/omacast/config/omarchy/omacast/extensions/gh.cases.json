@@ -1,0 +1,45 @@
+[
+  { "why": "a slug is already a URL, so gh:owner/repo draws and opens without a single request: this is what makes the keyword usable before the network answers",
+    "query": "!offline basecamp/omarchy",
+    "minRows": 1,
+    "row": 0,
+    "view": "ghrepo",
+    "fields": ["title", "exec"],
+    "matches": { "title": "^basecamp/omarchy$",
+                 "exec": "github\\.com/basecamp/omarchy'?$" } },
+
+  { "why": "a pull request URL you pasted lands on the pull request, not on the repository it lives in",
+    "query": "!offline https://github.com/basecamp/omarchy/pull/7398",
+    "minRows": 1,
+    "row": 0,
+    "view": "ghpr",
+    "fields": ["exec"],
+    "matches": { "id": "^pr:basecamp/omarchy#7398$", "exec": "/pull/7398" } },
+
+  { "why": "owner/repo#123 means the same thing as the URL: the hash is the shorthand people actually type",
+    "query": "!offline basecamp/omarchy#123",
+    "minRows": 1,
+    "row": 0,
+    "view": "ghpr",
+    "matches": { "exec": "/pull/123" } },
+
+  { "why": "a clone URL is a paste like any other, and .git on the end is noise rather than part of the name",
+    "query": "!offline https://github.com/basecamp/omarchy.git",
+    "minRows": 1,
+    "row": 0,
+    "view": "ghrepo",
+    "matches": { "title": "^basecamp/omarchy$" } },
+
+  { "why": "words are words: a search term must never be read as a repository, or every half-typed query opens something",
+    "query": "!offline some words that are not a repo",
+    "minRows": 1,
+    "row": 0,
+    "absent": ["repo"] },
+
+  { "why": "no account and no network still answers, and says which of the two it is: an empty card here reads as a broken launcher",
+    "query": "!offline",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "GitHub" } }
+]

@@ -335,7 +335,8 @@ Item {
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
-    "gitrepo", "loading"]
+    "gitrepo", "gitbranches", "gitstashes", "agent",
+    "ghrepo", "ghpr", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -983,6 +984,19 @@ Item {
 
   // Quicklinks are found two ways, because people reach for both: by typing
   // part of the title, and by typing the keyword and then the argument.
+  // Does a loaded extension answer for this keyword, by name or by alias?
+  function extensionClaims(keyword) {
+    for (var i = 0; i < root.extensions.length; i++) {
+      var ext = root.extensions[i]
+      if (ext.keyword === keyword) return true
+      var aliases = ext.aliases || []
+      for (var j = 0; j < aliases.length; j++) {
+        if (aliases[j] === keyword) return true
+      }
+    }
+    return false
+  }
+
   function queryQuicklinks(query) {
     var links = root.config.quicklinks || []
     if (links.length === 0) return put("quicklinks", query, [])
@@ -994,6 +1008,15 @@ Item {
       if (!link || !link.title) continue
 
       var keyword = String(link.keyword || "").toLowerCase()
+
+      // An extension that owns this keyword owns the answer. A quicklink called
+      // `gh` sat above the GitHub extension's own rows, and because the view
+      // comes from the first row, the repository panel never drew at all: the
+      // launcher showed a link to github.com where it should have shown the
+      // repo. A quicklink is a shortcut to a URL, and a keyword that something
+      // has built an answer for is not that.
+      if (keyword !== "" && root.extensionClaims(keyword)) continue
+
       var addressed = keyword !== "" && query.scope === keyword
       var argument = ""
       var fuzzy = -1
@@ -1289,6 +1312,11 @@ Item {
     // vanish looks the same as clearing your history and having nothing happen.
     if (row.keepOpen === true) {
       if (typeof row.run === "function") row.run()
+      // A row that behaves like a chat: Enter sends, and the box is emptied for
+      // the next thing while what you sent stays on the card. `do:` without
+      // this left the sentence sitting in the box, so Enter could be pressed
+      // again and again and each press started the same run over.
+      if (row.clearTo !== undefined) root.setInput(String(row.clearTo))
       return
     }
 
@@ -1935,6 +1963,13 @@ Item {
               else return
               event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
+              // A row may own Escape before any of this. Something that is
+              // still running has to be told to stop by the key that looks like
+              // it stopped it, rather than being left to notice later that
+              // nobody is watching: `escExec` is how a row says so.
+              var owner = root.rows[root.selectedIndex]
+              if (owner && owner.escExec) Util.execDetached(String(owner.escExec))
+
               // Four stages: leave the answer, step back out of a flow, clear
               // the box, then close. Each one is the smallest undo available at
               // that moment, so holding Escape unwinds everything in order.
@@ -2114,6 +2149,11 @@ Item {
           case "timegrid": return timeGridView
           case "zones": return zonesView
           case "gitrepo": return gitRepoView
+          case "gitbranches": return gitBranchesView
+          case "gitstashes": return gitStashesView
+          case "agent": return agentView
+          case "ghrepo": return ghRepoView
+          case "ghpr": return ghPrView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2135,6 +2175,11 @@ Item {
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: gitRepoView;   ResultGitRepo   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: gitBranchesView; ResultGitBranches { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: gitStashesView;  ResultGitStashes  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: agentView;     ResultAgent     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: ghRepoView;    ResultGhRepo    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: ghPrView;      ResultGhPr      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }

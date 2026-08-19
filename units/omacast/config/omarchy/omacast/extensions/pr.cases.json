@@ -1,0 +1,22 @@
+[
+  { "why": "pr:owner/repo#123 is drawn as a pull request and is pressable before anything is fetched, because the URL is knowable from the text",
+    "query": "!offline trophos/trophos#111",
+    "minRows": 1,
+    "row": 0,
+    "view": "ghpr",
+    "fields": ["exec", "pr"],
+    "matches": { "id": "^pr:trophos/trophos#111$", "exec": "/pull/111" } },
+
+  { "why": "your own pull requests cannot be guessed from the text, so with no account this says so rather than drawing an empty list",
+    "query": "!offline",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["title"],
+    "matches": { "title": "GitHub" } },
+
+  { "why": "a repository's open pull requests cannot be invented either: a list that is silently empty looks like a repository with no work in it",
+    "query": "!offline basecamp/omarchy",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "title": "GitHub" } }
+]

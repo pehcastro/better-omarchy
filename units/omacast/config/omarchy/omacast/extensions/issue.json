@@ -2,17 +2,15 @@
   "id": "issue",
   "title": "Issues",
   "keyword": "issue",
-  "aliases": [
-    "issues"
-  ],
+  "aliases": ["issues"],
   "subtitle": "Issue",
-  "glyph": "",
-  "search": "omacast-gh issues {query}",
-  "when": "gh auth status >/dev/null 2>&1",
+  "glyph": "",
+  "search": "omacast-gh-issue {query}",
+  "when": "command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1",
   "minChars": 0,
-  "debounceMs": 350,
+  "debounceMs": 320,
   "timeoutMs": 9000,
-  "maxRows": 12,
+  "maxRows": 14,
   "tier": "substring",
   "view": "list"
 }

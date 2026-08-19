@@ -1,0 +1,9 @@
+#!/bin/bash
+# The `pr:` keyword, which is `omacast-gh` in prs mode.
+#
+# A name of its own rather than a first argument, because `bo test` runs an
+# extension's cases by calling the first word of its `search` with the query as
+# the only argument. A script that read the mode out of argv could never be
+# tested through that door, which is exactly how gh: and pr: ended up with no
+# cases at all.
+exec env OMACAST_GH_MODE=prs omacast-gh "$@"

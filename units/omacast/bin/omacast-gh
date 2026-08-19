@@ -1,32 +1,68 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's GitHub keywords, through the `gh` CLI.
+# GitHub, as far as a launcher can honestly go.
 #
-#   omacast-gh repos  [query]   `gh:`     your repos, then a search
-#   omacast-gh prs    [repo]    `pr:`     open pull requests
-#   omacast-gh issues [query]   `issue:`  open issues assigned to you
-#   omacast-gh runs   [repo]    `ci:`     recent workflow runs
-#   omacast-gh gists  [query]   `gist:`   your gists
+#   gh:                       your repos, most recently pushed first
+#   gh:owner/repo             that repository, drawn as a repository
+#   gh:owner/repo#123         that pull request, drawn as a pull request
+#   gh:<a github url>         the same, from something you pasted
+#   gh:some words             find a repository by name
 #
-# Every keyword's extension gates on `gh auth status`, so nothing here runs at
-# all until `gh` is logged in. Each mode still exits 0 with no output when the
-# call fails, because a network blip must draw nothing rather than an error.
+#   pr:                       your open pull requests, and the ones waiting on you
+#   pr:owner/repo             that repository's open pull requests
+#   pr:owner/repo#123         one pull request: its checks, its review, its size
+#   pr:123                    the one numbered 123, among yours
 #
-# Two things this has to get right, both of them about not being rude to the
-# API. Requests are cached under ~/.local/state/omarchy/omacast-gh, keyed by a
-# fingerprint of the gh credentials, so a `gh auth logout` or a token swap
-# invalidates every cached answer instead of serving somebody else's repos. And
-# `gh:` answers the first two characters by filtering the cached list of your
-# own repos in jq, with no request at all: search only starts at three
-# characters, which is where a search term becomes meaningful anyway.
+#   issue:                    assigned to you, and mentioning you
+#   issue:owner/repo#123      open that issue
 #
-# `timeout` wraps every call because the launcher kills the shell it started but
-# not necessarily a `gh` stuck on a socket, and the wrapper is what makes the
-# extension's own timeoutMs the real ceiling.
+#   ci:owner/repo             recent workflow runs, failures first
+#
+# One binary, four names. `bo test` runs an extension's cases by calling the
+# first word of `search` with the query as its single argument, so a script that
+# dispatched on argv[1] could never be tested at all: `omacast-gh tokyo` read
+# "tokyo" as a mode and exited. That is why `gh:` and `github:` were untested.
+# The mode now comes from the environment and each keyword has its own name on
+# PATH, so the cases beside each extension actually run the thing they name.
+#
+# ---------------------------------------------------------------- the network
+#
+# Everything here reaches GitHub, and a launcher that stalls on a keystroke is
+# worse than one that answers a little less. Two rules, and they divide the
+# whole file:
+#
+#   When the typed text already says something true, say it now. `gh:owner/repo`
+#   is a URL before any request is made, so the row is drawn and pressable
+#   immediately and the request is warmed in a detached process. The extension's
+#   `refreshMs` re-asks a second later, the warmed answer is on disk by then,
+#   and the rows are replaced under the selection with no spinner and no jump.
+#
+#   When it does not, wait. A bare `pr:` cannot be answered from the text at
+#   all, and inventing a row for it is worse than the skeleton the launcher
+#   already draws while an extension is slow.
+#
+# A stale cache entry is served while its replacement is fetched, so the second
+# time you ask a question you never wait even once.
+#
+# ------------------------------------------------------------------ the cost
+#
+# Every answer here is one request. The three panels are single GraphQL
+# documents rather than a REST call per fact, which is also what keeps a panel
+# from being half-drawn: `gh api graphql` costs 1 point of 5000 an hour. The one
+# query that costs two is `gh:` with three or more characters typed, which
+# filters your own repos from cache and searches GitHub for the rest.
+#
+# ---------------------------------------------------------------- degradation
+#
+# Not signed in, no network, or a request that failed: never silence. A slug
+# still draws its repository and still opens it, because a URL is knowable from
+# the text. `!offline` at the front of a query forces that path, which is the
+# only way a case can reach it: `bo test` calls this script with exactly one
+# argument and cannot set an environment.
 
 set -uo pipefail
 
-mode="${1:-}"
-query="${2:-}"
+MODE="${OMACAST_GH_MODE:-repo}"
+query="${1:-}"
 
 command -v gh >/dev/null 2>&1 || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -35,9 +71,45 @@ STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
 CACHE_DIR="$STATE/omacast-gh"
 GH_TIMEOUT=8
 
-# The identity behind the cache. hosts.yml changes on any login, logout or host
-# change, and the two token variables override it, so this covers every way the
-# answer could start belonging to somebody else.
+BROWSER="omarchy-launch-browser"
+TUI="omarchy-launch-tui --app-id=org.omarchy.git"
+
+# ------------------------------------------------------------------ offline
+
+# OFFLINE: make no requests. COLD: and read nothing that an earlier request
+# left behind.
+#
+# The two are separate because they answer different questions. A real network
+# failure should still serve you the repository you looked at ten minutes ago,
+# which is OFFLINE alone. A case has to see the same answer on a machine that
+# has never run this and on the one it was written on, which is both: a case
+# that passes only because a cache file happens to be there is not a case.
+OFFLINE=0
+COLD=0
+[[ -n ${OMACAST_GH_OFFLINE:-} ]] && OFFLINE=1
+if [[ $query == "!offline" || $query == "!offline "* ]]; then
+  OFFLINE=1
+  COLD=1
+  query="${query#!offline}"
+  query="${query# }"
+fi
+
+# `gh auth token`, not `gh auth status`. status asks GitHub whether the token is
+# still good, which is a network round trip, and putting one in front of every
+# keystroke cost four seconds before a single row was drawn. token reads the
+# keyring and answers instantly. A token that has been revoked since is caught
+# where it should be, by the request that fails.
+authed() {
+  ((OFFLINE)) && return 1
+  timeout 3 gh auth token >/dev/null 2>&1
+}
+
+# --------------------------------------------------------------------- cache
+#
+# Keyed by a fingerprint of the gh credentials, so a logout or a token swap can
+# never serve somebody else's repositories. Anything written under another
+# fingerprint is deleted rather than aged out.
+
 auth_fingerprint() {
   local hosts="${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml" stamp=""
   [[ -f $hosts ]] && stamp=$(stat -c '%Y:%s' "$hosts" 2>/dev/null)
@@ -45,105 +117,590 @@ auth_fingerprint() {
 }
 
 FP=$(auth_fingerprint)
+mkdir -p "$CACHE_DIR" 2>/dev/null
 
-cached() {
-  local key ttl out file age
-  key="$1"
-  ttl="$2"
+for stale in "$CACHE_DIR"/*.json; do
+  [[ -e $stale ]] || continue
+  [[ ${stale##*/} == "$FP-"* ]] || rm -f -- "$stale" "$stale.lock"
+done
+
+key_for() { printf '%s' "$*" | md5sum | cut -c1-16; }
+cache_file() { printf '%s/%s-%s.json' "$CACHE_DIR" "$FP" "$1"; }
+
+fresh() {
+  local file="$1" ttl="$2" age
+  [[ -s $file ]] || return 1
+  age=$(($(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0)))
+  ((age >= 0 && age < ttl))
+}
+
+# A body worth keeping. A GraphQL NOT_FOUND is an answer and is cached; a
+# timeout, an empty pipe or a torn response is not, and must not overwrite an
+# older answer that still reads correctly.
+usable() {
+  [[ -n $1 ]] || return 1
+  printf '%s' "$1" | jq -e . >/dev/null 2>&1
+}
+
+# Everything from the first line that starts a JSON document, and nothing
+# before it.
+#
+# The launcher runs an extension through `bash -lc`, which is a login shell,
+# which on this machine wakes mise, which announces itself on stdout the first
+# time a shimmed binary is called: `mise ~/.config/mise/config.toml tools:
+# gh@2.97.0`, one line, in front of an otherwise perfect answer. It cost every
+# request made here until it was found, and nothing about it was gh's fault. A
+# version manager, a shell greeting, a deprecation notice: none of them are
+# worth a silent extension, and none of them start a line with a brace.
+json_only() { sed -n '/^[[{]/,$p'; }
+
+# Fetch in a process that outlives this one. The launcher kills the shell it
+# started at timeoutMs and would take an ordinary background job with it, so the
+# warm gets its own session. The lock is what stops `refreshMs` from firing a
+# second request every second while the first is still out.
+warm() {
+  local file="$1"
+  shift
+  setsid --fork bash -c '
+    file=$1; shift
+    exec 9>"$file.lock" 2>/dev/null || exit 0
+    flock -n 9 || exit 0
+    out=$("$@" 2>/dev/null | sed -n "/^[[{]/,\$p")
+    [[ -n $out ]] || exit 0
+    printf "%s" "$out" | jq -e . >/dev/null 2>&1 || exit 0
+    printf "%s" "$out" >"$file.new" && mv -f "$file.new" "$file"
+  ' _ "$file" timeout "$GH_TIMEOUT" "$@" >/dev/null 2>&1 </dev/null
+}
+
+# When the last warm for this question started. Opening the lock for writing
+# stamps it, so this is free.
+#
+# It is the backstop on the one runaway this design can have: `refreshMs` asks
+# again every 900ms, and a request that keeps failing is never cached, so
+# without this a panel left on screen against a broken network would fire a
+# request a second for as long as somebody looked at it.
+tried_recently() {
+  local f="$1.lock" age
+  [[ -e $f ]] || return 1
+  age=$(($(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0)))
+  ((age >= 0 && age < 5))
+}
+
+# The non-blocking read. Fresh is served, stale is served and replaced behind
+# your back, and a cold miss draws nothing here so the caller can say whatever
+# the typed text already told it.
+peek() {
+  local key="$1" ttl="$2" file
   shift 2
-
-  mkdir -p "$CACHE_DIR" 2>/dev/null || {
-    timeout "$GH_TIMEOUT" "$@" 2>/dev/null
-    return
-  }
-
-  # Anything written under another fingerprint belonged to another login, so it
-  # is deleted rather than aged out. That is what stops a stale cache from
-  # outliving a `gh auth` change.
-  local stale
-  for stale in "$CACHE_DIR"/*.json; do
-    [[ -e $stale ]] || continue
-    [[ ${stale##*/} == "$FP-"* ]] || rm -f -- "$stale"
-  done
-
-  file="$CACHE_DIR/$FP-$key.json"
-  if [[ -f $file ]]; then
-    age=$(($(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0)))
-    if ((age >= 0 && age < ttl)); then
-      cat "$file"
-      return 0
-    fi
+  ((COLD)) && return 1
+  file=$(cache_file "$key")
+  if fresh "$file" "$ttl"; then
+    cat "$file"
+    return 0
   fi
-
-  out=$(timeout "$GH_TIMEOUT" "$@" 2>/dev/null) || return 1
-  [[ -n $out ]] || return 1
-  printf '%s' "$out" >"$file" 2>/dev/null
-  printf '%s' "$out"
+  ((OFFLINE)) && { [[ -s $file ]] && { cat "$file"; return 0; }; return 1; }
+  tried_recently "$file" || warm "$file" "$@"
+  [[ -s $file ]] && { cat "$file"; return 0; }
+  return 1
 }
 
-key_for() {
-  printf '%s' "$*" | md5sum | cut -c1-16
+# The blocking read, for the questions the text cannot answer at all. The
+# extension's timeoutMs is the real ceiling and the launcher draws its skeleton
+# over the wait, which is the whole reason that skeleton exists.
+pull() {
+  local key="$1" ttl="$2" file out
+  shift 2
+  ((COLD)) && return 1
+  file=$(cache_file "$key")
+  if fresh "$file" "$ttl"; then
+    cat "$file"
+    return 0
+  fi
+  ((OFFLINE)) && { [[ -s $file ]] && { cat "$file"; return 0; }; return 1; }
+
+  out=$(timeout "$GH_TIMEOUT" "$@" 2>/dev/null | json_only)
+  if usable "$out"; then
+    printf '%s' "$out" >"$file.new" 2>/dev/null && mv -f "$file.new" "$file" 2>/dev/null
+    printf '%s' "$out"
+    return 0
+  fi
+  [[ -s $file ]] && { cat "$file"; return 0; }
+  return 1
 }
 
-now=$(date +%s)
+# ------------------------------------------------------------------ grammar
+#
+# The launcher hands over one string and it has to mean one thing. The rule is
+# that a slug names a repository, a number after it names one thing inside it,
+# and anything else is words to search with. A pasted URL is the same three
+# facts with a hostname in front, so it is stripped down and read the same way.
 
-# jq helpers shared by every mode: a short age from an ISO timestamp, and the
-# check summary, which has to read two different rollup shapes because a commit
-# status and a check run do not name their result the same way.
-JQ_LIB='
-def shortage($iso; $now):
+T_SLUG=""; T_NUM=""; T_KIND=""; T_TEXT=""
+
+parse_target() {
+  local q="${1# }" rest owner name
+  T_SLUG=""; T_NUM=""; T_KIND="text"; T_TEXT="$q"
+  [[ -n $q ]] || { T_KIND="empty"; T_TEXT=""; return; }
+
+  # A URL is a slug wearing a hostname.
+  q="${q#<}"; q="${q%>}"
+  q="${q#http://}"; q="${q#https://}"
+  q="${q#www.}"
+  if [[ $q == github.com/* ]]; then
+    q="${q#github.com/}"
+    q="${q%%\?*}"
+    q="${q%%#*}"
+  fi
+  q="${q%%/}"
+
+  # owner/name, and whatever came after it.
+  [[ $q == */* ]] || return
+  owner="${q%%/*}"
+  rest="${q#*/}"
+  name="${rest%%[/ #]*}"
+  name="${name%.git}"
+  [[ -n $owner && -n $name ]] || return
+  [[ $owner =~ ^[A-Za-z0-9._-]+$ && $name =~ ^[A-Za-z0-9._-]+$ ]] || return
+
+  T_SLUG="$owner/$name"
+  T_KIND="repo"
+  rest="${rest#"$name"}"
+  rest="${rest#.git}"
+
+  case "$rest" in
+    /pull/*|/pulls/*)   T_NUM="${rest##*/}"; T_KIND="pr" ;;
+    /issues/*)          T_NUM="${rest##*/}"; T_KIND="issue" ;;
+    "#"*)               T_NUM="${rest#\#}"; T_NUM="${T_NUM%% *}"; T_KIND="number" ;;
+    " "*)
+      local word="${rest# }"
+      word="${word%% *}"
+      if [[ $word == \#* ]]; then
+        T_NUM="${word#\#}"; T_KIND="number"
+      elif [[ $word =~ ^[0-9]+$ ]]; then
+        T_NUM="$word"; T_KIND="number"
+      fi
+      T_TEXT="${rest# }"
+      [[ -n $T_NUM ]] && T_TEXT=""
+      return
+      ;;
+  esac
+
+  T_NUM="${T_NUM%%[!0-9]*}"
+  [[ $T_NUM =~ ^[0-9]+$ ]] || { T_NUM=""; [[ $T_KIND != repo ]] && T_KIND="repo"; }
+  T_TEXT=""
+}
+
+# ----------------------------------------------------------------- jq shared
+
+JQ='
+def ago($iso; $now):
   ($iso | if . == null or . == "" then null else (fromdateiso8601? // null) end) as $t
   | if $t == null then "" else
       (($now - $t) | floor) as $d
-      | if $d < 3600 then "\(($d / 60) | floor)m"
+      | if $d < 60 then "now"
+        elif $d < 3600 then "\(($d / 60) | floor)m"
         elif $d < 86400 then "\(($d / 3600) | floor)h"
         elif $d < 2592000 then "\(($d / 86400) | floor)d"
         elif $d < 31536000 then "\(($d / 2592000) | floor)mo"
         else "\(($d / 31536000) | floor)y" end
     end;
 
-def rollup:
-  [ (. // [])[]
-    | [ (.conclusion // ""), (.state // ""), (.status // "") ]
-    | map(select(. != "")) | first // "" ]
-  | map(ascii_upcase) as $all
-  | if ($all | length) == 0 then ""
-    elif ($all | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "ACTION_REQUIRED")) then "✗"
-    elif ($all | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "WAITING" or . == "REQUESTED")) then "●"
-    elif ($all | any(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")) then "✓"
-    else "" end;
+def mark:
+  (. // "" | ascii_upcase) as $s
+  | if $s == "SUCCESS" then "✓"
+    elif $s == "FAILURE" or $s == "ERROR" or $s == "TIMED_OUT" or $s == "STARTUP_FAILURE" or $s == "ACTION_REQUIRED" then "✗"
+    elif $s == "CANCELLED" or $s == "STALE" then "⊘"
+    elif $s == "NEUTRAL" or $s == "SKIPPED" then "–"
+    elif $s == "" or $s == "NULL" then ""
+    else "●" end;
 
-def reviewword:
-  . as $d
+def revword:
+  (. // "") as $d
   | if $d == "APPROVED" then "approved"
     elif $d == "CHANGES_REQUESTED" then "changes requested"
-    elif $d == "REVIEW_REQUIRED" then "review required"
+    elif $d == "REVIEW_REQUIRED" then "review needed"
     else "" end;
+
+def prstate: (.commits.nodes[0].commit.statusCheckRollup.state // "");
+
+def openurl($u): "'"$BROWSER"' " + ($u | @sh);
+def copyurl($u): "printf %s " + ($u | @sh) + " | wl-copy";
 '
 
-# `pr:` and `ci:` need a repo. The argument wins when it names one, otherwise
-# the launcher falls back to the repo `git:` would answer for, which is the same
-# inference and therefore the same answer.
-resolve_repo() {
-  local arg="$1"
-  if [[ $arg == */* ]]; then
-    printf '%s' "${arg%% *}"
-    return 0
-  fi
-  omacast-repo --slug 2>/dev/null
+NOW=$(date +%s)
+
+emit() { jq -c --argjson now "$NOW" "$@" 2>/dev/null; }
+
+# One row, written in bash, for the things that have no JSON behind them.
+row() {
+  jq -nc --arg title "$1" --arg subtitle "$2" --arg detail "$3" \
+    --arg exec "$4" --arg id "$5" --argjson score "${6:-90000}" \
+    '{ id: $id, title: $title, subtitle: $subtitle, detail: $detail,
+       exec: $exec, score: $score }'
 }
 
-case "$mode" in
+# Two different failures, and telling them apart matters: one is fixed by
+# logging in and the other by waiting. `gh auth token` reads the keyring and
+# never leaves the machine, so it separates them without a request.
+signin_row() {
+  if ((OFFLINE == 0)) && timeout 3 gh auth token >/dev/null 2>&1; then
+    row "GitHub is not answering" "signed in, no reply" \
+      "the network, or GitHub itself" "" "gh-unreachable" 99000
+  else
+    row "Not signed in to GitHub" "gh auth login" \
+      "everything under gh: needs an account" \
+      "$TUI gh auth login" "gh-signin" 99000
+  fi
+}
 
-repos)
-  # Your own repos, cached for two minutes: the list does not change between
-  # keystrokes, and two minutes is short enough that a repo you just created
-  # shows up before you go looking for it a second time.
-  own=$(cached "own-repos" 120 gh repo list --limit 100 \
-    --json nameWithOwner,description,primaryLanguage,stargazerCount,pushedAt,isPrivate,isArchived,url) || own="[]"
-  [[ -n ${own:-} ]] || own="[]"
+# ---------------------------------------------------------------- graphql
 
-  printf '%s' "$own" | jq -c --arg q "${query,,}" --argjson now "$now" "$JQ_LIB"'
+GQL_REPO='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) {
+    nameWithOwner description url isPrivate isArchived isFork
+    stargazerCount forkCount pushedAt
+    primaryLanguage { name }
+    defaultBranchRef { name target { ... on Commit {
+      abbreviatedOid messageHeadline committedDate statusCheckRollup { state } } } }
+    pullRequests(states: OPEN) { totalCount }
+    issues(states: OPEN) { totalCount }
+    latestRelease { tagName publishedAt }
+    openPrs: pullRequests(states: OPEN, first: 8, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url isDraft updatedAt author { login } reviewDecision
+        commits(last:1){ nodes { commit { statusCheckRollup { state } } } } } }
+  }
+}'
+
+GQL_PR='
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    nameWithOwner
+    issueOrPullRequest(number:$number) {
+      __typename
+      ... on Issue { number title url state createdAt updatedAt author { login }
+        comments { totalCount } labels(first:8){ nodes { name } } }
+      ... on PullRequest {
+        number title url state isDraft createdAt updatedAt
+        additions deletions changedFiles headRefName baseRefName mergeable
+        author { login } reviewDecision comments { totalCount }
+        reviews(last: 10) { nodes { state submittedAt author { login } } }
+        commits(last: 1) { nodes { commit { statusCheckRollup {
+          state contexts(first: 30) { nodes {
+            __typename
+            ... on CheckRun { name conclusion status startedAt completedAt detailsUrl }
+            ... on StatusContext { context state targetUrl createdAt } } } } } } }
+      }
+    }
+  }
+}'
+
+GQL_MINE='
+query {
+  mine: search(query: "is:pr is:open author:@me archived:false", type: ISSUE, first: 20) {
+    nodes { ... on PullRequest {
+      number title url isDraft updatedAt additions deletions changedFiles
+      repository { nameWithOwner } headRefName reviewDecision author { login }
+      commits(last:1){ nodes { commit { statusCheckRollup { state } } } } } } }
+  review: search(query: "is:pr is:open review-requested:@me archived:false", type: ISSUE, first: 15) {
+    nodes { ... on PullRequest {
+      number title url isDraft updatedAt additions deletions changedFiles
+      repository { nameWithOwner } headRefName reviewDecision author { login }
+      commits(last:1){ nodes { commit { statusCheckRollup { state } } } } } } }
+}'
+
+GQL_REPO_PRS='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) {
+    nameWithOwner
+    pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url isDraft updatedAt additions deletions changedFiles
+        repository { nameWithOwner } headRefName reviewDecision author { login }
+        commits(last:1){ nodes { commit { statusCheckRollup { state } } } } } }
+  }
+}'
+
+GQL_ISSUES='
+query {
+  assigned: search(query: "is:issue is:open assignee:@me archived:false", type: ISSUE, first: 20) {
+    nodes { ... on Issue { number title url updatedAt repository { nameWithOwner }
+      author { login } comments { totalCount } labels(first:5){ nodes { name } } } } }
+  mentioned: search(query: "is:issue is:open mentions:@me archived:false", type: ISSUE, first: 15) {
+    nodes { ... on Issue { number title url updatedAt repository { nameWithOwner }
+      author { login } comments { totalCount } labels(first:5){ nodes { name } } } } }
+}'
+
+# There is no helper wrapping these calls. Both readers below run their command
+# under `timeout`, which is a program and not a shell, and a program cannot call
+# a shell function: the wrapper failed with "No such file or directory" and left
+# every panel a skeleton that never filled in, which looks exactly like a slow
+# network. So every call site names gh itself.
+
+# --------------------------------------------------------------- renderers
+
+# The rows a list of pull requests turns into, wherever they came from. The
+# accessory is the whole point: a check mark and an age, which together are the
+# answer to "is it green yet" without opening anything.
+JQ_PR_ROWS='
+  def prrow($group; $base):
+    . as $p
+    | ($p.repository.nameWithOwner // $slug) as $repo
+    | ($p | prstate) as $st
+    | {
+        id: ("pr:" + $repo + "#" + ($p.number | tostring)),
+        title: ((if $p.isDraft then "draft  " else "" end) + $p.title),
+        detail: ([ $repo, ("#" + ($p.number | tostring)), ($p.author.login // ""),
+                   ($p.headRefName // "") ]
+                 | map(select(. != "")) | join("  ")),
+        subtitle: ([ ($p.reviewDecision | revword),
+                     (if ($p.changedFiles // 0) > 0
+                      then "+\($p.additions) −\($p.deletions)  \($p.changedFiles) files" else "" end) ]
+                   | map(select(. != "")) | join("   ")),
+        accessory: ((($st | mark) + " " + ago($p.updatedAt; $now)) | ltrimstr(" ")),
+        group: $group,
+        exec: openurl($p.url),
+        score: $base,
+        actions: [
+          { title: "Open in Browser", shortcut: "↵", exec: openurl($p.url) },
+          { title: "This Pull Request", exec: "true",
+            query: ("pr:" + $repo + "#" + ($p.number | tostring)) },
+          { title: "Show Diff", exec: ("'"$TUI"' gh pr diff --repo " + ($repo | @sh) + " " + ($p.number | tostring)) },
+          { title: "Check Out Locally", exec: ("'"$TUI"' gh pr checkout --repo " + ($repo | @sh) + " " + ($p.number | tostring)) },
+          { title: "Copy URL", exec: copyurl($p.url) }
+        ]
+      };
+'
+
+# One pull request, drawn as one. A row that says "#111, 2h ago" is a title and
+# a number; what you came for is which check is red, whether anyone has looked
+# at it, and how big it is.
+render_pr_panel() {
+  local slug="$1"
+  emit --arg slug "$slug" "$JQ$JQ_PR_ROWS"'
+    (.data.repository.issueOrPullRequest // null) as $t
+    | if $t == null then
+        { id: ("gh:" + $slug), title: ($slug + " has no such number"),
+          subtitle: "not found, or no access", score: 90000,
+          exec: openurl("https://github.com/" + $slug) }
+      elif $t.__typename == "Issue" then
+        { id: ("issue:" + $slug + "#" + ($t.number | tostring)),
+          title: $t.title,
+          subtitle: ([ ($t.labels.nodes // [])[].name ] | join(", ")),
+          detail: ($slug + "  #" + ($t.number | tostring) + "  " + ($t.author.login // "")),
+          accessory: ((if ($t.comments.totalCount // 0) > 0 then "\($t.comments.totalCount) 󰆉  " else "" end)
+                      + ago($t.updatedAt; $now)),
+          group: "Issue",
+          exec: openurl($t.url),
+          score: 90000,
+          actions: [ { title: "Open in Browser", shortcut: "↵", exec: openurl($t.url) },
+                     { title: "Copy URL", exec: copyurl($t.url) } ] }
+      else
+        ($t.commits.nodes[0].commit.statusCheckRollup // null) as $roll
+        | [ ($roll.contexts.nodes // [])[]
+            | if .__typename == "CheckRun"
+              then { name: .name,
+                     state: (.conclusion // .status // ""),
+                     url: (.detailsUrl // ""),
+                     took: (if .completedAt != null and .startedAt != null
+                            then (((.completedAt | fromdateiso8601?) // 0) - ((.startedAt | fromdateiso8601?) // 0))
+                            else 0 end) }
+              else { name: .context, state: (.state // ""), url: (.targetUrl // ""), took: 0 } end
+            | . + { mark: (.state | mark) } ] as $checks
+        | [ $checks[] | select(.mark == "✗") ] as $bad
+        | [ $checks[] | select(.mark == "●") ] as $running
+        | ($checks | sort_by(if .mark == "✗" then 0 elif .mark == "●" then 1 else 2 end)) as $checks
+        | {
+            id: ("pr:" + $slug + "#" + ($t.number | tostring)),
+            view: "ghpr",
+            title: $t.title,
+            subtitle: ($slug + " #" + ($t.number | tostring)),
+            exec: openurl($t.url),
+            score: 90000,
+            pr: {
+              repo: $slug,
+              number: $t.number,
+              title: $t.title,
+              author: ($t.author.login // ""),
+              head: ($t.headRefName // ""),
+              base: ($t.baseRefName // ""),
+              draft: ($t.isDraft == true),
+              state: ($t.state // ""),
+              mergeable: ($t.mergeable // ""),
+              review: ($t.reviewDecision | revword),
+              additions: ($t.additions // 0),
+              deletions: ($t.deletions // 0),
+              files: ($t.changedFiles // 0),
+              comments: ($t.comments.totalCount // 0),
+              age: ago($t.updatedAt; $now),
+              opened: ago($t.createdAt; $now),
+              rollup: ($roll.state // ""),
+              mark: (($roll.state // "") | mark),
+              failing: ($bad | length),
+              running: ($running | length),
+              total: ($checks | length),
+              url: $t.url
+            },
+            checks: [ $checks[] | { name: .name, mark: .mark, state: (.state | ascii_downcase),
+                                    took: (if .took > 0 then (if .took < 60 then "\(.took | floor)s" else "\((.took / 60) | floor)m" end) else "" end) } ],
+            reviews: [ ($t.reviews.nodes // [])[]
+                       | { who: (.author.login // ""), state: (.state // ""),
+                           mark: (if .state == "APPROVED" then "✓"
+                                  elif .state == "CHANGES_REQUESTED" then "✗" else "" end),
+                           age: ago(.submittedAt; $now) }
+                       | select(.who != "") ],
+            actions: [
+              { title: "Open in Browser", shortcut: "↵", exec: openurl($t.url) },
+              { title: "Show Diff", exec: ("'"$TUI"' gh pr diff --repo " + ($slug | @sh) + " " + ($t.number | tostring)) },
+              { title: "Watch Checks", exec: ("'"$TUI"' gh pr checks --repo " + ($slug | @sh) + " " + ($t.number | tostring) + " --watch") },
+              { title: "Check Out Locally", exec: ("'"$TUI"' gh pr checkout --repo " + ($slug | @sh) + " " + ($t.number | tostring)) },
+              { title: "Workflow Runs", exec: "true", query: ("ci:" + $slug) },
+              { title: "Copy URL", exec: copyurl($t.url) }
+            ]
+          }
+      end'
+}
+
+# The same panel with everything the network would have filled in left out. It
+# is drawn from the slug and the number alone, which is enough to open it.
+pr_skeleton() {
+  local slug="$1" num="$2"
+  jq -nc --arg slug "$slug" --argjson num "$num" --arg br "$BROWSER" '
+    ("https://github.com/" + $slug + "/pull/" + ($num | tostring)) as $url
+    | { id: ("pr:" + $slug + "#" + ($num | tostring)),
+        view: "ghpr",
+        title: ("#" + ($num | tostring)),
+        subtitle: ($slug + " #" + ($num | tostring)),
+        exec: ($br + " " + ($url | @sh)),
+        score: 90000,
+        waiting: true,
+        pr: { repo: $slug, number: $num, title: "", url: $url },
+        checks: [], reviews: [],
+        actions: [ { title: "Open in Browser", shortcut: "↵", exec: ($br + " " + ($url | @sh)) },
+                   { title: "Copy URL", exec: ("printf %s " + ($url | @sh) + " | wl-copy") } ] }'
+}
+
+# One repository. The counts and the default branch's check state are what you
+# would otherwise open three tabs to learn, and the open pull requests under
+# them are what makes it a picture of the repository rather than a badge.
+render_repo_panel() {
+  local slug="$1"
+  emit --arg slug "$slug" "$JQ"'
+    (.data.repository // null) as $r
+    | if $r == null then
+        { id: ("gh:" + $slug), title: $slug, subtitle: "not found, or no access",
+          detail: "a private repository needs the repo scope", score: 90000,
+          exec: openurl("https://github.com/" + $slug) }
+      else
+        ($r.defaultBranchRef // {}) as $br
+        | ($br.target // {}) as $head
+        | {
+            id: ("gh:" + $r.nameWithOwner),
+            view: "ghrepo",
+            title: $r.nameWithOwner,
+            subtitle: ($r.description // ""),
+            exec: openurl($r.url),
+            score: 90000,
+            repo: {
+              slug: $r.nameWithOwner,
+              description: ($r.description // ""),
+              language: ($r.primaryLanguage.name // ""),
+              stars: ($r.stargazerCount // 0),
+              forks: ($r.forkCount // 0),
+              private: ($r.isPrivate == true),
+              archived: ($r.isArchived == true),
+              fork: ($r.isFork == true),
+              branch: ($br.name // ""),
+              headline: ($head.messageHeadline // ""),
+              headHash: ($head.abbreviatedOid // ""),
+              headAge: ago($head.committedDate; $now),
+              headMark: (($head.statusCheckRollup.state // "") | mark),
+              prs: ($r.pullRequests.totalCount // 0),
+              issues: ($r.issues.totalCount // 0),
+              release: ($r.latestRelease.tagName // ""),
+              releaseAge: ago($r.latestRelease.publishedAt; $now),
+              pushed: ago($r.pushedAt; $now),
+              url: $r.url
+            },
+            prs: [ ($r.openPrs.nodes // [])[]
+                   | { number: .number,
+                       title: .title,
+                       author: (.author.login // ""),
+                       draft: (.isDraft == true),
+                       mark: ((. | prstate) | mark),
+                       review: (.reviewDecision | revword),
+                       age: ago(.updatedAt; $now) } ],
+            actions: [
+              { title: "Open in Browser", shortcut: "↵", exec: openurl($r.url) },
+              { title: "Pull Requests", exec: "true", query: ("pr:" + $r.nameWithOwner) },
+              { title: "Workflow Runs", exec: "true", query: ("ci:" + $r.nameWithOwner) },
+              { title: "Issues", exec: openurl($r.url + "/issues") },
+              { title: "Clone", exec: ("'"$TUI"' gh repo clone " + ($r.nameWithOwner | @sh)) },
+              { title: "Copy URL", exec: copyurl($r.url) }
+            ]
+          }
+      end'
+}
+
+repo_skeleton() {
+  local slug="$1"
+  jq -nc --arg slug "$slug" --arg br "$BROWSER" --arg tui "$TUI" '
+    ("https://github.com/" + $slug) as $url
+    | { id: ("gh:" + $slug),
+        view: "ghrepo",
+        title: $slug,
+        subtitle: "",
+        exec: ($br + " " + ($url | @sh)),
+        score: 90000,
+        waiting: true,
+        repo: { slug: $slug, url: $url, description: "" },
+        prs: [],
+        actions: [ { title: "Open in Browser", shortcut: "↵", exec: ($br + " " + ($url | @sh)) },
+                   { title: "Pull Requests", exec: "true", query: ("pr:" + $slug) },
+                   { title: "Clone", exec: ($tui + " gh repo clone " + ($slug | @sh)) },
+                   { title: "Copy URL", exec: ("printf %s " + ($url | @sh) + " | wl-copy") } ] }'
+}
+
+# --------------------------------------------------------------------- modes
+
+mode_repo() {
+  parse_target "$query"
+
+  case "$T_KIND" in
+    pr|issue|number)
+      local body
+      if body=$(peek "pr-$(key_for "$T_SLUG#$T_NUM")" 30 \
+        gh api graphql -f "query=$GQL_PR" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}" -F number="$T_NUM"); then
+        printf '%s' "$body" | render_pr_panel "$T_SLUG"
+      else
+        pr_skeleton "$T_SLUG" "$T_NUM"
+      fi
+      return
+      ;;
+
+    repo)
+      local body
+      if body=$(peek "repo-$(key_for "$T_SLUG")" 60 \
+        gh api graphql -f "query=$GQL_REPO" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}"); then
+        printf '%s' "$body" | render_repo_panel "$T_SLUG"
+      else
+        repo_skeleton "$T_SLUG"
+      fi
+      return
+      ;;
+  esac
+
+  # No slug: your own repositories, filtered here rather than at GitHub, and a
+  # search of the rest of GitHub once there are enough characters to mean
+  # something. Your own list is the one that answers instantly and it is also
+  # the one you want first.
+  authed || { signin_row; return; }
+
+  local own
+  own=$(pull "own-repos" 120 gh repo list --limit 100 \
+    --json nameWithOwner,description,primaryLanguage,stargazerCount,pushedAt,isPrivate,isArchived,url) || own=""
+  [[ -n $own ]] || own="[]"
+
+  printf '%s' "$own" | emit --arg q "${T_TEXT,,}" "$JQ"'
     [ .[] | select($q == "" or ((.nameWithOwner + " " + (.description // "")) | ascii_downcase | contains($q))) ]
     | sort_by(.pushedAt) | reverse | .[:12]
     | to_entries[] | .key as $i | .value
@@ -151,180 +708,214 @@ repos)
         id: ("own:" + .nameWithOwner),
         title: .nameWithOwner,
         detail: (.description // ""),
-        subtitle: ([ (.primaryLanguage.name // ""), (if .isPrivate then "private" else "" end) ]
+        subtitle: ([ (.primaryLanguage.name // ""), (if .isPrivate then "private" else "" end),
+                     (if .isArchived then "archived" else "" end) ]
                    | map(select(. != "")) | join("  ")),
-        accessory: ("★ " + (.stargazerCount | tostring) + "  " + shortage(.pushedAt; $now)),
+        accessory: ("★ " + (.stargazerCount | tostring) + "  " + ago(.pushedAt; $now)),
         group: "Your Repos",
-        exec: ("omarchy-launch-browser " + (.url | @sh)),
+        exec: openurl(.url),
         score: (90000 - ($i * 100)),
         actions: [
-          { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
-          { title: "Clone", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh repo clone " + (.nameWithOwner | @sh)) },
-          { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
-          { title: "Pull Requests", exec: "true", query: ("pr:" + .nameWithOwner) }
+          { title: "Open in Browser", shortcut: "↵", exec: openurl(.url) },
+          { title: "This Repository", exec: "true", query: ("gh:" + .nameWithOwner) },
+          { title: "Pull Requests", exec: "true", query: ("pr:" + .nameWithOwner) },
+          { title: "Clone", exec: ("'"$TUI"' gh repo clone " + (.nameWithOwner | @sh)) },
+          { title: "Copy URL", exec: copyurl(.url) }
         ]
-      }' 2>/dev/null
+      }'
 
-  # Three characters, because two is not a search term and every keystroke below
-  # that is answered from the cache above for free.
-  if ((${#query} >= 3)); then
-    seen=$(printf '%s' "$own" | jq -c '[.[].nameWithOwner]' 2>/dev/null) || seen="[]"
-    cached "search-$(key_for "$query")" 120 gh search repos "$query" --limit 12 \
-      --json fullName,description,language,stargazersCount,updatedAt,url,isPrivate |
-      jq -c --argjson seen "$seen" --argjson now "$now" "$JQ_LIB"'
-        [ .[] | select(.fullName as $n | ($seen | index($n)) == null) ] | .[:8]
-        | to_entries[] | .key as $i | .value
-        | {
-            id: ("search:" + .fullName),
-            title: .fullName,
-            detail: (.description // ""),
-            subtitle: (.language // ""),
-            accessory: ("★ " + (.stargazersCount | tostring) + "  " + shortage(.updatedAt; $now)),
-            group: "GitHub",
-            exec: ("omarchy-launch-browser " + (.url | @sh)),
-            score: (80000 - ($i * 100)),
-            actions: [
-              { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
-              { title: "Clone", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh repo clone " + (.fullName | @sh)) },
-              { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
-            ]
-          }' 2>/dev/null
+  # Three characters. Below that a search term is not a search term, and every
+  # keystroke under it is answered from the list above for no request at all.
+  ((${#T_TEXT} >= 3)) || return
+
+  local seen found
+  seen=$(printf '%s' "$own" | jq -c '[.[].nameWithOwner]' 2>/dev/null) || seen="[]"
+  found=$(peek "search-$(key_for "$T_TEXT")" 300 gh search repos "$T_TEXT" --limit 12 \
+    --json fullName,description,language,stargazersCount,updatedAt,url) || return
+
+  printf '%s' "$found" | emit --argjson seen "$seen" "$JQ"'
+    [ .[] | select(.fullName as $n | ($seen | index($n)) == null) ] | .[:6]
+    | to_entries[] | .key as $i | .value
+    | {
+        id: ("found:" + .fullName),
+        title: .fullName,
+        detail: (.description // ""),
+        subtitle: (.language // ""),
+        accessory: ("★ " + (.stargazersCount | tostring) + "  " + ago(.updatedAt; $now)),
+        group: "On GitHub",
+        exec: openurl(.url),
+        score: (80000 - ($i * 100)),
+        actions: [
+          { title: "Open in Browser", shortcut: "↵", exec: openurl(.url) },
+          { title: "This Repository", exec: "true", query: ("gh:" + .fullName) },
+          { title: "Clone", exec: ("'"$TUI"' gh repo clone " + (.fullName | @sh)) },
+          { title: "Copy URL", exec: copyurl(.url) }
+        ]
+      }'
+}
+
+mode_prs() {
+  parse_target "$query"
+
+  # A number with a repository in front of it is one pull request.
+  if [[ $T_KIND == pr || $T_KIND == number || $T_KIND == issue ]]; then
+    local body
+    if body=$(peek "pr-$(key_for "$T_SLUG#$T_NUM")" 30 \
+      gh api graphql -f "query=$GQL_PR" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}" -F number="$T_NUM"); then
+      printf '%s' "$body" | render_pr_panel "$T_SLUG"
+    else
+      pr_skeleton "$T_SLUG" "$T_NUM"
+    fi
+    return
   fi
-  ;;
 
-prs)
-  slug=$(resolve_repo "$query")
-  [[ -n ${slug:-} ]] || exit 0
+  authed || { signin_row; return; }
 
-  # Free text after a repo name narrows the list locally, so `pr:owner/repo fix`
-  # costs the same one request as `pr:owner/repo`.
-  if [[ $query == */* ]]; then
-    filter="${query#"${query%% *}"}"
-    filter="${filter# }"
-  else
-    filter="$query"
-  fi
-
-  cached "prs-$(key_for "$slug")" 45 gh pr list --repo "$slug" --state open --limit 20 \
-    --json number,title,author,headRefName,isDraft,reviewDecision,statusCheckRollup,updatedAt,url |
-    jq -c --arg q "${filter,,}" --arg slug "$slug" --argjson now "$now" "$JQ_LIB"'
-      [ .[] | select($q == "" or ((.title + " " + (.author.login // "") + " " + .headRefName) | ascii_downcase | contains($q))) ]
+  if [[ $T_KIND == repo ]]; then
+    local body
+    body=$(pull "repoprs-$(key_for "$T_SLUG")" 45 \
+      gh api graphql -f "query=$GQL_REPO_PRS" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    printf '%s' "$body" | emit --arg slug "$T_SLUG" "$JQ$JQ_PR_ROWS"'
+      [ (.data.repository.pullRequests.nodes // [])[] ] | .[:14]
       | to_entries[] | .key as $i | .value
-      | (.statusCheckRollup | rollup) as $checks
-      | {
-          id: ("pr:" + $slug + "#" + (.number | tostring)),
-          title: (if .isDraft then "draft  " else "" end) + .title,
-          detail: ("#" + (.number | tostring) + "  " + (.author.login // "") + "  " + .headRefName),
-          subtitle: (.reviewDecision // "" | reviewword),
-          accessory: (($checks + " " + shortage(.updatedAt; $now)) | ltrimstr(" ")),
-          group: ("Pull Requests  " + $slug),
-          exec: ("omarchy-launch-browser " + (.url | @sh)),
-          score: (90000 - ($i * 100)),
-          actions: [
-            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
-            { title: "Show Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr diff --repo " + ($slug | @sh) + " " + (.number | tostring)) },
-            { title: "Checks", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr checks --repo " + ($slug | @sh) + " " + (.number | tostring)) },
-            { title: "Check Out Locally", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr checkout --repo " + ($slug | @sh) + " " + (.number | tostring)) },
-            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
-          ]
-        }' 2>/dev/null
-  ;;
+      | prrow("Open Pull Requests  " + $slug; 90000 - ($i * 100))'
+    return
+  fi
 
-issues)
-  # Assigned to you, across every repo, which is the list you keep in your head
-  # and would otherwise open five tabs to rebuild.
-  args=(gh search issues --assignee=@me --state=open --limit 25
-    --json repository,number,title,updatedAt,url,labels)
-  [[ -n $query ]] && args+=("$query")
+  # A bare number, or words. Neither names a repository, and the launcher has no
+  # working directory to guess one from, so the only repositories it can
+  # honestly mean are the ones already in your own list.
+  local body out filter="${T_TEXT,,}"
+  body=$(pull "mine-prs" 45 gh api graphql -f "query=$GQL_MINE") || return
 
-  cached "issues-$(key_for "$query")" 45 "${args[@]}" |
-    jq -c --argjson now "$now" "$JQ_LIB"'
-      to_entries[] | .key as $i | .value
-      | (.repository.nameWithOwner // .repository.name // "") as $repo
-      | {
-          id: ("issue:" + $repo + "#" + (.number | tostring)),
+  out=$(printf '%s' "$body" | emit --arg q "$filter" --arg slug "" "$JQ$JQ_PR_ROWS"'
+    def keep: select($q == ""
+      or (((.title // "") + " " + (.repository.nameWithOwner // "") + " "
+           + (.author.login // "") + " " + (.headRefName // "") + " #" + (.number | tostring))
+          | ascii_downcase | contains($q)));
+
+    [ (.data.review.nodes // [])[] | keep ] as $review
+    | [ (.data.mine.nodes // [])[] | keep ] as $mine
+    | ([ $review[] | . + { g: "Waiting On You", b: 95000 } ]
+       + [ $mine[] | . + { g: "Your Pull Requests", b: 90000 } ])
+    | to_entries[] | .key as $i | .value
+    | prrow(.g; .b - ($i * 100))')
+
+  # An empty inbox is an answer, and a good one. The launcher's own "Nothing
+  # matches" is not: it reads as a search that failed rather than as a day with
+  # nothing on it.
+  if [[ -z $out && -z $filter ]]; then
+    row "Nothing open, nothing waiting" "no pull requests of yours, none for you to review" \
+      "" "" "pr-empty" 90000
+    return
+  fi
+  printf '%s\n' "$out"
+}
+
+mode_issues() {
+  parse_target "$query"
+
+  # A repository and a number is a URL. GitHub sends /issues/N to the pull
+  # request when it turns out to be one, so this is right without asking.
+  if [[ -n $T_NUM ]]; then
+    jq -nc --arg slug "$T_SLUG" --argjson num "$T_NUM" --arg br "$BROWSER" '
+      ("https://github.com/" + $slug + "/issues/" + ($num | tostring)) as $url
+      | { id: ("issue:" + $slug + "#" + ($num | tostring)),
+          title: ($slug + " #" + ($num | tostring)),
+          subtitle: "open on GitHub",
+          exec: ($br + " " + ($url | @sh)),
+          score: 90000,
+          actions: [ { title: "Open in Browser", shortcut: "↵", exec: ($br + " " + ($url | @sh)) },
+                     { title: "Copy URL", exec: ("printf %s " + ($url | @sh) + " | wl-copy") } ] }'
+    return
+  fi
+
+  authed || { signin_row; return; }
+
+  local body out
+  body=$(pull "my-issues" 60 gh api graphql -f "query=$GQL_ISSUES") || return
+
+  out=$(printf '%s' "$body" | emit --arg q "${T_TEXT,,}" "$JQ"'
+    def keep: select($q == ""
+      or (((.title // "") + " " + (.repository.nameWithOwner // "")
+           + " #" + (.number | tostring)) | ascii_downcase | contains($q)));
+
+    def issuerow($group; $base):
+      ((.repository.nameWithOwner // "")) as $repo
+      | { id: ("issue:" + $repo + "#" + (.number | tostring)),
           title: .title,
-          detail: ($repo + "  #" + (.number | tostring)),
-          subtitle: ([ (.labels // [])[].name ] | join(", ")),
-          accessory: shortage(.updatedAt; $now),
-          group: "Assigned Issues",
-          exec: ("omarchy-launch-browser " + (.url | @sh)),
-          score: (90000 - ($i * 100)),
+          detail: ($repo + "  #" + (.number | tostring) + "  " + (.author.login // "")),
+          subtitle: ([ (.labels.nodes // [])[].name ] | join(", ")),
+          accessory: ((if (.comments.totalCount // 0) > 0 then "\(.comments.totalCount)󰆉  " else "" end)
+                      + ago(.updatedAt; $now)),
+          group: $group,
+          exec: openurl(.url),
+          score: $base,
           actions: [
-            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
-            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
-            { title: "Pull Requests", exec: "true", query: ("pr:" + $repo) }
-          ]
-        }' 2>/dev/null
-  ;;
+            { title: "Open in Browser", shortcut: "↵", exec: openurl(.url) },
+            { title: "This Repository", exec: "true", query: ("gh:" + $repo) },
+            { title: "Copy URL", exec: copyurl(.url) }
+          ] };
 
-runs)
-  slug=$(resolve_repo "$query")
-  [[ -n ${slug:-} ]] || exit 0
+    ([ (.data.assigned.nodes // [])[] | keep | . + { g: "Assigned To You", b: 95000 } ]
+     + [ (.data.mentioned.nodes // [])[] | keep | . + { g: "Mentioning You", b: 88000 } ])
+    | unique_by(.url)
+    | to_entries[] | .key as $i | .value
+    | issuerow(.g; .b - ($i * 100))')
 
-  cached "runs-$(key_for "$slug")" 45 gh run list --repo "$slug" --limit 15 \
-    --json databaseId,displayTitle,workflowName,status,conclusion,headBranch,event,createdAt,url |
-    jq -c --arg slug "$slug" --argjson now "$now" "$JQ_LIB"'
-      to_entries[] | .key as $i | .value
-      | (if .conclusion == "success" then "✓"
-         elif .conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" then "✗"
-         elif .conclusion == "cancelled" then "⊘"
-         elif .status == "completed" then ""
-         else "●" end) as $mark
-      | {
-          id: ("run:" + $slug + ":" + (.databaseId | tostring)),
-          title: .displayTitle,
-          detail: (.workflowName + "  " + .headBranch + "  " + .event),
-          subtitle: (if .conclusion == "" or .conclusion == null then .status else .conclusion end),
-          accessory: (($mark + " " + shortage(.createdAt; $now)) | ltrimstr(" ")),
-          group: ("Workflow Runs  " + $slug),
-          exec: ("omarchy-launch-browser " + (.url | @sh)),
-          score: (90000 - ($i * 100)),
-          actions: [
-            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
-            { title: "Failed Logs", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh run view --repo " + ($slug | @sh) + " " + (.databaseId | tostring) + " --log-failed") },
-            { title: "Watch", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh run watch --repo " + ($slug | @sh) + " " + (.databaseId | tostring)) },
-            { title: "Rerun Failed Jobs", exec: ("out=$(gh run rerun --repo " + ($slug | @sh) + " " + (.databaseId | tostring) + " --failed 2>&1) && omarchy-notification-send \"Rerunning failed jobs\" || omarchy-notification-send -u normal \"gh run rerun failed\" \"$out\"") },
-            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
-          ]
-        }' 2>/dev/null
-  ;;
+  if [[ -z $out && -z ${T_TEXT} ]]; then
+    row "Nothing assigned, nothing mentioning you" "an empty inbox is an answer" \
+      "" "" "issue-empty" 90000
+    return
+  fi
+  printf '%s\n' "$out"
+}
 
-gists)
-  # `gh gist list` has no --json, so the REST endpoint is the only way to get
-  # the raw URL a gist is usually wanted for.
-  cached "gists" 120 gh api "/gists?per_page=40" |
-    jq -c --arg q "${query,,}" --argjson now "$now" "$JQ_LIB"'
-      [ .[]
-        | { id: .id, description: (.description // ""), url: .html_url,
-            public: .public, updated: .updated_at,
-            names: [ (.files // {}) | keys[] ],
-            raw: ([ (.files // {}) | .[] | .raw_url ] | first // "") }
-        | select($q == "" or ((.description + " " + (.names | join(" "))) | ascii_downcase | contains($q)))
-      ] | .[:12]
-      | to_entries[] | .key as $i | .value
-      | {
-          id: ("gist:" + .id),
-          title: (if .description != "" then .description else (.names | first // .id) end),
-          detail: (.names | join(", ")),
-          subtitle: (if .public then "public" else "secret" end),
-          accessory: shortage(.updated; $now),
-          group: "Gists",
-          exec: ("omarchy-launch-browser " + (.url | @sh)),
-          score: (90000 - ($i * 100)),
-          actions: (
-            [ { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) } ]
-            + (if .raw == "" then [] else
-                 [ { title: "Copy Raw URL", exec: ("printf %s " + (.raw | @sh) + " | wl-copy") } ] end)
-            + [ { title: "Copy Gist URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
-                { title: "Edit", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh gist edit " + (.id | @sh)) } ]
-          )
-        }' 2>/dev/null
-  ;;
+mode_runs() {
+  parse_target "$query"
 
-*)
-  exit 0
-  ;;
+  if [[ -z $T_SLUG ]]; then
+    row "Name a repository" "ci:owner/repo" \
+      "workflow runs belong to a repository" "" "ci-hint" 90000
+    return
+  fi
+
+  authed || { signin_row; return; }
+
+  local body
+  body=$(pull "runs-$(key_for "$T_SLUG")" 30 gh run list --repo "$T_SLUG" --limit 20 \
+    --json databaseId,displayTitle,workflowName,status,conclusion,headBranch,event,createdAt,url) || return
+
+  printf '%s' "$body" | emit --arg slug "$T_SLUG" "$JQ"'
+    [ .[] ] | .[:14]
+    | to_entries[] | .key as $i | .value
+    | (if .status != "completed" then "●" else (.conclusion | mark) end) as $m
+    | {
+        id: ("run:" + $slug + ":" + (.databaseId | tostring)),
+        title: .displayTitle,
+        detail: (.workflowName + "  " + .headBranch + "  " + .event),
+        subtitle: (if (.conclusion // "") == "" then .status else .conclusion end),
+        accessory: (($m + " " + ago(.createdAt; $now)) | ltrimstr(" ")),
+        group: ("Workflow Runs  " + $slug),
+        exec: openurl(.url),
+        # Failures first: a list of twenty greens with one red in the middle is
+        # a list you have to read, and the red one is the only reason you asked.
+        score: ((if $m == "✗" then 95000 elif $m == "●" then 92000 else 90000 end) - ($i * 100)),
+        actions: [
+          { title: "Open in Browser", shortcut: "↵", exec: openurl(.url) },
+          { title: "Failed Logs", exec: ("'"$TUI"' gh run view --repo " + ($slug | @sh) + " " + (.databaseId | tostring) + " --log-failed") },
+          { title: "Watch", exec: ("'"$TUI"' gh run watch --repo " + ($slug | @sh) + " " + (.databaseId | tostring)) },
+          { title: "This Repository", exec: "true", query: ("gh:" + $slug) },
+          { title: "Copy URL", exec: copyurl(.url) }
+        ]
+      }'
+}
+
+case "$MODE" in
+  repo)   mode_repo ;;
+  prs)    mode_prs ;;
+  issues) mode_issues ;;
+  runs)   mode_runs ;;
 esac
 
 exit 0

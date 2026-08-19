@@ -2,19 +2,15 @@
   "id": "ci",
   "title": "Workflow Runs",
   "keyword": "ci",
-  "aliases": [
-    "workflow",
-    "workflows",
-    "actions"
-  ],
+  "aliases": ["workflow", "workflows", "actions"],
   "subtitle": "Run",
-  "glyph": "",
-  "search": "omacast-gh runs {query}",
-  "when": "gh auth status >/dev/null 2>&1",
+  "glyph": "",
+  "search": "omacast-gh-ci {query}",
+  "when": "command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1",
   "minChars": 0,
-  "debounceMs": 300,
+  "debounceMs": 280,
   "timeoutMs": 9000,
-  "maxRows": 12,
+  "maxRows": 14,
   "tier": "substring",
   "view": "list"
 }

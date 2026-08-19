@@ -2,17 +2,16 @@
   "id": "gh",
   "title": "GitHub",
   "keyword": "gh",
-  "aliases": [
-    "github"
-  ],
+  "aliases": ["github"],
   "subtitle": "GitHub",
-  "glyph": "",
-  "search": "omacast-gh repos {query}",
-  "when": "gh auth status >/dev/null 2>&1",
+  "glyph": "",
+  "search": "omacast-gh {query}",
+  "when": "command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1",
   "minChars": 0,
-  "debounceMs": 350,
+  "debounceMs": 320,
   "timeoutMs": 9000,
-  "maxRows": 12,
+  "maxRows": 18,
   "tier": "substring",
-  "view": "list"
+  "view": "list",
+  "refreshMs": 900
 }

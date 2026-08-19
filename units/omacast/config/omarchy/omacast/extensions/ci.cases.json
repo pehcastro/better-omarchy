@@ -1,0 +1,15 @@
+[
+  { "why": "workflow runs belong to a repository and the launcher has no working directory to guess one from, so a bare ci: names the shape instead of running a request that cannot mean anything",
+    "query": "!offline",
+    "minRows": 1,
+    "maxRows": 1,
+    "row": 0,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^ci:owner/repo$" } },
+
+  { "why": "a repository with no account behind it says so: an empty run list reads as a repository that has never run CI",
+    "query": "!offline basecamp/omarchy",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "title": "GitHub" } }
+]

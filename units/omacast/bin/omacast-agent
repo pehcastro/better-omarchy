@@ -1,0 +1,1461 @@
+#!/usr/bin/env python3
+"""OmaCast's `do:` keyword: a sentence in the search box, done by a local agent.
+
+    do: open a new workspace and split it into four terminals
+    do: find every TODO in this repo and list them
+    do:@codex explain what changed on this branch
+
+The first version of this was read-only. It denied `hyprctl`, allowed six
+reading tools, and refused the first thing it was ever asked to do. A keyword
+called `do:` that cannot do anything is worse than no keyword, so the policy
+here starts from the opposite end.
+
+**It is allowed to act.** The user typed the instruction into their own
+launcher, on their own machine, and pressed Enter. That is consent for the
+ordinary case, and the ordinary case is opening a window, writing a file,
+running a build. Bash, Write and Edit are all pre-approved.
+
+**Confirmation is kept for what a mistake cannot undo.** `DENIED` below is the
+whole of it: deleting, elevating, packaging, credentials, and anything that
+leaves this machine. Those come back as a refusal on the card, named, with the
+reason, and Ctrl+K hands the same instruction to an interactive agent in a
+terminal where a human answers the prompt. The list is a speed bump on a model
+that means well, not a sandbox: `bash -c` and `find -delete` are still shells,
+and the real guarantee is that a person typed the sentence.
+
+**It behaves like a chat.** Enter sends and empties the box; what you sent stays
+on the card above the answer, and the next sentence continues the same session
+rather than starting a new one. `do: /new` starts over.
+
+**Enter carries a token, not the sentence.** `search` writes down what it
+previewed, keyed by a hash. The row's command is `omacast-agent send <token>`,
+so no prose reaches a shell and nothing runs that was not on screen first.
+
+**Escape stops it.** The row names its own stop command, the daemon is the
+parent of the agent process and kills the whole group, and a run whose card
+stops being asked about is killed a couple of seconds later as a backstop.
+
+Subcommands:
+
+    search <query>     one JSON row, for the launcher (cheap: never runs an agent)
+    serve              the daemon: owns the agent process, answers the socket
+    send <token>       start the instruction behind that token (called by Enter)
+    stop               stop whatever is running
+    new                forget the conversation
+    term <token>       hand the instruction to an interactive agent in a terminal
+    desk <verb> ...    the desktop, with the Lua dispatchers already spelled right
+"""
+
+import errno
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+STATE = os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+    "omarchy")
+SOCKET = os.path.join(STATE, "omacast-agent.sock")
+PREVIEWS = os.path.join(STATE, "omacast-agent-previews.json")
+
+# How long a run survives with nobody watching. The launcher re-asks this
+# extension every refresh tick while its rows are on screen, so silence means
+# the card is gone. Escape does not rely on this: the row carries its own stop
+# command and the launcher runs it. This is the backstop for the launcher being
+# closed, killed, or crashing mid-run.
+GRACE = 2.5
+# The daemon exists to hold one agent process and the conversation around it.
+# With neither, it is a few megabytes of nothing, so it leaves.
+IDLE_EXIT = 900.0
+
+MAX_STEPS = 200
+MAX_ANSWER = 8000
+MAX_TURNS = 12
+# How many finished steps stay under the live one. Three is what fits beside an
+# answer in a card twelve lines tall, and the ones before them are counted
+# rather than drawn.
+TAIL = 3
+
+
+# --------------------------------------------------------------- the agents
+
+#   stream  how its output is read: "claude" is the parsed step stream,
+#           "plain" is prose only, with no step list to show.
+#   acts    whether this CLI can be told to act without a human at the prompt.
+#           A `plan`-mode agent belongs on a card that says so, not on `do:`.
+AGENTS = [
+    {"id": "claude", "title": "Claude", "bin": "claude", "stream": "claude",
+     "acts": True},
+    {"id": "codex", "title": "Codex", "bin": "codex", "stream": "plain",
+     "acts": True},
+    {"id": "gemini", "title": "Gemini", "bin": "gemini", "stream": "plain",
+     "acts": False},
+]
+
+# Pre-approved. Everything a person does at a desktop is here, including the
+# shell, because "open a new workspace and split it into four terminals" is a
+# shell command five times over and any policy that cannot express it is a
+# policy that makes this keyword a lie.
+ALLOWED = [
+    "Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
+    "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "ToolSearch",
+]
+
+# The other half. Nothing here is forbidden on this machine: it is the set of
+# things whose cost, when the model is wrong, is not a window in the wrong
+# place. Each one is either irreversible (the file is gone, the commit is
+# public, the key is rotated) or reaches past the desktop session entirely.
+# They come back as a refusal you can see, and Ctrl+K is the way to do them
+# with a human answering the prompt.
+DENIED = [
+    # Gone means gone.
+    "Bash(rm:*)", "Bash(rmdir:*)", "Bash(shred:*)", "Bash(dd:*)",
+    "Bash(mkfs:*)", "Bash(truncate:*)", "Bash(chown:*)", "Bash(mkswap:*)",
+    "Bash(fdisk:*)", "Bash(parted:*)", "Bash(wipefs:*)",
+    # Not your privileges to take.
+    "Bash(sudo:*)", "Bash(pkexec:*)", "Bash(doas:*)", "Bash(su:*)",
+    # The machine's software, and the machine's session.
+    "Bash(pacman:*)", "Bash(yay:*)", "Bash(paru:*)", "Bash(systemctl:*)",
+    "Bash(loginctl:*)", "Bash(reboot:*)", "Bash(poweroff:*)",
+    "Bash(shutdown:*)", "Bash(omarchy update:*)", "Bash(omarchy pkg:*)",
+    "Bash(omarchy install:*)", "Bash(omarchy system:*)",
+    "Bash(omarchy refresh:*)", "Bash(omarchy reinstall:*)",
+    # Credentials. A read is as bad as a write here.
+    "Bash(pass:*)", "Bash(gpg:*)", "Bash(ssh-keygen:*)", "Bash(ssh-add:*)",
+    "Bash(secret-tool:*)", "Bash(passwd:*)", "Bash(keyctl:*)",
+    # Off this machine. Anything here is seen by somebody else the moment it
+    # works, which is the definition of not being undoable from here.
+    "Bash(git push:*)", "Bash(gh:*)", "Bash(glab:*)", "Bash(ssh:*)",
+    "Bash(scp:*)", "Bash(rsync:*)", "Bash(sftp:*)", "Bash(curl:*)",
+    "Bash(wget:*)",
+    # History a reflog does not get back.
+    "Bash(git reset --hard:*)", "Bash(git clean:*)", "Bash(git filter-branch:*)",
+    "Bash(git push --force:*)",
+    # Itself. An agent that restarts the daemon it is streaming into loses the
+    # card it was writing to, and one that starts another run makes two.
+    "Bash(omacast-agent send:*)", "Bash(omacast-agent serve:*)",
+    "Bash(omacast-agent stop:*)", "Bash(omacast-agent new:*)",
+]
+
+# What the agent is told about where it woke up. Two things it cannot guess:
+# the shape of the card it is writing into, and that this machine's Hyprland
+# takes Lua.
+BRIEF = """You are running from a desktop launcher on the user's own machine.
+They typed this instruction themselves and pressed Enter. That is your consent
+to act: do the thing, do not ask whether to, and do not describe what you would
+have done. If a tool is refused, say which one and stop; the user has a way to
+re-run you in a terminal where they can approve it.
+
+Your reply is drawn in a card about twelve lines tall. Answer in a few short
+lines, no preamble, no markdown headings, no bullet lists longer than three
+items. When you did something rather than found something out, say what is now
+true: "four terminals on workspace 4", not "I have completed the task".
+
+This is Omarchy (Arch + Hyprland). Hyprland is configured in Lua here, and
+`hyprctl dispatch` takes a Lua expression, not the old string form: what you
+pass is wrapped as `return hl.dispatch(<your argument>)`.
+
+  wrong:  hyprctl dispatch workspace 9
+  wrong:  hyprctl dispatch movetoworkspace 9
+  right:  hyprctl dispatch 'hl.dsp.focus({ workspace = 9 })'
+  right:  hyprctl dispatch 'hl.dsp.window.move({ workspace = 9 })'
+  right:  hyprctl dispatch 'hl.dsp.focus({ window = "address:0x55..." })'
+  right:  hyprctl dispatch 'hl.dsp.layout("togglesplit")'
+
+The old string form is not an error you will see: under a Lua config it can
+return `ok` and do nothing at all.
+
+Prefer `omacast-agent desk`, which is those dispatchers with the syntax already
+right and which waits for windows to actually appear before returning. Run
+`omacast-agent desk help` for the verbs. Reading the desktop is plain
+`hyprctl -j clients|workspaces|monitors|activewindow`.
+
+  a new workspace with four terminals in a grid:
+      omacast-agent desk empty
+      omacast-agent desk tile 4 terminal
+
+Before changing anything under ~/.config/hypr, ~/.config/omarchy, the bar, a
+theme, a keybinding, or before reaching for an `omarchy` command, load the
+`omarchy` skill: it is installed here and it is more current than you are."""
+
+EXAMPLES = [
+    "open a new workspace and split it into four terminals",
+    "find every TODO in this repo and list them",
+    "what is taking up space in my downloads folder",
+]
+
+
+def which(name):
+    return shutil.which(name)
+
+
+def agents_present():
+    return [a for a in AGENTS if which(a["bin"])]
+
+
+def pick_agent(named):
+    """The agent for this query. A named one that is missing is an answer in its
+    own right, not a silent fall back to another: asking Codex and being
+    answered by Claude is worse than being told Codex is not here."""
+    if named:
+        for a in AGENTS:
+            if a["id"] == named.lower():
+                return a if which(a["bin"]) else {"missing": named, **a}
+        return {"missing": named, "id": named, "title": named, "bin": named,
+                "stream": "plain", "acts": False}
+    here = agents_present()
+    if not here:
+        return None
+    for a in here:
+        if a["acts"]:
+            return a
+    return here[0]
+
+
+AT = re.compile(r"^@([A-Za-z0-9_.-]+)\s*")
+
+
+def split_query(text):
+    """`@codex do the thing` -> ("codex", "do the thing")."""
+    text = (text or "").strip()
+    m = AT.match(text)
+    if not m:
+        return "", text
+    return m.group(1), text[m.end():].strip()
+
+
+_WORKDIR = []
+
+
+def workdir():
+    """Where a run happens. `omacast-repo --current` is where this launcher has
+    already written down what "the repo I am in" means for a window with no
+    working directory, so the agent inherits that answer rather than inventing a
+    second one. Asked once per process, because the daemon answers a question
+    every refresh tick and a fork per tick is what the socket exists to avoid."""
+    if _WORKDIR:
+        return _WORKDIR[0]
+    _WORKDIR.append(os.path.expanduser("~"))
+    try:
+        out = subprocess.run(["omacast-repo", "--current"], capture_output=True,
+                             text=True, timeout=3).stdout.strip()
+        if out and os.path.isdir(out):
+            _WORKDIR[0] = out
+    except Exception:
+        pass
+    return _WORKDIR[0]
+
+
+def token_for(agent_id, instruction, cwd):
+    raw = "\x00".join([agent_id, instruction, cwd]).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def tilde(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def short(text, n):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+# ------------------------------------------------------------ preview store
+
+def read_previews():
+    try:
+        with open(PREVIEWS, "r") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def remember_preview(token, entry):
+    """What the user has been shown, so `send <token>` can only start something
+    that was previewed. Bounded, because this is a record of the last few
+    things typed and not a history anybody asked to keep."""
+    data = read_previews()
+    if token in data:
+        return
+    data[token] = entry
+    if len(data) > 32:
+        oldest = sorted(data.items(), key=lambda kv: kv[1].get("at", 0))
+        for k, _ in oldest[:len(data) - 32]:
+            data.pop(k, None)
+    os.makedirs(STATE, exist_ok=True)
+    tmp = PREVIEWS + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, PREVIEWS)
+
+
+# -------------------------------------------------------------------- rows
+
+def policy_line(agent):
+    if not agent.get("acts", True):
+        return "%s · plans, and will not act" % agent["title"]
+    return "%s · acts here; deleting and pushing need a terminal" % agent["title"]
+
+
+def base_row(**kw):
+    row = {
+        "id": "agent",
+        "view": "agent",
+        "group": "Do It",
+        "turns": [],
+        "draft": "",
+        "hints": [],
+    }
+    row.update(kw)
+    return row
+
+
+def hint_row(agent, turns):
+    if agent is None:
+        return missing_row("", turns)
+    return base_row(
+        state="idle",
+        title="Say what you want done",
+        subtitle=policy_line(agent),
+        agentName=agent["title"],
+        cwd=tilde(workdir()),
+        hints=[] if turns else EXAMPLES,
+        turns=turns,
+    )
+
+
+def missing_row(named, turns=None):
+    """The honest answer when there is no agent to hand this to. A `when` that
+    hid the keyword instead would make typing `do:` produce nothing at all,
+    which reads as the launcher being broken rather than as the CLI being
+    absent."""
+    here = ", ".join(a["title"] for a in agents_present())
+    if named:
+        title = "%s is not installed" % named
+        subtitle = ("Installed here: " + here) if here else \
+            "No agent CLI found. Install claude or codex."
+    else:
+        title = "No agent CLI found"
+        subtitle = "Install claude or codex and this keyword works."
+    return base_row(state="missing", title=title, subtitle=subtitle,
+                    agentName=named or "", turns=turns or [])
+
+
+def policy_row(agent, turns):
+    """`do: /policy` prints what this may do without asking and what it cannot.
+
+    Worth a keyword of its own because the answer changed: the version before
+    this one was read-only and denied `hyprctl`, so the first instruction it was
+    ever given came back refused. Somebody about to trust a launcher with their
+    machine should be able to read the rule rather than find it out."""
+    return base_row(
+        state="policy",
+        title="What it may do here",
+        subtitle=policy_line(agent) if agent else "",
+        agentName=agent["title"] if agent else "",
+        cwd=tilde(workdir()),
+        turns=turns,
+        allows=", ".join(ALLOWED),
+        denies=", ".join(
+            sorted({re.sub(r"^Bash\(([^:]+).*$", r"\1", d) for d in DENIED})),
+        hints=["Anything under 'needs a terminal' comes back refused, named,",
+               "and Ctrl+K re-runs the same sentence where you can approve it."],
+    )
+
+
+def special_row(agent, instruction, turns):
+    """The two instructions that are about this keyword rather than about the
+    machine. Both are typed the way a chat takes a command, because that is what
+    the box already looks like."""
+    if instruction in ("/new", "/clear"):
+        row = hint_row(agent, [])
+        row["state"] = "draft"
+        row["title"] = "Start over"
+        row["subtitle"] = "Forget what was said before this"
+        row["hints"] = []
+        row["exec"] = "omacast-agent new"
+        row["clearTo"] = "do: "
+        row["keepOpen"] = True
+        return row
+    if instruction in ("/policy", "/what", "/can"):
+        return policy_row(agent, turns)
+    return None
+
+
+def draft_row(agent, instruction, cwd, token, turns):
+    """What typing produces. Nothing has run: this is the sentence read back,
+    with the agent and the directory named, and Enter is what starts it."""
+    return base_row(
+        state="draft",
+        title=instruction,
+        subtitle=policy_line(agent),
+        agentName=agent["title"],
+        cwd=tilde(cwd),
+        draft=instruction,
+        turns=turns,
+        exec="omacast-agent send " + token,
+        # Enter sends and empties the box, the way a chat does. Without this the
+        # sentence stayed put and Enter could be pressed again, and again, each
+        # press starting another run of the same thing.
+        clearTo="do: ",
+        escExec="omacast-agent stop",
+        keepOpen=True,
+        actions=[
+            {"title": "Run in a terminal, where you answer the prompts",
+             "subtitle": "Deleting, pushing and sudo live there",
+             "exec": "omacast-agent term " + token},
+            {"title": "Copy the instruction",
+             "exec": "printf %s " + shlex.quote(instruction) + " | wl-copy"},
+        ],
+    )
+
+
+# ------------------------------------------------------------- one exchange
+
+class Turn:
+    """One thing the user said and everything that came back from it."""
+
+    def __init__(self, index, agent, text, cwd):
+        self.index = index
+        self.agent = agent
+        self.text = text
+        self.cwd = cwd
+        self.state = "running"
+        self.steps = []
+        self.answer = ""
+        self.blocked = []
+        self.note = ""
+        self.started = time.time()
+        self.finished = 0.0
+
+    def elapsed(self):
+        return int((self.finished or time.time()) - self.started)
+
+    def view(self):
+        """What a person wants to watch: which step it is on, the last few it
+        finished, and the answer. Not the tool names, not the JSON, and not a
+        spinner, which answers no question anybody has."""
+        # While it runs, the newest step is the one being watched, whether or
+        # not its result has come back yet. Reading a file takes 40ms and the
+        # card is asked about twice a second, so a `now` that only ever held a
+        # tool still in flight was empty for entire runs, and the one question
+        # anybody has while an agent works went unanswered.
+        rest, now = self.steps, ""
+        if self.state == "running" and self.steps:
+            now = self.steps[-1]["text"]
+            rest = self.steps[:-1]
+        tail = rest[-TAIL:]
+        return {
+            "you": self.text,
+            "state": self.state,
+            "now": now,
+            "did": [{"text": e["text"], "kind": e["kind"], "state": e["state"]}
+                    for e in tail],
+            "earlier": max(0, len(rest) - len(tail)),
+            "steps": len(self.steps),
+            "answer": self.answer.strip(),
+            "blocked": self.blocked,
+            "note": self.note,
+            "elapsed": self.elapsed(),
+            "startedAt": int(self.started),
+        }
+
+
+# ------------------------------------------------------------- the run itself
+
+class Run:
+    """One agent process, reading its stream into one Turn."""
+
+    def __init__(self, turn, resume=""):
+        self.turn = turn
+        self.agent = turn.agent
+        self.resume = resume
+        self.session = ""
+        self.buf = b""
+        self.proc = None
+        self.pending = {}
+        self.noise = []
+        self.seen = time.time()
+
+    # ----- starting and stopping
+
+    def command(self):
+        a = self.agent
+        if a["id"] == "claude":
+            # The instruction goes down stdin, not on the command line. Both
+            # tool-list options are variadic, so anything after them is eaten as
+            # another tool name and claude exits 1 saying it got no input; and
+            # keeping the sentence out of argv keeps it out of `ps` as well.
+            cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose",
+                   "--append-system-prompt", BRIEF,
+                   "--add-dir", os.path.expanduser("~"),
+                   "--allowedTools", ",".join(ALLOWED),
+                   "--disallowedTools", ",".join(DENIED)]
+            # The second sentence continues the first. Without this every `do:`
+            # is a stranger who has to be told the directory and the desktop
+            # again, and "now make it four" means nothing.
+            if self.resume:
+                cmd += ["--resume", self.resume]
+            return cmd
+        if a["id"] == "codex":
+            return ["codex", "exec", "--sandbox", "workspace-write",
+                    "--skip-git-repo-check", "--color", "never",
+                    self.turn.text + "\n\n" + BRIEF]
+        if a["id"] == "gemini":
+            return ["gemini", "--approval-mode", "plan", "-p",
+                    self.turn.text + "\n\n" + BRIEF]
+        return [a["bin"], self.turn.text]
+
+    def start(self):
+        self.proc = subprocess.Popen(
+            self.command(), cwd=self.turn.cwd, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            # Its own process group, which is the whole of the cancellation
+            # story: an agent forks compilers and greps, and killing the one pid
+            # it told us about leaves those running.
+            start_new_session=True)
+        try:
+            if self.agent["id"] == "claude":
+                self.proc.stdin.write(self.turn.text.encode("utf-8"))
+        except OSError:
+            pass
+        # Closed straight away, so a CLI that reads stdin gets an instruction
+        # and an EOF rather than waiting for a terminal that is not there.
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        os.set_blocking(self.proc.stdout.fileno(), False)
+
+    def kill(self, why):
+        if self.proc and self.proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            # A SIGTERM an agent chooses to ignore is not a stop, so the group
+            # gets a second, unignorable one shortly after.
+            deadline = time.time() + 1.5
+            while self.proc.poll() is None and time.time() < deadline:
+                time.sleep(0.05)
+            if self.proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        if self.turn.state == "running":
+            self.turn.state = "stopped"
+            self.turn.note = why
+            self.turn.finished = time.time()
+            self.close_open_steps()
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def close_open_steps(self):
+        for entry in self.steps_open():
+            entry["state"] = "did"
+
+    def steps_open(self):
+        return [e for e in self.turn.steps if e["state"] == "doing"]
+
+    # ----- reading the stream
+
+    def drain(self):
+        """Everything readable right now. Returns True if anything changed."""
+        changed = False
+        while True:
+            try:
+                chunk = self.proc.stdout.read(65536)
+            except (BlockingIOError, InterruptedError):
+                break
+            except (ValueError, OSError):
+                break
+            if not chunk:
+                break
+            self.buf += chunk
+            changed = True
+        while b"\n" in self.buf:
+            line, self.buf = self.buf.split(b"\n", 1)
+            self.absorb(line.decode("utf-8", "replace"))
+        if not self.alive() and self.turn.state == "running":
+            if self.buf:
+                self.absorb(self.buf.decode("utf-8", "replace"))
+                self.buf = b""
+            code = self.proc.poll()
+            self.turn.finished = time.time()
+            self.close_open_steps()
+            if code == 0:
+                self.turn.state = "done"
+            else:
+                self.turn.state = "failed"
+                if not self.turn.note:
+                    self.turn.note = " ".join(self.noise) if self.noise \
+                        else "%s exited %s" % (self.agent["title"], code)
+            changed = True
+        return changed
+
+    def absorb(self, line):
+        if self.agent["stream"] == "claude":
+            self.absorb_claude(line)
+        else:
+            self.absorb_plain(line)
+
+    def absorb_plain(self, line):
+        """No step list, because these CLIs do not publish one this can read.
+        Their prose streams and the view says so, which is a smaller promise
+        honestly kept rather than a step list invented from log decoration."""
+        text = ANSI.sub("", line).rstrip()
+        if not text.strip():
+            return
+        self.turn.answer = (self.turn.answer + "\n" + text)[-MAX_ANSWER:]
+
+    def absorb_claude(self, line):
+        line = line.strip()
+        if not line:
+            return
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            # stderr is folded into the same pipe, so a line that is not an
+            # event is the CLI complaining. Kept, because a run that fails with
+            # an empty card and no reason is the worst thing this can do.
+            self.noise.append(short(ANSI.sub("", line), 200))
+            del self.noise[:-4]
+            return
+        if not isinstance(ev, dict):
+            return
+        kind = ev.get("type")
+
+        if kind == "system" and ev.get("subtype") == "init":
+            # Kept so the next sentence resumes this session rather than
+            # starting a conversation with somebody who has never met you.
+            if ev.get("session_id"):
+                self.session = str(ev["session_id"])
+            return
+
+        if kind == "assistant":
+            for part in (ev.get("message") or {}).get("content") or []:
+                if part.get("type") == "tool_use":
+                    self.step(part)
+                elif part.get("type") == "text" and part.get("text"):
+                    self.turn.answer = \
+                        (self.turn.answer + part["text"])[-MAX_ANSWER:]
+            return
+
+        if kind == "system" and ev.get("subtype") == "permission_denied":
+            # The refusals are the half of the transcript that has to be shown.
+            # An agent that quietly could not do the thing, and then wrote a
+            # paragraph about what it would have done, is how somebody comes to
+            # believe the launcher did something it did not.
+            entry = self.pending.pop(ev.get("tool_use_id"), None)
+            what = entry["text"] if entry else str(ev.get("tool_name") or "a tool")
+            if entry:
+                entry["state"] = "blocked"
+            self.turn.blocked.append(
+                {"text": what, "why": short(str(ev.get("message") or ""), 200)})
+            return
+
+        if kind == "user":
+            for part in (ev.get("message") or {}).get("content") or []:
+                if part.get("type") != "tool_result":
+                    continue
+                entry = self.pending.pop(part.get("tool_use_id"), None)
+                if not entry:
+                    continue
+                if entry["state"] == "blocked":
+                    continue
+                entry["state"] = "failed" if part.get("is_error") else "did"
+            return
+
+        if kind == "result":
+            text = ev.get("result")
+            if isinstance(text, str) and text.strip():
+                self.turn.answer = text[-MAX_ANSWER:]
+            if ev.get("subtype") not in (None, "success"):
+                self.turn.note = str(ev.get("subtype"))
+
+    def step(self, part):
+        name = str(part.get("name") or "")
+        inp = part.get("input") or {}
+        kind, text = describe(name, inp)
+        entry = {"kind": kind, "text": text, "state": "doing"}
+        self.turn.steps.append(entry)
+        del self.turn.steps[:-MAX_STEPS]
+        if part.get("id"):
+            self.pending[part["id"]] = entry
+
+
+def describe(name, inp):
+    """One tool call as one line somebody can read. A step list is only worth
+    drawing if each line says what happened to something nameable; "Bash" over
+    and over is a progress bar with extra steps."""
+    if name == "Read":
+        return "read", "Read " + tilde(str(inp.get("file_path") or ""))
+    if name == "Glob":
+        return "find", "Find " + short(inp.get("pattern") or "", 60)
+    if name == "Grep":
+        return "find", "Search " + short(inp.get("pattern") or "", 60)
+    if name in ("Write", "Edit", "NotebookEdit"):
+        return "write", "Write " + tilde(str(inp.get("file_path") or ""))
+    if name == "Skill":
+        return "think", "Read the " + short(inp.get("skill") or "", 40) + " skill"
+    if name == "Bash":
+        cmd = short(inp.get("command") or "", 90)
+        # `omacast-agent desk empty` reads as "empty", which says nothing. The
+        # verb and its argument are what happened, so they are what is shown.
+        if cmd.startswith("omacast-agent desk "):
+            return "desk", desk_line(cmd[len("omacast-agent desk "):])
+        if cmd.startswith("hyprctl"):
+            return "desk", cmd
+        return "shell", str(inp.get("description") or cmd)
+    if name == "WebFetch":
+        return "web", "Fetch " + short(inp.get("url") or "", 70)
+    if name == "WebSearch":
+        return "web", "Search the web for " + short(inp.get("query") or "", 60)
+    if name == "Task":
+        return "think", short(inp.get("description") or "Subagent", 70)
+    if name == "TodoWrite":
+        return "think", "Plan"
+    return "think", name or "step"
+
+
+def desk_line(rest):
+    parts = rest.split()
+    if not parts:
+        return "the desktop"
+    verb, arg = parts[0], " ".join(parts[1:])
+    words = {
+        "empty": "Go to an empty workspace",
+        "workspace": "Go to workspace " + arg,
+        "move": "Move this window to " + arg,
+        "open": "Open " + (arg or "an application"),
+        "tile": "Open " + arg.replace(" ", " × ", 1) if arg else "Tile",
+        "focus": "Focus " + arg,
+        "swap": "Swap " + arg,
+        "split": "Flip the split",
+        "float": "Float this window",
+        "fullscreen": "Fullscreen",
+        "close": "Close this window",
+        "list": "Look at the desktop",
+    }
+    return words.get(verb, rest)
+
+
+# ------------------------------------------------------------------ daemon
+
+class Daemon:
+    def __init__(self):
+        self.turns = []
+        self.run = None
+        self.session = ""
+        self.clients = {}          # conn -> {"buf":bytes,"epoch":int,"query":str}
+        self.last_touch = time.time()
+        self.listener = None
+        # An agent's stream is dozens of events a second, and every push makes
+        # the launcher rebuild its rows. Coalesced to four a second, which is
+        # already faster than anybody reads, with the end of a run always going
+        # out at once.
+        self.dirty = False
+        self.last_push = 0.0
+
+    def busy(self):
+        return self.run is not None and self.run.turn.state == "running"
+
+    def listen(self):
+        os.makedirs(STATE, exist_ok=True)
+        try:
+            os.unlink(SOCKET)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                raise
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(SOCKET)
+        os.chmod(SOCKET, 0o600)
+        self.listener.listen(8)
+        self.listener.setblocking(False)
+
+    def loop(self):
+        import select
+        while True:
+            rlist = [self.listener] + list(self.clients)
+            streaming = self.busy() and self.run.proc is not None
+            if streaming:
+                rlist.append(self.run.proc.stdout)
+            try:
+                ready, _, _ = select.select(rlist, [], [], 0.4)
+            except (InterruptedError, OSError):
+                ready = []
+
+            for r in ready:
+                if r is self.listener:
+                    self.accept()
+                elif streaming and r is self.run.proc.stdout:
+                    self.dirty = self.run.drain() or self.dirty
+                else:
+                    self.read(r)
+
+            if self.busy():
+                self.dirty = self.run.drain() or self.dirty
+                # Nobody is watching. Escape has its own command and does not
+                # wait for this; this is the launcher being closed or killed
+                # while a run is going, which must not leave an agent running
+                # with nowhere to show what it is doing.
+                if time.time() - self.run.seen > GRACE:
+                    self.run.kill("stopped: nothing was watching it")
+                    self.dirty = True
+            elif self.run is not None and self.run.session:
+                self.session = self.run.session
+
+            if self.dirty and (time.time() - self.last_push >= 0.25
+                               or not self.busy()):
+                self.dirty = False
+                self.last_push = time.time()
+                self.push()
+
+            if not self.clients and not self.busy() \
+                    and time.time() - self.last_touch > IDLE_EXIT:
+                return
+
+    def accept(self):
+        try:
+            conn, _ = self.listener.accept()
+        except OSError:
+            return
+        conn.setblocking(False)
+        self.clients[conn] = {"buf": b"", "epoch": -1, "query": ""}
+        self.last_touch = time.time()
+
+    def drop(self, conn):
+        self.clients.pop(conn, None)
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+    def read(self, conn):
+        state = self.clients.get(conn)
+        if state is None:
+            return
+        try:
+            chunk = conn.recv(65536)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError:
+            return self.drop(conn)
+        if not chunk:
+            return self.drop(conn)
+        self.last_touch = time.time()
+        state["buf"] += chunk
+        while b"\n" in state["buf"]:
+            line, state["buf"] = state["buf"].split(b"\n", 1)
+            self.handle(conn, state, line.decode("utf-8", "replace"))
+
+    def send(self, conn, payload):
+        try:
+            conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        except OSError:
+            self.drop(conn)
+
+    def handle(self, conn, state, line):
+        line = line.strip()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(msg, dict):
+            return
+
+        control = msg.get("control")
+        if control == "send":
+            return self.send(conn, {"ok": self.start(msg.get("token"))})
+        if control == "stop":
+            if self.run:
+                self.run.kill("stopped")
+                self.push()
+            return self.send(conn, {"ok": True})
+        if control == "new":
+            if self.run:
+                self.run.kill("stopped")
+            self.turns = []
+            self.run = None
+            self.session = ""
+            self.push()
+            return self.send(conn, {"ok": True})
+        if control == "ping":
+            return self.send(conn, {"ok": True})
+
+        epoch = msg.get("epoch")
+        query = str(msg.get("query") or "")
+        if not isinstance(epoch, int):
+            return
+        state["epoch"] = epoch
+        state["query"] = query
+        # A question the launcher actually asked is the heartbeat. Refreshing it
+        # from `rows()` instead looked identical and was not: pushing an answer
+        # calls `rows()` too, so a run streaming output kept its own watchdog
+        # alive and nothing ever timed out.
+        if self.run:
+            self.run.seen = time.time()
+        self.send(conn, {"epoch": epoch, "query": query,
+                         "rows": self.rows(query)})
+
+    def transcript(self):
+        return [t.view() for t in self.turns[-MAX_TURNS:]]
+
+    def rows(self, query):
+        named, instruction = split_query(query)
+        agent = pick_agent(named)
+
+        if agent is None or agent.get("missing"):
+            return [missing_row(named or "", self.transcript())]
+
+        special = special_row(agent, instruction, self.transcript())
+        if special:
+            return [special]
+
+        if not instruction:
+            row = hint_row(agent, self.transcript())
+            if self.busy():
+                row["escExec"] = "omacast-agent stop"
+            return [row]
+
+        cwd = workdir()
+        token = token_for(agent["id"], instruction, cwd)
+        remember_preview(token, {"agent": agent["id"], "instruction": instruction,
+                                 "cwd": cwd, "at": int(time.time())})
+        return [draft_row(agent, instruction, cwd, token, self.transcript())]
+
+    def push(self):
+        """Rows go out without being asked for, which is what makes this stream
+        rather than poll. The epoch each client last sent is echoed back
+        unchanged, so an answer that arrives after the user moved on is dropped
+        by the launcher instead of repopulating the card."""
+        for conn, state in list(self.clients.items()):
+            if state["epoch"] < 0:
+                continue
+            self.send(conn, {"epoch": state["epoch"], "query": state["query"],
+                             "rows": self.rows(state["query"])})
+
+    def start(self, token):
+        entry = read_previews().get(str(token or ""))
+        if not entry:
+            # A token nobody previewed. This is the one place the "Enter runs
+            # what you were shown" promise is enforced, so it fails closed.
+            return False
+        agent = pick_agent(entry.get("agent"))
+        if agent is None or agent.get("missing"):
+            return False
+        if self.run:
+            # Sending while one is going replaces it. The alternative is a queue
+            # nobody can see, and a second Enter that appears to do nothing.
+            self.run.kill("replaced")
+            if self.run.session:
+                self.session = self.run.session
+
+        turn = Turn(len(self.turns), agent, entry["instruction"], entry["cwd"])
+        self.turns.append(turn)
+        del self.turns[:-MAX_TURNS]
+        self.run = Run(turn, resume=self.session if agent["id"] == "claude" else "")
+        try:
+            self.run.start()
+        except OSError as e:
+            turn.state = "failed"
+            turn.note = str(e)
+            turn.finished = time.time()
+        self.push()
+        return True
+
+
+# ----------------------------------------------------------------- clients
+
+def socket_alive():
+    if not os.path.exists(SOCKET):
+        return False
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(0.4)
+        s.connect(SOCKET)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+def talk(payload, timeout=2.0):
+    """One request, one line back. Used by `search` when the daemon happens to
+    be up, and by `send`/`stop`, which need it to be."""
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(SOCKET)
+        s.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        s.close()
+        return json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def ensure_daemon():
+    if socket_alive():
+        return True
+    devnull = open(os.devnull, "r+b")
+    subprocess.Popen([sys.executable, os.path.abspath(__file__), "serve"],
+                     stdin=devnull, stdout=devnull, stderr=devnull,
+                     start_new_session=True)
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        if socket_alive():
+            return True
+        time.sleep(0.08)
+    return False
+
+
+def local_rows(query):
+    """The answer with no daemon: the sentence read back, and nothing else,
+    because there is no conversation to show when nothing has ever run."""
+    named, instruction = split_query(query)
+    agent = pick_agent(named)
+    if agent is None or agent.get("missing"):
+        return [missing_row(named or "")]
+    special = special_row(agent, instruction, [])
+    if special:
+        return [special]
+    if not instruction:
+        return [hint_row(agent, [])]
+    cwd = workdir()
+    token = token_for(agent["id"], instruction, cwd)
+    remember_preview(token, {"agent": agent["id"], "instruction": instruction,
+                             "cwd": cwd, "at": int(time.time())})
+    return [draft_row(agent, instruction, cwd, token, [])]
+
+
+def cmd_search(query):
+    """The launcher's cheap path. It never starts an agent and never starts the
+    daemon: the whole cost of typing here is one row computed locally, or one
+    round trip when there is already a conversation to show."""
+    if socket_alive():
+        reply = talk({"epoch": 0, "query": query})
+        if reply and isinstance(reply.get("rows"), list):
+            print(json.dumps(reply["rows"]))
+            return 0
+    print(json.dumps(local_rows(query)))
+    return 0
+
+
+def cmd_send(token):
+    if not re.fullmatch(r"[0-9a-f]{16}", str(token or "")):
+        return 2
+    if not read_previews().get(token):
+        return 2
+    if not ensure_daemon():
+        return 1
+    reply = talk({"control": "send", "token": token}, timeout=6.0)
+    return 0 if (reply or {}).get("ok") else 1
+
+
+def cmd_stop():
+    if socket_alive():
+        talk({"control": "stop"})
+    return 0
+
+
+def cmd_new():
+    if socket_alive():
+        talk({"control": "new"})
+    return 0
+
+
+def cmd_term(token):
+    """The way out. Anything refused here is a thing somebody should be looking
+    at while it happens, so it goes to a terminal where the agent's own
+    permission prompts exist and a human answers them."""
+    entry = read_previews().get(str(token or ""))
+    if not entry:
+        return 2
+    agent = pick_agent(entry.get("agent"))
+    if agent is None or agent.get("missing"):
+        return 2
+    inner = {
+        "claude": ["claude", entry["instruction"]],
+        "codex": ["codex", entry["instruction"]],
+        "gemini": ["gemini", "-i", entry["instruction"]],
+    }.get(agent["id"], [agent["bin"], entry["instruction"]])
+    # `xdg-terminal-exec` first, and not `$TERMINAL`: on Omarchy that variable
+    # holds `xdg-terminal-exec` itself, which takes `--dir=` and a bare command
+    # rather than `--working-directory ... -e ...`, so the obvious spelling
+    # launched nothing at all and Ctrl+K did nothing visible.
+    if which("xdg-terminal-exec"):
+        cmd = ["xdg-terminal-exec", "--dir=" + entry["cwd"], "--hold", "--"] + inner
+    else:
+        term = which("alacritty") or which("ghostty") or which("foot") \
+            or which("kitty") or "xterm"
+        cmd = [term, "--working-directory", entry["cwd"], "-e"] + inner
+    subprocess.Popen(cmd, start_new_session=True)
+    return 0
+
+
+# ------------------------------------------------------- the desktop helper
+
+# Not a sandbox, and not the reason the agent cannot run hyprctl: it can. This
+# is here because Hyprland on this machine is configured in Lua, `hyprctl
+# dispatch workspace 9` is a syntax error under it, and the string forms that
+# do parse can return `ok` and do nothing. Every verb below is the dispatcher
+# spelled the way this compositor actually takes it, and `open` and `tile` wait
+# for windows to map, which is the difference between a reliable sequence and
+# four terminals racing each other into the wrong panes.
+DIRECTIONS = r"[lrud]"
+DESK_HELP = """omacast-agent desk <verb> [argument]
+
+  list                  every window, workspace and monitor, as JSON
+  empty                 go to the lowest workspace with nothing on it
+  workspace <name>      go to one: a number, a name, e+1, e-1, previous
+  move <name>           move the focused window to one
+  open <app>            launch an application and wait for its window
+  tile <n> [app]        open n of them, splitting the largest pane each time
+  focus <l|r|u|d>       move focus
+  swap <l|r|u|d>        swap the focused window with its neighbour
+  preselect <l|r|u|d>   put the next window on that side of this one
+  split                 flip the current split between rows and columns
+  float                 float or tile the focused window
+  fullscreen            fullscreen the focused window
+  close                 close the focused window
+
+Set OMACAST_DESK_DRY=1 to print what each would dispatch and change nothing."""
+
+
+def dry():
+    return os.environ.get("OMACAST_DESK_DRY") == "1"
+
+
+def dispatch(expr):
+    """One Lua dispatcher. The whole point of this file: `hyprctl dispatch`
+    wraps its argument as `return hl.dispatch(<argument>)`, so the argument is
+    Lua and the pre-Lua string forms are gone."""
+    if dry():
+        print("would dispatch: " + expr)
+        return 0
+    p = subprocess.run(["hyprctl", "dispatch", expr], capture_output=True,
+                       text=True)
+    out = (p.stdout or "").strip()
+    # hyprctl says `error: ...` on stdout and exits 0 for a dispatcher it could
+    # not run, so the exit status alone reports success for something that did
+    # nothing. A `warning:` is not the same thing and stays a success with its
+    # text kept, because the agent needs to read it.
+    if p.returncode != 0 or out.startswith("error"):
+        sys.stderr.write((out or p.stderr or "dispatch failed") + "\n")
+        return 1
+    print(out or "ok")
+    return 0
+
+
+def hypr_json(what):
+    try:
+        p = subprocess.run(["hyprctl", "-j", what], capture_output=True,
+                           text=True, timeout=4)
+        return json.loads(p.stdout)
+    except Exception:
+        return None
+
+
+def active_workspace_id():
+    ws = hypr_json("activeworkspace") or {}
+    return ws.get("id")
+
+
+def clients_on(workspace_id):
+    return [c for c in (hypr_json("clients") or [])
+            if c.get("mapped") and (c.get("workspace") or {}).get("id") == workspace_id]
+
+
+def named_workspace(wid):
+    """A named but empty workspace is somebody's plan for later, not scratch
+    space, so `empty` walks past it. Reading the same file the bar reads."""
+    path = os.path.expanduser("~/.config/omarchy/shell.json")
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except Exception:
+        return False
+
+    def walk(node):
+        if isinstance(node, dict):
+            names = node.get("names")
+            if isinstance(names, dict):
+                entry = names.get(str(wid))
+                if isinstance(entry, dict) and entry.get("label"):
+                    return True
+                if isinstance(entry, str) and entry:
+                    return True
+            return any(walk(v) for v in node.values())
+        if isinstance(node, list):
+            return any(walk(v) for v in node)
+        return False
+
+    return walk(data)
+
+
+def desk_empty():
+    busy = set()
+    for c in (hypr_json("clients") or []):
+        wid = (c.get("workspace") or {}).get("id")
+        if isinstance(wid, int):
+            busy.add(wid)
+    for wid in range(1, 11):
+        if wid in busy or named_workspace(wid):
+            continue
+        rc = dispatch('hl.dsp.focus({ workspace = %d })' % wid)
+        if rc == 0 and not dry():
+            print("workspace %d" % wid)
+        return rc
+    sys.stderr.write("every workspace from 1 to 10 is occupied or named\n")
+    return 1
+
+
+TERMINALS = ("alacritty", "ghostty", "foot", "kitty", "wezterm")
+
+
+def app_command(name):
+    """An application name, resolved to something that starts it. `omarchy
+    launch terminal` is preferred for a terminal because it opens in the active
+    terminal's directory, which is what a person means by "another one"."""
+    name = " ".join(str(name or "").split()).lower()
+    if not name:
+        return None
+    if name in ("terminal", "term", "console", "shell"):
+        if which("omarchy"):
+            return ["omarchy", "launch", "terminal"]
+        for cand in TERMINALS:
+            if which(cand):
+                return [cand]
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._+ -]{1,64}", name):
+        return None
+
+    entry = desktop_entry(name)
+    if entry:
+        if which("gtk-launch"):
+            return ["gtk-launch", os.path.basename(entry)]
+        if which("gio"):
+            return ["gio", "launch", entry]
+    if which(name):
+        return [name]
+    return None
+
+
+def desktop_entry(name):
+    roots = [os.path.expanduser("~/.local/share/applications")] + [
+        os.path.join(d, "applications")
+        for d in (os.environ.get("XDG_DATA_DIRS")
+                  or "/usr/local/share:/usr/share").split(":")]
+    for root in roots:
+        path = os.path.join(root, name + ".desktop")
+        if os.path.isfile(path):
+            return path
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for f in sorted(os.listdir(root)):
+            if f.endswith(".desktop") and name in f.lower():
+                return os.path.join(root, f)
+    return None
+
+
+def desk_open(name, quiet=False):
+    """Launch, and wait for the window. Returning before the window exists is
+    what turns a sequence of these into a race: the next split happens against
+    a pane that has not appeared yet."""
+    cmd = app_command(name)
+    if not cmd:
+        sys.stderr.write("no application called %r\n" % name)
+        return 2
+    if dry():
+        print("would launch: " + " ".join(cmd))
+        return 0
+
+    wid = active_workspace_id()
+    before = {c["address"] for c in clients_on(wid)}
+    try:
+        subprocess.Popen(cmd, start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        sys.stderr.write(str(e) + "\n")
+        return 1
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        time.sleep(0.15)
+        now = clients_on(wid)
+        fresh = [c for c in now if c["address"] not in before]
+        if fresh:
+            if not quiet:
+                print("opened %s (%d on workspace %s)"
+                      % (name, len(now), wid))
+            return 0
+    sys.stderr.write("launched %s and no window appeared within 8s\n" % name)
+    return 1
+
+
+def desk_tile(count, name):
+    """n windows, as square as this layout gets. Before each one after the
+    first, focus goes to the pane with the most area, so the split always cuts
+    the biggest thing on screen: four terminals come out two by two rather than
+    one wide column beside three stacked slivers."""
+    try:
+        count = int(count)
+    except ValueError:
+        sys.stderr.write("tile takes a number\n")
+        return 2
+    if not 1 <= count <= 8:
+        sys.stderr.write("tile takes 1 to 8\n")
+        return 2
+
+    for i in range(count):
+        if i:
+            wid = active_workspace_id()
+            here = clients_on(wid)
+            if here:
+                biggest = max(here, key=lambda c: (c.get("size") or [0, 0])[0]
+                              * (c.get("size") or [0, 0])[1])
+                rc = dispatch('hl.dsp.focus({ window = "address:%s" })'
+                              % biggest["address"])
+                if rc != 0:
+                    return rc
+        rc = desk_open(name, quiet=True)
+        if rc != 0:
+            return rc
+    if dry():
+        return 0
+    print("%d %s on workspace %s" % (count, name, active_workspace_id()))
+    return 0
+
+
+def cmd_desk(args):
+    if not args or args[0] in ("help", "-h", "--help"):
+        print(DESK_HELP)
+        return 0
+    verb, rest = args[0], args[1:]
+    arg = " ".join(rest).strip()
+
+    if verb == "list":
+        out = {}
+        for what in ("clients", "workspaces", "monitors", "activewindow"):
+            out[what] = hypr_json(what)
+        print(json.dumps(out, indent=1)[:20000])
+        return 0
+
+    if verb == "empty":
+        return desk_empty()
+    if verb == "open":
+        return desk_open(arg)
+    if verb == "tile":
+        parts = rest or ["2"]
+        return desk_tile(parts[0], " ".join(parts[1:]) or "terminal")
+
+    if verb == "workspace":
+        if not re.fullmatch(r"[A-Za-z0-9_:+-]{1,32}", arg):
+            return usage("workspace takes a number, a name, e+1, e-1 or previous")
+        return dispatch('hl.dsp.focus({ workspace = "%s" })' % arg)
+    if verb == "move":
+        if not re.fullmatch(r"[A-Za-z0-9_:+-]{1,32}", arg):
+            return usage("move takes a workspace")
+        return dispatch('hl.dsp.window.move({ workspace = "%s" })' % arg)
+    if verb == "focus":
+        if not re.fullmatch(DIRECTIONS, arg):
+            return usage("focus takes l, r, u or d")
+        return dispatch('hl.dsp.focus({ direction = "%s" })' % arg)
+    if verb == "swap":
+        if not re.fullmatch(DIRECTIONS, arg):
+            return usage("swap takes l, r, u or d")
+        return dispatch('hl.dsp.window.swap({ direction = "%s" })' % arg)
+    if verb == "preselect":
+        if not re.fullmatch(DIRECTIONS, arg):
+            return usage("preselect takes l, r, u or d")
+        return dispatch('hl.dsp.layout("preselect %s")' % arg)
+    if verb == "split":
+        return dispatch('hl.dsp.layout("togglesplit")')
+    if verb == "float":
+        return dispatch('hl.dsp.window.float({ action = "toggle" })')
+    if verb == "fullscreen":
+        return dispatch('hl.dsp.window.fullscreen({ mode = "fullscreen" })')
+    if verb == "close":
+        return dispatch('hl.dsp.window.close()')
+
+    return usage("no such verb %r. `omacast-agent desk help`" % verb)
+
+
+def usage(message):
+    sys.stderr.write(message + "\n")
+    return 2
+
+
+# -------------------------------------------------------------------- main
+
+def main(argv):
+    if len(argv) < 2:
+        return cmd_search("")
+    verb = argv[1]
+    if verb == "search":
+        return cmd_search(" ".join(argv[2:]))
+    if verb == "serve":
+        # So a SIGTERM runs the cleanup below rather than skipping it: a daemon
+        # killed without unlinking its socket leaves a path that accepts nothing,
+        # and the launcher then waits out a connect on every keystroke.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        d = Daemon()
+        d.listen()
+        try:
+            d.loop()
+        finally:
+            if d.run:
+                d.run.kill("daemon exiting")
+            try:
+                os.unlink(SOCKET)
+            except OSError:
+                pass
+        return 0
+    if verb == "send":
+        return cmd_send(argv[2] if len(argv) > 2 else "")
+    if verb == "stop":
+        return cmd_stop()
+    if verb == "new":
+        return cmd_new()
+    if verb == "term":
+        return cmd_term(argv[2] if len(argv) > 2 else "")
+    if verb == "desk":
+        return cmd_desk(argv[2:])
+    if verb == "agents":
+        for a in AGENTS:
+            print("%-8s %s" % (a["id"], which(a["bin"]) or "not installed"))
+        return 0
+    return cmd_search(" ".join(argv[1:]))
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        sys.exit(0)
