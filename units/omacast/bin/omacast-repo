@@ -391,17 +391,8 @@ while IFS=$'\t' read -r score touched repo gitdir; do
             { title: "Open Terminal Here", exec: $term }
           ]
           + (if $web == "" then [] else
-               [{ title: "Open Remote in Browser",
+               [{ title: "Open on GitHub",
                   exec: ("omarchy-launch-browser " + ($web | @sh)) }] end)
-          + [
-            { title: "Copy Path", exec: $copypath },
-            { title: "Recent Commits", exec: $log }
-          ]
-          + (if $clone == "" then [] else
-               [{ title: "Copy Clone URL",
-                  exec: ("printf %s " + ($clone | @sh) + " | wl-copy") }] end)
-          + (if $slug == "" then [] else
-               [{ title: "Pull Requests", exec: "true", query: ("pr:" + $slug) }] end)
           + [{ title: "Pin for git:", exec: $pin }]
         )
       }'

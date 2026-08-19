@@ -1,0 +1,39 @@
+[
+  {
+    "why": "a repo opens in the editor, which is what you do with a repo",
+    "query": "omar",
+    "minRows": 1,
+    "row": 0,
+    "fields": [
+      "title",
+      "detail",
+      "subtitle"
+    ],
+    "matches": {
+      "exec": "editor|zeditor|code"
+    }
+  },
+  {
+    "why": "four actions, not eight: three of the old ones were questions git: answers better",
+    "query": "omar",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "actions": "Pin for git:"
+    }
+  },
+  {
+    "why": "the branch and how far ahead it is, because that is why you looked",
+    "query": "omar",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "subtitle": "^[a-zA-Z0-9._/-]+"
+    }
+  },
+  {
+    "why": "a name that matches nothing answers nothing",
+    "query": "zzznosuchrepo",
+    "maxRows": 0
+  }
+]

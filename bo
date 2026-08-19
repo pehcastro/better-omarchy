@@ -1671,6 +1671,16 @@ for case in cases:
         if row.get(field) not in (None, "", [], {}):
             failures.append((case, "row %d still carries %s" % (index, field)))
             bad = True
+    # How many, when the field is a list. Counting through a regex on the
+    # serialised list was the first attempt and it measured exec string length,
+    # which is not what "no more than three actions" means.
+    for field, limit in (case.get("atMost") or {}).items():
+        value = row.get(field)
+        if isinstance(value, (list, dict)) and len(value) > limit:
+            failures.append((case, "row %d has %d %s, wanted at most %d"
+                             % (index, len(value), field, limit)))
+            bad = True
+
     for field, pattern in (case.get("matches") or {}).items():
         value = str(row.get(field, ""))
         if not re.search(pattern, value):

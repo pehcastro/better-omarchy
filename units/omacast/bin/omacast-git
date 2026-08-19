@@ -103,11 +103,12 @@ summary=$(
   printf '%s' "${parts[*]}"
 )
 
-emit "status" "$summary" "$display" "$name" "" "Status" "Open Terminal Here" \
-  "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
+# The row says what changed, so Enter shows what changed. Opening a terminal was
+# the primary here, which answers a question nobody asked by typing `git:`.
+emit "status" "$summary" "$display" "$name" "" "Status" "Show Diff" \
+  "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted diff" \
   "$(jq -cn --arg q "$quoted" '[
-       { title: "Show Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " diff") },
-       { title: "Show Staged Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " diff --cached") },
+       { title: "Open Terminal Here", exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $q) },
        { title: "Full Status", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " status") }
      ]')"
 
@@ -130,11 +131,13 @@ emit "branch" "$branch" "$track" "$name" "" "Branch" "Copy Branch Name" \
 
 while IFS=$'\t' read -r hash subject author ts; do
   [[ -n $hash ]] || continue
+  # Reading the commit is why you looked at it. Copying the hash is what you do
+  # after deciding, so it comes second.
   emit "commit:$hash" "$subject" "$author" "$hash" "$(short_age $((now - ts)))" \
-    "Recent Commits" "Copy Hash" \
-    "printf %s $hash | wl-copy" \
-    "$(jq -cn --arg h "$hash" --arg q "$quoted" '[
-         { title: "Show Commit", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " show " + ($h | @sh)) }
+    "Recent Commits" "Show Commit" \
+    "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted show $hash" \
+    "$(jq -cn --arg h "$hash" '[
+         { title: "Copy Hash", exec: ("printf %s " + ($h | @sh) + " | wl-copy") }
        ]')"
 done < <(git -C "$repo" --no-optional-locks log -8 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null)
 
@@ -176,8 +179,15 @@ done < <(git -C "$repo" --no-optional-locks stash list --format=$'%gd\t%gs\t%ct'
 
 remote=$(git -C "$repo" --no-optional-locks remote get-url origin 2>/dev/null)
 if [[ -n ${remote:-} ]]; then
-  emit "remote" "$remote" "origin" "remote" "" "Remote" "Copy Remote URL" \
-    "printf %s $(printf '%q' "$remote") | wl-copy" "[]"
+  web="$remote"
+  [[ $web == git@*:* ]] && web="https://${web#git@}" && web="${web/://}"
+  web="${web%.git}"
+
+  emit "remote" "$remote" "origin" "remote" "" "Remote" "Open on GitHub" \
+    "omarchy-launch-browser $(printf '%q' "$web")" \
+    "$(jq -cn --arg u "$remote" '[
+         { title: "Copy Remote URL", exec: ("printf %s " + ($u | @sh) + " | wl-copy") }
+       ]')"
 fi
 
 # What GitHub knows about this repo
