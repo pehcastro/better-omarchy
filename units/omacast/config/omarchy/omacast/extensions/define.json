@@ -1,0 +1,21 @@
+{
+  "id": "def",
+  "title": "Dictionary",
+  "keyword": "def",
+  "aliases": [
+    "define",
+    "dict",
+    "syn",
+    "word"
+  ],
+  "subtitle": "Dictionary",
+  "glyph": "",
+  "search": "omacast-define {query}",
+  "when": "command -v curl",
+  "minChars": 2,
+  "debounceMs": 320,
+  "timeoutMs": 7000,
+  "maxRows": 12,
+  "tier": "prefix",
+  "view": "split"
+}

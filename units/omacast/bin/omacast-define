@@ -1,0 +1,154 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `def:` keyword: a dictionary and a thesaurus.
+#
+#   def:ephemeral     every sense, by part of speech, with synonyms
+#   def:set           the long ones too, because the pane can hold them
+#
+# There is no offline dictionary on an Omarchy box. `dict` is not installed and
+# /usr/share/dict/words is a symlink to cracklib-small, which is a spellcheck
+# wordlist with no definitions in it at all, so an offline answer would have to
+# ship a dictionary inside this unit. api.dictionaryapi.dev is keyless, wants
+# no account, and was checked with curl before this was written.
+#
+# The view is `split` because a definition is a paragraph. In a list every row
+# would elide at the same width and every sense of "set" would read alike; on
+# the right there is room for the sense, the example and the synonyms at once.
+#
+# Answers are cached under ~/.cache/omacast/define, because a word means the
+# same thing tomorrow and typing is one request per keystroke otherwise.
+
+set -uo pipefail
+
+query="${1:-}"
+[[ -z $query ]] && exit 0
+
+command -v curl >/dev/null || exit 0
+command -v jq >/dev/null || exit 0
+
+word="${query#"${query%%[![:space:]]*}"}"
+word="${word%"${word##*[![:space:]]}"}"
+# Only the first word: "def:ephemeral thing" is a word plus a typo, not a
+# phrase the dictionary has an entry for.
+word="${word%% *}"
+[[ ${#word} -lt 2 ]] && exit 0
+
+# A word, not a path and not a query string. Anything else is either a typo in
+# progress or an attempt to build a URL out of the search box.
+[[ $word =~ ^[A-Za-z][A-Za-z\'-]*$ ]] || exit 0
+
+lower="${word,,}"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/define"
+cache="$cache_dir/$lower.json"
+
+body=""
+if [[ -f $cache ]] && [[ -z $(find "$cache" -mtime +30 -print -quit 2>/dev/null) ]]; then
+  body=$(<"$cache")
+fi
+
+if [[ -z $body ]]; then
+  body=$(curl -sS --max-time 6 --compressed \
+    "https://api.dictionaryapi.dev/api/v2/entries/en/$lower" 2>/dev/null)
+  # Only a real answer is worth keeping. A timeout cached for a month is worse
+  # than no cache at all.
+  if [[ -n $body ]] && jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
+    mkdir -p "$cache_dir" 2>/dev/null && printf '%s' "$body" >"$cache" 2>/dev/null
+  fi
+fi
+
+[[ -z $body ]] && exit 0
+
+# Not an array means the API's "no definitions found" object, which is the one
+# case worth answering out loud: silence here reads as a broken keyword.
+if ! jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
+  jq -cn --arg w "$word" \
+    --arg e "xdg-open $(printf '%q' "https://www.google.com/search?q=define+$lower")" \
+    '{id: "def-none", title: ("No definition for \"" + $w + "\""),
+      subtitle: "Dictionary", detail: "Enter searches the web instead",
+      preview: ("No dictionary entry for \"" + $w + "\".\n\nEnter searches the web for it."),
+      exec: $e, score: 90000, view: "split", glyph: "",
+      actions: [{ title: "Search the Web", shortcut: "↵", exec: $e }]}'
+  exit 0
+fi
+
+jq -c '
+  # The API repeats a meaning-level synonym list on every definition under it,
+  # so the two are merged and deduplicated rather than shown twice.
+  def joinlist: map(select(. != null and . != "")) | unique | join(", ");
+
+  [ .[]
+    | . as $entry
+    | ($entry.word // "") as $word
+    | (($entry.phonetic // "")
+       | if . == "" then
+           (($entry.phonetics // []) | map(.text // "") | map(select(. != "")) | first // "")
+         else . end) as $ipa
+    | ($entry.meanings // [])[]
+    | . as $meaning
+    | ($meaning.partOfSpeech // "") as $pos
+    | ($meaning.definitions // [])
+    | to_entries[]
+    | { word: $word,
+        ipa: $ipa,
+        pos: $pos,
+        sense: (.key + 1),
+        senses: 0,
+        text: (.value.definition // ""),
+        example: (.value.example // ""),
+        syn: (((.value.synonyms // []) + ($meaning.synonyms // [])) | joinlist),
+        ant: (((.value.antonyms // []) + ($meaning.antonyms // [])) | joinlist) }
+    | select(.text != "")
+  ] as $rows
+
+  | ([ $rows[] | .syn | select(. != "") ] | join(", ") | split(", ") | unique | join(", ")) as $all_syn
+
+  | ($rows | to_entries | map(
+      .key as $i
+      | .value
+      | (.word + "  ·  " + .pos + (if .sense > 1 then "  " + (.sense | tostring) else "" end)) as $title
+      | ([ .word,
+           (if .ipa != "" then .ipa else empty end),
+           .pos ] | join("   ")) as $head
+      | ([ $head,
+           "",
+           .text,
+           (if .example != "" then "\n“" + .example + "”" else empty end),
+           (if .syn != "" then "\nSynonyms: " + .syn else empty end),
+           (if .ant != "" then "Antonyms: " + .ant else empty end) ]
+         | join("\n")) as $preview
+      | ("printf %s " + (.text | @sh) + " | wl-copy") as $copy
+      | { id: ("def-" + (.pos) + "-" + ($i | tostring)),
+          title: $title,
+          subtitle: .text,
+          detail: (if .syn != "" then "syn. " + .syn else .pos end),
+          preview: $preview,
+          exec: $copy,
+          score: (95000 - $i * 100),
+          view: "split",
+          glyph: "",
+          actions: [
+            { title: "Copy Definition", shortcut: "↵", exec: $copy },
+            { title: "Copy Word", exec: ("printf %s " + (.word | @sh) + " | wl-copy") },
+            { title: "Copy Sense", exec: ("printf %s " + ((.word + " (" + .pos + "): " + .text) | @sh) + " | wl-copy") }
+          ] + (if .syn != "" then
+                 [{ title: "Copy Synonyms", exec: ("printf %s " + (.syn | @sh) + " | wl-copy") }]
+               else [] end) }
+    )) as $out
+
+  # One thesaurus row at the end, gathering every synonym the entry carries.
+  # It is last because a definition is what `def:` was typed for.
+  | $out + (if $all_syn != "" then
+      [{ id: "def-synonyms",
+         title: (($rows[0].word) + "  ·  synonyms"),
+         subtitle: $all_syn,
+         detail: "Thesaurus",
+         preview: ("Synonyms for " + ($rows[0].word) + "\n\n" + ($all_syn | gsub(", "; "\n"))),
+         exec: ("printf %s " + ($all_syn | @sh) + " | wl-copy"),
+         score: 80000,
+         view: "split",
+         glyph: "",
+         actions: [{ title: "Copy Synonyms", shortcut: "↵", exec: ("printf %s " + ($all_syn | @sh) + " | wl-copy") }] }]
+    else [] end)
+  | .[]
+' <<<"$body" 2>/dev/null
+
+exit 0

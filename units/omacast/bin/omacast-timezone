@@ -1,0 +1,439 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `tz:` keyword: what time it is somewhere else,
+# and what a time here is there.
+#
+#   tz:                       every zone you configured, plus your own
+#   tz:tokyo                  what time it is there now
+#   tz:3pm tokyo              3pm here, read there, and in every configured zone
+#   tz:9am tokyo in london    between two named zones, neither of them yours
+#   tz:<t:1735689600:F>       a Discord timestamp, in every configured zone
+#   tz:1735689600             a bare unix timestamp, the same way
+#
+# Zones come from `timezones` in ~/.config/omarchy/omacast.json, a list of
+# { "label": "Ana", "zone": "Europe/Lisbon" }. The label is what you type and
+# what you read, so a zone can be a person rather than a city, which is what
+# anyone actually wants from this.
+#
+# Every resolved time can be copied back out as a Discord timestamp in all nine
+# of its styles, because the whole reason to work out that 3pm is 9pm for
+# somebody else is usually to then tell them so.
+#
+# The day is shown whenever it differs from yours. That is the thing people get
+# wrong, and a bare "09:00" hides it completely.
+
+set -uo pipefail
+
+query="${1:-}"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast.json"
+
+command -v jq >/dev/null || exit 0
+
+local_zone=$(timedatectl show -p Timezone --value 2>/dev/null)
+[[ -z $local_zone ]] && local_zone=$(readlink -f /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')
+[[ -z $local_zone ]] && local_zone="UTC"
+
+# The configured zones, in the order they were written. Order is a choice the
+# user made, so it is not re-sorted here.
+labels=()
+zones=()
+if [[ -f $config ]]; then
+  while IFS=$'\t' read -r label zone; do
+    [[ -z $zone ]] && continue
+    [[ -e "/usr/share/zoneinfo/$zone" ]] || continue
+    labels+=("$label")
+    zones+=("$zone")
+  done < <(jq -r '(.timezones // [])[]? | select(.zone) | "\(.label // .zone)\t\(.zone)"' "$config" 2>/dev/null)
+fi
+
+# A default set that covers the zones a working day usually crosses. Anyone who
+# cares replaces it; anyone who does not still gets a useful `tz:`.
+if ((${#zones[@]} == 0)); then
+  labels=("UTC" "San Francisco" "New York" "London" "Berlin" "Tokyo")
+  zones=("UTC" "America/Los_Angeles" "America/New_York" "Europe/London" "Europe/Berlin" "Asia/Tokyo")
+fi
+
+ALL_ZONES=""
+load_zones() {
+  [[ -n $ALL_ZONES ]] && return 0
+  ALL_ZONES=$(timedatectl list-timezones --no-pager 2>/dev/null)
+  [[ -z $ALL_ZONES ]] && ALL_ZONES=$(find /usr/share/zoneinfo/posix -type f -printf '%P\n' 2>/dev/null)
+  [[ -n $ALL_ZONES ]]
+}
+
+# A zone name, loosely. The IANA list spells cities in full and with
+# underscores, and nobody types "America/Sao_Paulo" into a launcher.
+resolve_zone() {
+  local needle="${1,,}"
+  needle="${needle//[[:space:]]/_}"
+  needle="${needle//-/_}"
+  needle="${needle#/}"
+  [[ -z $needle ]] && return 1
+
+  local i label
+  # A configured label wins outright: naming a zone after a person is only
+  # worth doing if typing the person finds it.
+  for i in "${!zones[@]}"; do
+    label="${labels[$i],,}"
+    label="${label//[[:space:]]/_}"
+    [[ $label == "$needle" ]] && { printf '%s' "${zones[$i]}"; return 0; }
+  done
+  for i in "${!zones[@]}"; do
+    label="${labels[$i],,}"
+    label="${label//[[:space:]]/_}"
+    [[ $label == "$needle"* ]] && { printf '%s' "${zones[$i]}"; return 0; }
+  done
+
+  # Abbreviations that are not in the IANA list at all, and the handful of
+  # city nicknames that are shorter than the initials rule below.
+  case $needle in
+    utc|gmt|z|zulu) printf 'UTC'; return 0 ;;
+    est|edt|et|nyc) printf 'America/New_York'; return 0 ;;
+    pst|pdt|pt|sf|bayarea|cali) printf 'America/Los_Angeles'; return 0 ;;
+    cst|cdt|ct) printf 'America/Chicago'; return 0 ;;
+    mst|mdt|mt) printf 'America/Denver'; return 0 ;;
+    cet|cest) printf 'Europe/Berlin'; return 0 ;;
+    bst|uk|gb|england) printf 'Europe/London'; return 0 ;;
+    ist|india) printf 'Asia/Kolkata'; return 0 ;;
+    jst|japan) printf 'Asia/Tokyo'; return 0 ;;
+    kst|korea) printf 'Asia/Seoul'; return 0 ;;
+    aest|aedt|sydney_time) printf 'Australia/Sydney'; return 0 ;;
+    brt|brasilia|brazil) printf 'America/Sao_Paulo'; return 0 ;;
+    pt_pt|portugal) printf 'Europe/Lisbon'; return 0 ;;
+    here|me|local|home) printf '%s' "$local_zone"; return 0 ;;
+  esac
+
+  load_zones || return 1
+
+  local hit
+  hit=$(awk -v n="$needle" '
+    {
+      z = $0
+      lz = tolower(z)
+      city = lz
+      sub(/.*\//, "", city)
+      squash = city
+      gsub(/_/, "", squash)
+
+      # The initials of a multi-word city: "sp" for Sao_Paulo, "ny" for
+      # New_York, "la" for Los_Angeles. This is how people abbreviate cities
+      # out loud, so it ranks above a plain substring hit.
+      ini = ""
+      parts_n = split(city, parts, "_")
+      for (i = 1; i <= parts_n; i++) ini = ini substr(parts[i], 1, 1)
+
+      s = 0
+      if (lz == n) s = 100
+      else if (city == n) s = 90
+      else if (squash == n) s = 85
+      else if (length(n) >= 2 && ini == n) s = 80
+      else if (index(city, n) == 1) s = 70
+      else if (index(squash, n) == 1) s = 65
+      else if (index(city, n) > 0) s = 45
+      else if (index(lz, n) > 0) s = 30
+
+      # A shorter name breaks a tie, which keeps Asia/Tokyo ahead of anything
+      # that merely contains it.
+      if (s > 0) printf "%d\t%d\t%s\n", s, -length(z), z
+    }' <<<"$ALL_ZONES" | sort -t$'\t' -k1,1nr -k2,2nr | head -1 | cut -f3)
+
+  [[ -z $hit ]] && return 1
+  printf '%s' "$hit"
+}
+
+# What to call a zone. A configured label wins, so somebody who named a zone
+# after a person reads the person back rather than the nearest capital.
+label_for_zone() {
+  local zone="$1" i
+  for i in "${!zones[@]}"; do
+    [[ ${zones[$i]} == "$zone" ]] && { printf '%s' "${labels[$i]}"; return 0; }
+  done
+  printf '%s' "${zone##*/}" | tr '_' ' '
+}
+
+looks_like_time() {
+  local s="${1,,}"
+  [[ $s =~ ^(now|noon|midnight|midday)$ ]] && return 0
+  [[ $s =~ ^((today|tomorrow|yesterday)[[:space:]]+)?[0-9]{1,2}([:.h][0-9]{2})?(:[0-9]{2})?([[:space:]]*(am|pm))?$ ]] && return 0
+  return 1
+}
+
+# `date -d` reads "noon" as nothing and "3" as the third of the month, so the
+# two forms people type most both need translating before it sees them.
+normalize_time() {
+  local s="${1,,}"
+  case $s in
+    noon | midday) printf '12:00'; return 0 ;;
+    midnight) printf '00:00'; return 0 ;;
+    now) printf 'now'; return 0 ;;
+  esac
+  # "15.30" and "15h30" are the same time as "15:30" to everyone except `date`.
+  s="${s//./:}"
+  s="${s//h/:}"
+  s="${s%:}"
+  if [[ $s =~ ^([0-9]{1,2})[[:space:]]*(am|pm)?$ ]]; then
+    s="${BASH_REMATCH[1]}:00"
+    [[ -n ${BASH_REMATCH[2]} ]] && s="$s ${BASH_REMATCH[2]}"
+  fi
+  printf '%s' "$s"
+}
+
+time_text=""
+src_zone=""
+
+# Splits "9am tokyo" into a time and the zone it is in. Walking the split point
+# from the left means the shortest time wins, so "9 am tokyo" reads as 9am
+# rather than as the 9th.
+parse_when() {
+  local text="$1" found=""
+  time_text=""
+  src_zone=""
+  [[ -z $text ]] && return 0
+
+  if ! looks_like_time "$text"; then
+    found=$(resolve_zone "$text") && { src_zone="$found"; return 0; }
+  fi
+  if looks_like_time "$text"; then
+    time_text="$text"
+    return 0
+  fi
+
+  local -a words=()
+  read -ra words <<<"$text"
+  local i n=${#words[@]} left right
+  for ((i = 1; i < n; i++)); do
+    left="${words[*]:0:i}"
+    right="${words[*]:i}"
+    looks_like_time "$left" || continue
+    found=$(resolve_zone "$right") || continue
+    time_text="$left"
+    src_zone="$found"
+    return 0
+  done
+  return 1
+}
+
+fail_row() {
+  jq -cn --arg t "$1" --arg d "$2" \
+    '{id: "tz-none", title: $t, subtitle: "Timezone", detail: $d,
+      exec: "", score: 90000, view: "list", glyph: ""}'
+  exit 0
+}
+
+# Offset in minutes east of UTC, at the instant in question, so a DST boundary
+# between now and then is accounted for rather than assumed away.
+offset_minutes() {
+  local zone="$1" stamp="$2" raw sign hh mm
+  raw=$(TZ="$zone" date -d "@$stamp" +%z 2>/dev/null) || return 1
+  sign="${raw:0:1}"
+  hh="${raw:1:2}"
+  mm="${raw:3:2}"
+  local total=$((10#$hh * 60 + 10#$mm))
+  [[ $sign == "-" ]] && total=$((-total))
+  printf '%s' "$total"
+}
+
+describe_shift() {
+  local delta="$1"
+  ((delta == 0)) && { printf 'same time'; return 0; }
+  local word="ahead" abs=$delta
+  ((delta < 0)) && { word="behind"; abs=$((-delta)); }
+  local h=$((abs / 60)) m=$((abs % 60))
+  if ((m == 0)); then
+    printf '%dh %s' "$h" "$word"
+  elif ((h == 0)); then
+    printf '%dm %s' "$m" "$word"
+  else
+    printf '%dh%02d %s' "$h" "$m" "$word"
+  fi
+}
+
+# Discord renders <t:UNIX:STYLE> in the reader's own zone and locale, which is
+# exactly the problem this script solves in the other direction. All nine
+# styles are offered because the useful one depends on the sentence.
+discord_actions() {
+  local stamp="$1"
+  jq -n --arg u "$stamp" '
+    [
+      { style: "F", name: "Full Date and Time" },
+      { style: "f", name: "Date and Time" },
+      { style: "R", name: "Relative" },
+      { style: "t", name: "Time" },
+      { style: "T", name: "Time with Seconds" },
+      { style: "D", name: "Long Date" },
+      { style: "d", name: "Short Date" },
+      { style: "s", name: "Short Date and Time" },
+      { style: "S", name: "Short Date and Time with Seconds" }
+    ]
+    | map({
+        title: ("Copy Discord " + .name + " (" + .style + ")"),
+        exec: ("printf %s " + ("<t:" + $u + ":" + .style + ">" | @sh) + " | wl-copy")
+      })'
+}
+
+# One zone at one instant. `hero` is for the single conversion that is the
+# whole question; `list` is for the column of zones underneath it.
+zone_row() {
+  local id="$1" label="$2" zone="$3" stamp="$4" score="$5" view="$6" origin="$7"
+
+  local clock day pretty abbr
+  clock=$(TZ="$zone" date -d "@$stamp" '+%H:%M') || return 0
+  day=$(TZ="$zone" date -d "@$stamp" '+%Y-%m-%d')
+  pretty=$(TZ="$zone" date -d "@$stamp" '+%a %-d %b')
+  abbr=$(TZ="$zone" date -d "@$stamp" '+%Z')
+
+  local local_day
+  local_day=$(TZ="$local_zone" date -d "@$stamp" '+%Y-%m-%d')
+
+  local day_diff=$(( ($(date -d "$day" +%s) - $(date -d "$local_day" +%s)) / 86400 ))
+  local day_word="" day_phrase=""
+  case $day_diff in
+    0) day_word="" ;;
+    1) day_word="Tomorrow"; day_phrase="already tomorrow" ;;
+    -1) day_word="Yesterday"; day_phrase="still yesterday" ;;
+    *) if ((day_diff > 0)); then
+         day_word="+$day_diff days"; day_phrase="$day_diff days ahead of you"
+       else
+         day_word="$day_diff days"; day_phrase="$((-day_diff)) days behind you"
+       fi ;;
+  esac
+
+  # "UTC · UTC" says nothing twice. The abbreviation earns its place only when
+  # it is not just the zone name again.
+  local zone_tail="${zone##*/}"
+  [[ $abbr == "$zone_tail" ]] && abbr=""
+
+  local shift="Local"
+  if [[ $zone != "$local_zone" ]]; then
+    local here there
+    here=$(offset_minutes "$local_zone" "$stamp")
+    there=$(offset_minutes "$zone" "$stamp")
+    shift=$(describe_shift $((there - here)))
+  fi
+
+  local title detail subtitle accessory
+  if [[ $view == "hero" ]]; then
+    title="$clock"
+    subtitle=$(TZ="$zone" date -d "@$stamp" '+%A %-d %B')
+    [[ -n $day_phrase ]] && subtitle="$subtitle  ·  $day_phrase"
+    detail="$zone"
+    [[ $label != "$zone" ]] && detail="$label  ·  $zone"
+    [[ -n $abbr ]] && detail="$detail ($abbr)"
+    detail="$detail  ·  $shift"
+    [[ -n $origin ]] && detail="$detail  ·  from $origin"
+    accessory=""
+  else
+    title="$clock  ·  $label"
+    detail="$zone"
+    [[ -n $abbr ]] && detail="$detail  ·  $abbr"
+    [[ -n $day_word ]] && detail="$detail  ·  $pretty"
+    subtitle="$shift"
+    accessory="$day_word"
+  fi
+
+  jq -cn \
+    --arg id "$id" --arg t "$title" --arg s "$subtitle" --arg d "$detail" \
+    --arg a "$accessory" --arg v "$view" --argjson sc "$score" \
+    --arg copy "printf %s $(printf '%q' "$clock") | wl-copy" \
+    --arg full "printf %s $(printf '%q' "$(TZ="$zone" date -d "@$stamp" '+%Y-%m-%d %H:%M %Z')") | wl-copy" \
+    --arg unix "printf %s $(printf '%q' "$stamp") | wl-copy" \
+    --argjson discord "$(discord_actions "$stamp")" \
+    '{id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
+      exec: $copy, score: $sc, view: $v, glyph: "",
+      actions: ([{ title: "Copy Time", shortcut: "↵", exec: $copy },
+                 { title: "Copy Date and Time", exec: $full }]
+                + $discord
+                + [{ title: "Copy Unix Seconds", exec: $unix }])}'
+}
+
+# The column: your own zone first, then everything configured, each zone once.
+zone_column() {
+  local stamp="$1" score="$2" skip="${3:-}"
+  local -a seen=()
+  local i label zone
+
+  emit_once() {
+    local label="$1" zone="$2"
+    local s
+    for s in "${seen[@]:-}"; do [[ $s == "$zone" ]] && return 0; done
+    seen+=("$zone")
+    [[ $zone == "$skip" ]] && return 0
+    zone_row "z-$zone" "$label" "$zone" "$stamp" "$score" "list" ""
+    score=$((score - 100))
+  }
+
+  emit_once "$(label_for_zone "$local_zone")" "$local_zone"
+  for i in "${!zones[@]}"; do
+    emit_once "${labels[$i]}" "${zones[$i]}"
+  done
+}
+
+trimmed="${query#"${query%%[![:space:]]*}"}"
+trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+
+# Nothing typed: the whole board.
+if [[ -z $trimmed ]]; then
+  zone_column "$(date +%s)" 95000
+  exit 0
+fi
+
+# A Discord timestamp, pasted back in. The style is ignored on the way in
+# because it only ever described how somebody else's client drew it.
+if [[ $trimmed =~ ^\<t:([0-9]{1,12})(:[tTdDfFsSR])?\>$ ]]; then
+  zone_column "${BASH_REMATCH[1]}" 95000
+  exit 0
+fi
+
+# A bare unix timestamp, in the range that is a plausible date rather than a
+# quantity somebody meant to convert.
+if [[ $trimmed =~ ^[0-9]{9,11}$ ]]; then
+  zone_column "$trimmed" 95000
+  exit 0
+fi
+
+# Anything that opens a Discord timestamp and does not close one is a paste in
+# progress or a typo, and either way there is no answer yet.
+if [[ $trimmed == *"<t:"* ]]; then
+  [[ $trimmed =~ ^\<t:[0-9]*(:[a-zA-Z])?\>?$ ]] && exit 0
+  fail_row "Not a Discord timestamp" "Expected <t:1735689600:F>"
+fi
+
+dst_zone=""
+origin=""
+
+if [[ $trimmed =~ ^(.*[^[:space:]])[[:space:]]+(in|to|for)[[:space:]]+([^[:space:]].*)$ ]]; then
+  head_part="${BASH_REMATCH[1]}"
+  tail_part="${BASH_REMATCH[3]}"
+
+  dst_zone=$(resolve_zone "$tail_part") || fail_row "No timezone matches \"$tail_part\"" "Try a city, a region, or a label from omacast.json"
+  parse_when "$head_part" || fail_row "No timezone matches \"$head_part\"" "Expected a time, a zone, or both"
+else
+  parse_when "$trimmed" || fail_row "No timezone matches \"$trimmed\"" "Try a city, a region, or a label from omacast.json"
+  # Without an explicit "in", a named zone is where the answer goes and the
+  # time is read as yours. That is the way the sentence is meant out loud.
+  dst_zone="$src_zone"
+  src_zone=""
+fi
+
+if [[ -n $time_text ]]; then
+  spec=$(normalize_time "$time_text")
+  if [[ -n $src_zone ]]; then
+    stamp=$(TZ="$src_zone" date -d "$spec" +%s 2>/dev/null)
+    origin="$(TZ="$src_zone" date -d "$spec" '+%H:%M') in $src_zone"
+  else
+    stamp=$(date -d "$spec" +%s 2>/dev/null)
+    origin="$(date -d "$spec" '+%H:%M') your time"
+  fi
+  [[ -z $stamp ]] && fail_row "Not a time \"$time_text\"" "Try 3pm, 15:30, or 9 am"
+else
+  stamp=$(date +%s)
+fi
+
+if [[ -n $dst_zone ]]; then
+  label=$(label_for_zone "$dst_zone")
+  zone_row "tz-hero" "$label" "$dst_zone" "$stamp" 99000 "hero" "$origin"
+  zone_column "$stamp" 94000 "$dst_zone"
+else
+  zone_column "$stamp" 95000
+fi
+
+exit 0

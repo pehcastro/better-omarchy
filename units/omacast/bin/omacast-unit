@@ -1,0 +1,232 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `unit:` keyword: a unit conversion, through
+# qalc.
+#
+#   unit:20 miles in km     one answer, large
+#   unit:180f in c          the same, with the units people actually type
+#   unit:2 cups in ml       the same, for a recipe
+#   unit:20 miles           km, metres and feet, without being asked
+#
+# The launcher already runs qalc for bare arithmetic, so why a second keyword:
+# Calc.js has to gate hard, because `qalc -t firefox` answers "0 B" and
+# `qalc -t zzz` answers "z^3" with exit code 0 either way. That gate needs a
+# digit plus an operator or a conversion word, which throws away "20 miles".
+# A keyword is its own gate, so this side can be permissive and go looking for
+# the conversions nobody bothered to ask for.
+#
+# Two things qalc gets wrong on the way in, both fixed here rather than lived
+# with: it reads `in` as inches, so "5 km in miles" comes back in cubic metres,
+# and it reads a bare `F` as farads and a bare `C` as coulombs, so "180f in c"
+# comes back as capacitance per volt.
+
+set -uo pipefail
+
+query="${1:-}"
+[[ -z $query ]] && exit 0
+
+command -v qalc >/dev/null || exit 0
+command -v jq >/dev/null || exit 0
+
+trimmed="${query#"${query%%[![:space:]]*}"}"
+trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+[[ -z $trimmed ]] && exit 0
+
+# "180f" is one token to a person and two to qalc.
+spaced=$(sed -E 's/^([[:space:]]*[-+]?[0-9]+([.,][0-9]+)?)[[:space:]]*([a-zA-Z°])/\1 \3/' <<<"$trimmed")
+
+lhs="$spaced"
+rhs=""
+if [[ ${spaced,,} =~ ^(.*[^[:space:]])[[:space:]]+(in|to|as|into)[[:space:]]+([^[:space:]].*)$ ]]; then
+  # The match is against the lowercased copy, so the offsets are taken from the
+  # original to keep "MB" and "mb" apart where qalc cares.
+  lhs="${spaced:0:${#BASH_REMATCH[1]}}"
+  rhs="${spaced: -${#BASH_REMATCH[3]}}"
+fi
+
+# The unit half of the left side: everything after the leading quantity.
+source_unit=$(sed -E 's/^[[:space:]]*[-+]?[0-9]+([.,][0-9]+)?([[:space:]]*[*\/^][[:space:]]*[0-9.]+)*[[:space:]]*//' <<<"$lhs")
+source_unit="${source_unit%"${source_unit##*[![:space:]]}"}"
+
+# The canonical spelling qalc wants, for the units where what people type and
+# what qalc parses are different things.
+canon() {
+  local u="${1,,}"
+  u="${u%.}"
+  case $u in
+    f | °f | degf | fahrenheit | farenheit) printf '°F' ;;
+    c | °c | degc | celsius | celcius | centigrade) printf '°C' ;;
+    k | kelvin | kelvins) printf 'K' ;;
+    # qalc reads a lone "in" as inches only when it is not a preposition, and
+    # by this point it is not, but spelling it out removes the question.
+    in | inch | inches | \") printf 'inch' ;;
+    ft | foot | feet | \') printf 'foot' ;;
+    mi | mile | miles) printf 'mile' ;;
+    yd | yard | yards) printf 'yard' ;;
+    nmi | nm | "nautical mile" | "nautical miles") printf 'nauticalmile' ;;
+    lb | lbs | pound | pounds) printf 'pound' ;;
+    oz | ounce | ounces) printf 'ounce' ;;
+    st | stone | stones) printf 'stone' ;;
+    cup | cups) printf 'cup' ;;
+    tbsp | tablespoon | tablespoons) printf 'tablespoon' ;;
+    tsp | teaspoon | teaspoons) printf 'teaspoon' ;;
+    floz | "fl oz" | "fluid ounce" | "fluid ounces") printf 'floz' ;;
+    gal | gallon | gallons) printf 'gallon' ;;
+    pt | pint | pints) printf 'pint' ;;
+    qt | quart | quarts) printf 'quart' ;;
+    hr | hrs | hour | hours) printf 'hour' ;;
+    min | mins | minute | minutes) printf 'minute' ;;
+    sec | secs | second | seconds) printf 'second' ;;
+    day | days) printf 'day' ;;
+    wk | week | weeks) printf 'week' ;;
+    yr | year | years) printf 'year' ;;
+    kph | "km/h" | kmh) printf 'km/h' ;;
+    mph) printf 'mph' ;;
+    knot | knots | kn | kt) printf 'knot' ;;
+    hp | horsepower) printf 'horsepower' ;;
+    mpg) printf 'mpg' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Which family a unit belongs to, so a bare quantity knows what to offer. The
+# list is what people convert, not what qalc knows.
+family_of() {
+  local u="${1,,}"
+  u="${u%s}"
+  u="${u// /}"
+  case $u in
+    km | kilometre | kilometer | m | metre | meter | cm | centimetre | centimeter | mm | millimetre | millimeter | um | micrometre | mi | mile | ft | foot | feet | in | inch | inche | yd | yard | nmi | nauticalmile | ly | lightyear | au) printf 'length' ;;
+    kg | kilo | kilogram | kilogramme | g | gram | gramme | mg | milligram | ug | lb | lbs | pound | oz | ounce | st | stone | t | ton | tonne | metricton | ct | carat) printf 'mass' ;;
+    l | litre | liter | ml | millilitre | milliliter | cl | dl | gal | gallon | qt | quart | pt | pint | cup | floz | fluidounce | tbsp | tablespoon | tsp | teaspoon | m3 | 'm^3' | cm3 | barrel | bbl) printf 'volume' ;;
+    °f | °c | k | fahrenheit | celsius | kelvin | degf | degc) printf 'temperature' ;;
+    kph | 'km/h' | kmh | mph | 'm/s' | mps | knot | kn | kt | 'ft/s' | fp) printf 'speed' ;;
+    b | byte | kb | mb | gb | tb | pb | kib | mib | gib | tib | bit | kbit | mbit | gbit) printf 'data' ;;
+    'm^2' | m2 | sqm | 'km^2' | km2 | ha | hectare | acre | 'ft^2' | ft2 | sqft | 'cm^2' | cm2) printf 'area' ;;
+    j | joule | kj | kilojoule | cal | calorie | kcal | kilocalorie | wh | kwh | btu | ev | erg) printf 'energy' ;;
+    w | watt | kw | kilowatt | mw | megawatt | hp | horsepower) printf 'power' ;;
+    pa | pascal | kpa | hpa | bar | mbar | psi | atm | mmhg | torr) printf 'pressure' ;;
+    deg | degree | rad | radian | grad | gradian | arcmin | arcsec) printf 'angle' ;;
+    hz | hertz | khz | mhz | ghz | rpm) printf 'frequency' ;;
+    # Time is deliberately last, because "m" and "s" are metres and seconds and
+    # the length family is the more likely reading of a bare "m".
+    sec | second | min | minute | hr | hour | h | d | day | wk | week | yr | year | month | ms | millisecond | us | microsecond | n | nanosecond) printf 'time' ;;
+    *) return 1 ;;
+  esac
+}
+
+targets_for() {
+  case "$1" in
+    length) printf '%s\n' km mile metre foot ;;
+    mass) printf '%s\n' kg pound gram ounce ;;
+    volume) printf '%s\n' litre ml gallon cup ;;
+    temperature) printf '%s\n' '°C' '°F' K ;;
+    speed) printf '%s\n' km/h mph m/s knot ;;
+    data) printf '%s\n' MB GB MiB GiB ;;
+    area) printf '%s\n' 'm^2' 'ft^2' hectare acre ;;
+    energy) printf '%s\n' kJ kcal Wh ;;
+    power) printf '%s\n' W kW horsepower ;;
+    pressure) printf '%s\n' bar psi kPa atm ;;
+    angle) printf '%s\n' deg rad ;;
+    frequency) printf '%s\n' Hz kHz MHz ;;
+    time) printf '%s\n' hour minute second day ;;
+    *) return 1 ;;
+  esac
+}
+
+# Two units are the same unit if they only differ by a plural, so a family list
+# does not offer to convert hours into hours.
+same_unit() {
+  local a b
+  a=$(canon "$1"); a="${a,,}"; a="${a%s}"
+  b=$(canon "$2"); b="${b,,}"; b="${b%s}"
+  [[ $a == "$b" ]]
+}
+
+# qalc echoes its input when it does not understand, and exits 0 doing it, so
+# an answer that only restates the question is not an answer.
+#
+# `conv none` turns off autoconversion, without which "5 kg to pound" answers
+# "11 lb + 0.369810 oz". That is correct and it is not a number anybody can use.
+convert() {
+  local expr="$1" out
+  out=$(qalc -t -m 200 -set "conv none" -- "$expr" 2>/dev/null | tr '\n' ' ')
+  out="${out#"${out%%[![:space:]]*}"}"
+  out="${out%"${out##*[![:space:]]}"}"
+  [[ -z $out ]] && return 1
+  [[ ${out,,} == "${expr,,}" ]] && return 1
+  # An error comes back as prose rather than a number.
+  [[ $out == *"error"* || $out == *"Error"* ]] && return 1
+  printf '%s' "$out"
+}
+
+row() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg d "$4" \
+    --arg v "$5" --argjson sc "$6" \
+    --arg copy "printf %s $(printf '%q' "$2") | wl-copy" \
+    --arg both "printf %s $(printf '%q' "$3 = $2") | wl-copy" \
+    '{id: $id, title: $t, subtitle: $s, detail: $d, exec: $copy,
+      score: $sc, view: $v, glyph: "",
+      actions: [{ title: "Copy Answer", shortcut: "↵", exec: $copy },
+                { title: "Copy Both Sides", exec: $both }]}'
+}
+
+source_canon=$(canon "$source_unit")
+family=$(family_of "$source_canon") || family=$(family_of "$source_unit") || family=""
+
+if [[ -n $rhs ]]; then
+  target_canon=$(canon "$rhs")
+
+  # A lone "k" is kilo far more often than kelvin, so it only becomes a
+  # temperature when the other side already is one.
+  if [[ ${rhs,,} == "k" && $source_canon != "°C" && $source_canon != "°F" ]]; then
+    target_canon="$rhs"
+  fi
+  if [[ ${source_unit,,} == "k" && $target_canon != "°C" && $target_canon != "°F" ]]; then
+    source_canon="$source_unit"
+  fi
+
+  quantity="${lhs%"$source_unit"}"
+  quantity="${quantity%"${quantity##*[![:space:]]}"}"
+  left_as_typed="${lhs%"${lhs##*[![:space:]]}"}"
+
+  answer=$(convert "$quantity $source_canon to $target_canon") || answer=$(convert "$lhs to $rhs") || exit 0
+
+  # The rate, not just the answer: knowing one mile is 1.6 km is what stops the
+  # next four queries from happening. Temperature is left out, because a scale
+  # with an offset has no rate and "1 °F = -17.2 °C" is a true sentence that
+  # teaches the wrong thing.
+  rate=""
+  if [[ $family != "temperature" ]]; then
+    rate=$(convert "1 $source_canon to $target_canon") && rate="1 $source_canon = $rate"
+  fi
+
+  row "unit-answer" "$answer" "$left_as_typed" "$rate" "hero" 99000
+
+  # The rest of the family underneath, because the next question is usually
+  # the same number in a third unit.
+  [[ -z $family ]] && exit 0
+  score=94000
+  while IFS= read -r target; do
+    same_unit "$target" "$target_canon" && continue
+    same_unit "$target" "$source_canon" && continue
+    more=$(convert "$quantity $source_canon to $target") || continue
+    row "unit-$target" "$more" "$left_as_typed" "" "list" "$score"
+    score=$((score - 100))
+  done < <(targets_for "$family")
+  exit 0
+fi
+
+# No target named. Offer the family.
+[[ -z $family ]] && exit 0
+
+quantity="${lhs%"$source_unit"}"
+quantity="${quantity%"${quantity##*[![:space:]]}"}"
+score=95000
+while IFS= read -r target; do
+  same_unit "$target" "$source_canon" && continue
+  answer=$(convert "$quantity $source_canon to $target") || continue
+  row "unit-$target" "$answer" "$trimmed" "" "list" "$score"
+  score=$((score - 100))
+done < <(targets_for "$family")
+
+exit 0
