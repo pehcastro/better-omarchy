@@ -1,0 +1,76 @@
+import json, os, subprocess, sys, glob
+
+# Read from the launcher rather than kept here, because a hand-copied list goes
+# stale the first time somebody adds a view and then reports faults that are not
+# faults.
+import re
+_qml = open(os.path.expanduser(
+    "~/localhost/better-omarchy/units/omacast/plugin/Launcher.qml")).read()
+_m = re.search(r"readonly property var knownViews: (\[[^\]]*\])", _qml, re.S)
+VIEWS = set(re.findall(r'"([a-z]+)"', _m.group(1))) if _m else set()
+
+problems = []
+for path in sorted(glob.glob(os.path.expanduser("~/.config/omarchy/omacast/extensions/*.json"))):
+    if path.endswith(".cases.json"):
+        continue
+    ext = json.load(open(path))
+    name = os.path.basename(path)[:-5]
+    when = ext.get("when") or ""
+    if when and subprocess.run(["bash","-lc",when],capture_output=True).returncode != 0:
+        continue
+    search = ext.get("search","")
+    binary = search.split()[0] if search else ""
+    if not binary:
+        continue
+
+    for probe in ["", ext.get("testQuery") or "a"]:
+        try:
+            out = subprocess.run([binary, probe], capture_output=True, text=True,
+                                 timeout=8).stdout
+        except Exception as exc:
+            problems.append((name, probe, "did not run: %s" % exc)); continue
+
+        rows = []
+        t = out.strip()
+        if t.startswith("["):
+            try: rows = json.loads(t)
+            except Exception as e: problems.append((name,probe,"bad JSON: %s"%e)); continue
+        else:
+            for line in t.splitlines():
+                if line.strip():
+                    try: rows.append(json.loads(line))
+                    except Exception as e: problems.append((name,probe,"bad line: %s"%e))
+
+        ids = {}
+        for i, r in enumerate(rows):
+            where = "%s[%s] row %d" % (name, probe or "bare", i)
+            if not str(r.get("title","")).strip():
+                problems.append((name, probe, "%s has no title" % where))
+            v = str(r.get("view") or ext.get("view") or "list")
+            if v not in VIEWS:
+                problems.append((name, probe, "%s wants view %r, which does not exist" % (where, v)))
+            # A row that reports a state rather than offering a thing is
+            # allowed to do nothing: "Nothing pending" has nothing to open.
+            # A panel carries its own interaction, so it does not need a row
+            # level exec: the keys belong to the view. Only a list row that
+            # cannot be acted on is a fault.
+            panel = v not in ("list", "")
+            hint = (r.get("hint") is True
+                    or panel
+                    or str(r.get("id","")).endswith(("-empty","-hint","-none")))
+            if not hint and not r.get("exec") and not r.get("actions") and r.get("query") is None:
+                problems.append((name, probe, "%s does nothing: no exec, no actions" % where))
+            rid = r.get("id")
+            if rid is not None:
+                if rid in ids:
+                    problems.append((name, probe, "%s reuses id %r from row %d" % (where, rid, ids[rid])))
+                ids[rid] = i
+            for a in (r.get("actions") or []):
+                if not str(a.get("title","")).strip():
+                    problems.append((name, probe, "%s has an action with no title" % where))
+                if not a.get("exec") and a.get("query") is None:
+                    problems.append((name, probe, "%s action %r does nothing" % (where, a.get("title"))))
+
+for name, probe, why in problems:
+    print(why)
+print("---", len(problems), "problems")
