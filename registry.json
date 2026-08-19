@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "0a6dabc7187e14d8eac903e5ee0a95755f05f281",
+  "generated_at_commit": "a91026f57e792cf4a2ca3a8cb7b9838a9d04a194",
   "units": {
     "better-workspaces": {
       "name": "better-workspaces",
@@ -24,15 +24,15 @@
       ],
       "keys": [
         "SUPER+F2",
-        "SUPER+F3"
+        "SUPER+equal"
       ],
       "pluginId": "bo.better-workspaces",
       "path": "units/better-workspaces",
       "files": 6,
-      "hash": "6e6f082c249034f855b069d67f4186df88a9c928392ed251ab0928b0f8cca21c",
-      "commit": "",
-      "updated": "",
-      "author_last": ""
+      "hash": "69eef54069ac81f06747bbc46df258fe7f1a3f8a6c13d8c4f28cd2b0a9754c44",
+      "commit": "a91026f57e792cf4a2ca3a8cb7b9838a9d04a194",
+      "updated": "2026-08-19T03:15:44-03:00",
+      "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "nkz-keys": {
       "name": "nkz-keys",

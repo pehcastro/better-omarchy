@@ -7,4 +7,4 @@ author   = "pehcastro"
 kind     = "plugin"
 id       = "bo.better-workspaces"
 needs    = ["hyprctl"]
-keys     = ["SUPER+F2", "SUPER+F3"]
+keys     = ["SUPER+F2", "SUPER+equal"]

@@ -147,17 +147,67 @@ Panel {
   // "somewhere new" is a thing you want often enough to be one click.
   readonly property bool showNewButton: root.setting("showNewButton", true)
 
-  function workspaceIds() {
+  // How long a workspace stays in the row after its last window closes. Without
+  // this the button vanishes on the same frame as the window, which reads as
+  // the bar glitching rather than as the workspace being finished with, and
+  // there is nothing for the fade to fade.
+  readonly property int emptyLingerMs: root.setting("emptyLingerMs", 5000)
+
+  // id -> the moment it emptied. Absent while it still has windows.
+  property var emptiedAt: ({})
+
+  Timer {
+    id: lingerTick
+    running: root.hideEmpty
+    interval: 400
+    repeat: true
+    onTriggered: {
+      var now = Date.now()
+      var next = root.emptiedAt
+      var changed = false
+
+      for (var id = 1; id <= 10; id++) {
+        var key = String(id)
+        var ws = root.workspaceById(id)
+        var occupied = ws !== null && ws.toplevels.values.length > 0
+
+        if (occupied) {
+          if (next[key] !== undefined) { delete next[key]; changed = true }
+        } else if (next[key] === undefined) {
+          next[key] = now
+          changed = true
+        } else if (now - next[key] < root.emptyLingerMs + lingerTick.interval) {
+          // Still inside the window, or the tick just past it. liveIds reads
+          // Date.now(), which is not reactive, so the map has to be nudged on
+          // every tick or the row never notices the deadline passing.
+          changed = true
+        }
+      }
+
+      if (changed) { root.emptiedAt = ({}); root.emptiedAt = next }
+    }
+  }
+
+  function lingering(id) {
+    var at = root.emptiedAt[String(id)]
+    if (at === undefined) return false
+    return Date.now() - at < root.emptyLingerMs
+  }
+
+  // The workspaces that have earned a place right now.
+  readonly property var liveIds: {
     var ids = []
     var values = Hyprland.workspaces.values
     var active = root.activeWorkspaceId()
+    var stamps = root.emptiedAt
 
     for (var id = 1; id <= 10; id++) {
       var ws = root.workspaceById(id)
       var occupied = ws !== null && ws.toplevels.values.length > 0
       var named = root.entryFor(id).label !== ""
 
-      if (!root.hideEmpty || occupied || named || id === active) ids.push(id)
+      if (!root.hideEmpty || occupied || named || id === active
+          || root.lingering(id)) ids.push(id)
     }
 
     // Never an empty row: with nothing open and nothing named there would be
@@ -165,6 +215,49 @@ Panel {
     if (ids.length === 0) ids.push(active > 0 ? active : 1)
     return ids
   }
+
+  // Workspaces on their way out, kept in the row long enough to animate. A
+  // button that disappears between two frames reads as a glitch; one that fades
+  // and closes its own gap reads as the workspace being finished with.
+  property var leavingIds: []
+
+  readonly property int leaveMs: root.setting("leaveMs", 260)
+
+  // What was live last time, so a departure can be spotted. Diffing against
+  // what is drawn would read a property that already includes the change, and
+  // the diff would always be empty.
+  property var previousLive: []
+
+  onLiveIdsChanged: {
+    var gone = []
+    for (var i = 0; i < root.previousLive.length; i++) {
+      var id = root.previousLive[i]
+      if (root.liveIds.indexOf(id) < 0 && root.leavingIds.indexOf(id) < 0) gone.push(id)
+    }
+    root.previousLive = root.liveIds.slice()
+    if (gone.length === 0) return
+
+    root.leavingIds = root.leavingIds.concat(gone)
+    leaveTimer.restart()
+  }
+
+  Timer {
+    id: leaveTimer
+    interval: root.leaveMs
+    onTriggered: root.leavingIds = []
+  }
+
+  // What the row actually draws: what is live, plus what is still leaving.
+  readonly property var shownIds: {
+    var ids = root.liveIds.slice()
+    for (var i = 0; i < root.leavingIds.length; i++) {
+      if (ids.indexOf(root.leavingIds[i]) < 0) ids.push(root.leavingIds[i])
+    }
+    ids.sort(function (left, right) { return left - right })
+    return ids
+  }
+
+  function workspaceIds() { return root.shownIds }
 
   // The lowest workspace with nothing on it and no name. 0 when there is none,
   // which hides the button rather than offering somewhere that does not exist.
@@ -249,13 +342,16 @@ Panel {
   // going back to "coding" should leave a free workspace behind, not a label
   // pointing at nothing.
   //
-  // On a grace period rather than immediately, because closing the last window
-  // to open another one is a normal thing to do and the name should survive it.
+  // On a short grace period rather than immediately, because closing the last
+  // window to open another one is a normal thing to do and the name should
+  // survive it. Five seconds is long enough for that and short enough that the
+  // workspace is gone before you wonder why it is still there.
   readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", true)
-  readonly property int releaseAfterMs: root.setting("releaseAfterMs", 45000)
+  readonly property int releaseAfterMs: root.setting("releaseAfterMs", 5000)
 
-  // id -> when it was last seen with something on it, or focused. A workspace
-  // absent from here has not been alive since the widget loaded.
+  // id -> 0 while it still has windows, or the moment it emptied. A workspace
+  // absent from here has never had a window since the widget loaded, and its
+  // name is never touched.
   property var lastAlive: ({})
 
   Timer {
@@ -277,15 +373,20 @@ Panel {
       if (root.entryFor(id).label === "") { delete seen[key]; continue }
 
       var ws = root.workspaceById(id)
-      var alive = (ws !== null && ws.toplevels.values.length > 0) || id === active
+      var occupied = ws !== null && ws.toplevels.values.length > 0
 
-      if (alive) { seen[key] = now; continue }
+      // Used means used: having windows, or being the one you are on. A
+      // workspace you have finished with has nothing running and you are not
+      // looking at it, and then its name has no work left to do.
+      if (occupied || id === active) { seen[key] = 0; continue }
 
-      // Never alive this session, so nothing was finished here. A name you set
-      // last week on a workspace you have not opened yet is a plan, and the
-      // first version of this deleted every one of them forty-five seconds
-      // after login.
+      // Never touched this session. A name set last week on a workspace not
+      // opened yet is a plan for later, not litter.
       if (seen[key] === undefined) continue
+
+      // First tick since it went quiet. Start the clock rather than reading a
+      // zero as "five seconds ago".
+      if (seen[key] === 0) { seen[key] = now; continue }
 
       if (now - seen[key] >= root.releaseAfterMs) stale.push(id)
     }
@@ -350,7 +451,13 @@ Panel {
         // to its label instead of the fixed slot a numeric row can rely on.
         text: root.displayName(modelData)
         tooltipText: root.fullName(modelData)
-        opacity: focused ? 1 : (occupied ? 0.6 : 0.35)
+        readonly property bool leaving: root.leavingIds.indexOf(modelData) >= 0
+
+        opacity: leaving ? 0 : (focused ? 1 : (occupied ? 0.6 : 0.35))
+        scale: leaving ? 0.85 : 1
+
+        Behavior on opacity { NumberAnimation { duration: root.leaveMs; easing.type: Easing.OutCubic } }
+        Behavior on scale { NumberAnimation { duration: root.leaveMs; easing.type: Easing.OutCubic } }
         horizontalMargin: 6
         verticalPadding: 6
         fixedWidth: root.vertical ? root.barSize : -1

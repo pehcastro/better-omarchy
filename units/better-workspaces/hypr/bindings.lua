@@ -3,10 +3,9 @@
 
 o.bind("SUPER + F2", "Rename workspace", "omarchy-shell shell toggle bo.better-workspaces")
 
--- SUPER+F3 goes somewhere empty. The bar's + button calls the same thing, and
--- with the empty workspaces hidden this is the only way to reach one without
--- knowing which number is free.
-o.bind("SUPER + F3", "New workspace", "bo-workspace-new")
+-- SUPER+= goes somewhere empty, next to the workspace number keys and shaped
+-- like the + it matches in the bar. The + button calls the same command.
+o.bind("SUPER + equal", "New workspace", "bo-workspace-new")
 
 -- Workspaces are not held open any more. Keeping 1 to 10 persistent meant ten
 -- of them always existed, which is exactly what the bar then had to draw and

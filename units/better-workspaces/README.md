@@ -4,7 +4,7 @@ Workspace names in the bar instead of numbers, the empty ones out of the way,
 and a way to reach a fresh one.
 
 `Super+F2` renames the workspace you are on, or right-click any of them.
-`Super+F3` goes to the first free workspace, which the `+` in the bar also does.
+`Super+=` goes to the first free workspace, which the `+` in the bar also does.
 
 An empty, unnamed workspace is not drawn: a row of numbers standing in for
 nothing is the reason names used to be cut short. A name is released when its
@@ -20,7 +20,9 @@ is left alone.
 | `hideEmpty` | `true` | draw only workspaces that have a window, a name, or your attention |
 | `showNewButton` | `true` | the trailing `+` |
 | `releaseEmptyNames` | `true` | drop a name once its workspace is finished with |
-| `releaseAfterMs` | `45000` | how long after it empties |
+| `releaseAfterMs` | `5000` | how long after it goes quiet |
+| `emptyLingerMs` | `5000` | how long an emptied workspace stays in the row |
+| `leaveMs` | `260` | the fade as it goes |
 | `maxLabelChars` | `18` | a ceiling, not a fixed width; the real width is measured against the bar |
 | `labelShare` | `0.50` | how much of the bar the names may take before what is centred in it |
 
