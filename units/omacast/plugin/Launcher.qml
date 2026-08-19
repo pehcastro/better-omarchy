@@ -283,6 +283,13 @@ Item {
 
   readonly property string activeView: {
     if (root.answerMode) return "answer"
+
+    // Nothing yet, and something is still looking. Saying "nothing matches"
+    // here is a wrong answer rather than a missing one, and a card that
+    // collapses now and jumps open when the rows land is worse than one that
+    // holds its shape.
+    if (root.rows.length === 0 && root.busy && root.queryText.trim() !== "") return "loading"
+
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
     return root.knownViews.indexOf(wanted) >= 0 ? wanted : "list"
@@ -293,7 +300,8 @@ Item {
   // component wired up and its name missing here, so its rows silently drew as
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
-    "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones"]
+    "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
+    "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -423,7 +431,12 @@ Item {
   }
 
   function markWaiting(providerId, yes) {
-    var pending = root.waiting
+    // A fresh object, not the same one mutated and put back. QML compares by
+    // identity, so reassigning the object it already holds changes nothing and
+    // `busy` never re-evaluated: the spinner almost never appeared and the
+    // loading state never appeared at all.
+    var pending = {}
+    for (var key in root.waiting) pending[key] = root.waiting[key]
     pending[providerId] = yes === true
     root.waiting = pending
   }
@@ -1762,7 +1775,7 @@ Item {
       clip: true
 
       height: header.height
-        + ((root.rows.length > 0 || root.answerMode)
+        + ((root.rows.length > 0 || root.answerMode || root.activeView === "loading")
            ? resultsArea.height + footer.height + Style.space(14) : 0)
         + emptyState.height
 
@@ -1983,7 +1996,7 @@ Item {
         // your history leaves nothing to show, and a launcher that answers a
         // keypress with a blank card has not told you it worked.
         visible: root.notice !== "" || root.pendingAction !== null
-          || (root.rows.length === 0 && !root.answerMode && root.queryText.trim() !== "")
+          || (root.activeView !== "loading" && root.rows.length === 0 && !root.answerMode && root.queryText.trim() !== "")
 
         Text {
           anchors.centerIn: parent
@@ -2015,7 +2028,7 @@ Item {
         anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
-        active: root.rows.length > 0 || root.answerMode
+        active: root.rows.length > 0 || root.answerMode || root.activeView === "loading"
 
         // A view asks for the height its content wants, and the card grows to
         // hold it. Neither of them knows about the screen, so a long answer put
@@ -2040,6 +2053,7 @@ Item {
           case "calendar": return calendarView
           case "timegrid": return timeGridView
           case "zones": return zonesView
+          case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
           case "form": return formView
@@ -2059,6 +2073,7 @@ Item {
       Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: formView;      ResultForm      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
