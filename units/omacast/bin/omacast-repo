@@ -80,11 +80,21 @@ load_repos() {
 
   mapfile -t repos < <(discover)
   mkdir -p "$STATE" 2>/dev/null
+
+  # Written through a temp file and renamed, because three extensions ask this
+  # question at the same keystroke and `> "$CACHE"` truncates before it writes.
+  # A reader arriving in that window got an empty list and answered "nothing
+  # matches" about a repo that was right there. It looked random, it was not,
+  # and it cost a morning of recordings.
   if ((${#repos[@]})); then
-    printf '%s\n' "${repos[@]}" >"$CACHE" 2>/dev/null
-  else
-    : >"$CACHE" 2>/dev/null
+    local tmp
+    tmp=$(mktemp "$CACHE.XXXXXX" 2>/dev/null) || tmp=""
+    if [[ -n $tmp ]]; then
+      printf '%s\n' "${repos[@]}" >"$tmp" 2>/dev/null && mv -f "$tmp" "$CACHE" 2>/dev/null
+      rm -f "$tmp" 2>/dev/null
+    fi
   fi
+
   ((${#repos[@]}))
 }
 
