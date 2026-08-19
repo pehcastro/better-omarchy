@@ -48,8 +48,11 @@ fi
 # A default set that covers the zones a working day usually crosses. Anyone who
 # cares replaces it; anyone who does not still gets a useful `tz:`.
 if ((${#zones[@]} == 0)); then
-  labels=("UTC" "San Francisco" "New York" "London" "Berlin" "Tokyo")
-  zones=("UTC" "America/Los_Angeles" "America/New_York" "Europe/London" "Europe/Berlin" "Asia/Tokyo")
+  # Cities people have colleagues in. UTC was in here and is not a place
+  # anybody is: it is a reference for machines, and a row of it in a list of
+  # cities is a line to skip past every time. `tz:utc` still answers.
+  labels=("San Francisco" "New York" "London" "Berlin" "Tokyo")
+  zones=("America/Los_Angeles" "America/New_York" "Europe/London" "Europe/Berlin" "Asia/Tokyo")
 fi
 
 ALL_ZONES=""
@@ -379,10 +382,13 @@ zone_row() {
     [[ -n $origin ]] && detail="$detail  ·  from $origin"
     accessory=""
   else
-    title="$clock  ·  $label"
+    # `zones` is a layout, not a list of sentences, so the parts go over
+    # separately: joining them here and splitting them there is how a view ends
+    # up unable to give the time more weight than the zone id.
+    view="zones"
+    title="$label"
     detail="$zone"
-    [[ -n $abbr ]] && detail="$detail  ·  $abbr"
-    [[ -n $day_word ]] && detail="$detail  ·  $pretty"
+    [[ -n $abbr ]] && detail="$abbr"
     subtitle="$shift"
     accessory="$day_word"
   fi
@@ -394,7 +400,9 @@ zone_row() {
     --arg full "printf %s $(printf '%q' "$(TZ="$zone" date -d "@$stamp" '+%Y-%m-%d %H:%M %Z')") | wl-copy" \
     --arg unix "printf %s $(printf '%q' "$stamp") | wl-copy" \
     --argjson discord "$(discord_actions "$stamp")" \
+    --arg clock "$clock" --arg dayline "$pretty" --arg zoneid "$zone" \
     '{id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
+      clock: $clock, dayline: $dayline, zoneid: $zoneid,
       exec: $copy, score: $sc, view: $v, glyph: "",
       actions: ([{ title: "Copy Time", shortcut: "↵", exec: $copy },
                  { title: "Copy Date and Time", exec: $full }]

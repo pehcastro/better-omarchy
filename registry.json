@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "34fd37d7699a2c20c379bd85423526c7c6f81f60",
+  "generated_at_commit": "2017bef748ca83c6eaecc667751e51b3912346bc",
   "units": {
     "better-workspaces": {
       "name": "better-workspaces",
@@ -87,8 +87,8 @@
       ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 106,
-      "hash": "d9994b01cc0aada17ee2ba225a0d1e91cb8f73586d8a1d3b928349e5b0a07b27",
+      "files": 107,
+      "hash": "015476b6ebc07ee3f3e155e0069db5d495798d247526e2788b6567f3626f504b",
       "commit": "0a6dabc7187e14d8eac903e5ee0a95755f05f281",
       "updated": "2026-08-19T03:10:21-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"

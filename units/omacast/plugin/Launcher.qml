@@ -293,7 +293,7 @@ Item {
   // component wired up and its name missing here, so its rows silently drew as
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
-    "dashboard", "calendar", "player", "slider", "form", "timegrid"]
+    "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -2039,6 +2039,7 @@ Item {
           case "dashboard": return dashboardView
           case "calendar": return calendarView
           case "timegrid": return timeGridView
+          case "zones": return zonesView
           case "player": return playerView
           case "slider": return sliderView
           case "form": return formView
@@ -2057,6 +2058,7 @@ Item {
       Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: formView;      ResultForm      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
