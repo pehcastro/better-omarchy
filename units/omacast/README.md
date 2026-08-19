@@ -31,6 +31,9 @@ tells it what you want.
 | `firefox` | apps, commands and quicklinks, ranked together |
 | `2+2*10`, `10 usd to eur`, `40 miles in km` | the answer, large |
 | `27 november 2027`, `next friday` | the day of week, the week number, how far away |
+| `tz:`, `tz:tokyo`, `tz:3pm tokyo` | the time there, and the day when it is not yours |
+| `unit:20 miles`, `unit:180f in c` | the conversion, and the ones you did not ask for |
+| `def:ephemeral` | every sense, its part of speech, and the synonyms |
 | `file:report format:pdf` | files, filtered by extension |
 | `img:` or `img:holiday in:~/work` | thumbnails, with dimensions and size |
 | `win:chrome` | jump to that open window, or close it |
@@ -38,6 +41,12 @@ tells it what you want.
 | `emoji:` or `emoji:heart` | the emoji, copied |
 | `snip:sig` | a snippet of text you keep retyping |
 | `recent:` | the files you opened lately, in any app |
+| `repo:` or `repo:oma branch:main` | your git repos, with branch, dirty state and age |
+| `git:` | the repo you are in: status, branch, commits, branches, stashes |
+| `gh:` or `gh:omarchy` | your GitHub repos, then a search |
+| `pr:`, `issue:`, `ci:`, `gist:` | open PRs, what is assigned to you, workflow runs, gists |
+| `ssh:prod` | a host from your ssh config, connected in a terminal |
+| `docker:` | containers, running first, with logs, a shell and start/stop |
 | `spotify:` | the player: cover, scrubber, transport |
 | `spotify:daft punk` | search and play, no account needed |
 | `radio:jazz` | internet radio, through mpv |
@@ -124,6 +133,40 @@ arrives in an update starts working rather than waiting to be listed.
 Engines merge by id rather than replacing the list, so adding one does not mean
 restating Google, DuckDuckGo, ChatGPT, Perplexity, YouTube and GitHub.
 
+## Timezones
+
+`tz:` reads its zones from `timezones` in `~/.config/omarchy/omacast.json`:
+
+```json
+{
+  "timezones": [
+    { "label": "Ana", "zone": "Europe/Lisbon" },
+    { "label": "Kenji", "zone": "Asia/Tokyo" },
+    { "label": "UTC", "zone": "UTC" }
+  ]
+}
+```
+
+A label is a name, not a caption. `tz:ana` finds Ana, and the answer says Ana
+rather than Lisbon, because the question was never really about Lisbon. Zones
+are the IANA names `timedatectl list-timezones` prints, and a zone that is not
+in that list is dropped rather than silently read as UTC.
+
+Without the key you still get a working `tz:`: UTC, San Francisco, New York,
+London, Berlin and Tokyo, which is most of a working day.
+
+Zone names match loosely, so `tokyo` finds `Asia/Tokyo`, `sp` finds
+`America/Sao_Paulo` and `ny` finds `America/New_York`. Initials beat substrings,
+which is what keeps `la` on Los Angeles rather than on Blantyre.
+
+`tz:3pm tokyo` reads the time as yours and answers in theirs. `tz:9am tokyo in
+london` reads it as Tokyo's. That is the difference an explicit `in` makes, and
+it is the way both sentences are meant out loud.
+
+Paste a Discord timestamp in and every zone reads it. `Ctrl+K` on any answer
+copies it back out as one, in all nine of Discord's styles, since working out
+that 3pm is 9pm for somebody else is usually the step before telling them.
+
 ## Snippets
 
 `snip:` reads `~/.config/omarchy/omacast-snippets.json`, a flat object of name
@@ -156,6 +199,11 @@ when writing your own.
 | `emoji:` | `omacast-emoji` | reads Omarchy's own emoji data in place |
 | `snip:` | `omacast-snippet` | silent until the snippets file exists |
 | `recent:` | `omacast-recent` | recently-used.xbel, minus what has since been deleted |
+| `repo:` | `omacast-repo` | one cached fd walk, git only for the rows actually shown |
+| `git:` | `omacast-git` | the focused terminal's repo, else a pin, else the one touched last |
+| `gh:` `pr:` `issue:` `ci:` `gist:` | `omacast-gh` | silent until `gh auth status` passes, cached per credential |
+| `ssh:` | `omacast-ssh` | ~/.ssh/config, Include followed, wildcard hosts skipped |
+| `docker:` | `omacast-docker` | gated on the daemon answering, not on the binary existing |
 | `spotify:` `music:` | `omacast-search-music` | MPRIS for the player, Deezer for search |
 | `radio:` | `omacast-search-radio` | radio-browser.info, plays through mpv |
 | `ch:` | `omacast-clipboard-history` | reads the file Omarchy's own overlay writes |
@@ -165,6 +213,9 @@ when writing your own.
 | `sp:` | `omacast-spotify` | playlists and library, after `omacast-spotify-auth` |
 | `cal:` | `omacast-calendar` | sends the numbers, the view draws the grid |
 | `date:` | `omacast-date` | answers unscoped, so its gate is deliberately narrow |
+| `tz:` `time:` | `omacast-timezone` | zone names matched loosely, Discord timestamps both ways |
+| `unit:` | `omacast-unit` | qalc again, but scoped, so the gate can be permissive |
+| `def:` | `omacast-define` | dictionaryapi.dev, keyless, cached for a month |
 | `sys:` | `omacast-system` | every reading optional, skipped when absent |
 
 ## Playing music without an account

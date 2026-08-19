@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "f86d41fc77c4419d9bbdbf534ce9a83fb7c503c5",
+  "generated_at_commit": "9e1990779d433eae77d018abb3ca30f53b64282c",
   "units": {
     "nkz-keys": {
       "name": "nkz-keys",
@@ -62,7 +62,7 @@
       "path": "units/omacast",
       "files": 86,
       "hash": "f3d9b7b39b340e554cdb7b51fb67064149e8bfa7e0839458b33aa5aa813ccf89",
-      "commit": "f86d41fc77c4419d9bbdbf534ce9a83fb7c503c5",
+      "commit": "9e1990779d433eae77d018abb3ca30f53b64282c",
       "updated": "2026-08-18T23:26:34-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
