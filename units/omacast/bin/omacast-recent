@@ -1,0 +1,106 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `recent:` keyword: the files you opened lately.
+#
+#   recent:            everything still on disk, newest first
+#   recent:invoice     the ones whose name or folder matches
+#
+# The list is ~/.local/share/recently-used.xbel, the freedesktop recent files
+# file every GTK app writes to. Nothing here maintains a second list, so a file
+# opened from Nautilus or a save dialog is already in the answer.
+
+set -uo pipefail
+
+query="${1:-}"
+XBEL="$HOME/.local/share/recently-used.xbel"
+
+[[ -f $XBEL ]] || exit 0
+
+needle="${query,,}"
+now=$(date +%s)
+
+# XBEL hrefs are XML-escaped and then percent-encoded, in that order. Undoing
+# them the other way round turns a literal "%26" in a filename into an
+# ampersand, so both passes stay separate and ordered.
+unescape_xml() {
+  local s=$1
+  s=${s//&lt;/<}
+  s=${s//&gt;/>}
+  s=${s//&quot;/\"}
+  s=${s//&apos;/\'}
+  # Last, or "&amp;lt;" would come out as "<". The backslash matters: since
+  # bash 5.2 a bare & in a replacement means the text that matched.
+  printf '%s' "${s//&amp;/\&}"
+}
+
+urldecode() {
+  # printf %b reads backslashes, and a filename may legitimately contain one.
+  local s=${1//\\/\\\\}
+  printf '%b' "${s//%/\\x}"
+}
+
+ago() {
+  local d=$1 n unit
+  if ((d < 60)); then printf 'just now'; return; fi
+  if ((d < 3600)); then n=$((d / 60)); unit=minute
+  elif ((d < 86400)); then n=$((d / 3600)); unit=hour
+  elif ((d < 2592000)); then n=$((d / 86400)); unit=day
+  elif ((d < 31536000)); then n=$((d / 2592000)); unit=month
+  else n=$((d / 31536000)); unit=year
+  fi
+  ((n == 1)) || unit="${unit}s"
+  printf '%s %s ago' "$n" "$unit"
+}
+
+rank=90000
+emitted=0
+
+# The timestamps are ISO 8601 in UTC with a fixed shape, so a plain reverse
+# sort is already newest first and `date -d` is only paid for the rows that
+# survive to the answer.
+while IFS=$'\t' read -r modified path; do
+  [[ -f $path || -d $path ]] || continue
+
+  base=${path##*/}
+  dir=${path%/*}
+  [[ -z $dir ]] && dir="/"
+
+  if [[ -n $needle ]]; then
+    [[ ${path,,} == *"$needle"* ]] || continue
+  fi
+
+  stamp=$(date -d "$modified" +%s 2>/dev/null) || stamp=$now
+  display=${dir/#$HOME/\~}
+
+  jq -cn --arg id "$path" --arg t "$base" --arg s "$display" \
+    --arg a "$(ago $((now - stamp)))" \
+    --arg e "xdg-open $(printf '%q' "$path")" \
+    --arg p "$path" --argjson sc "$rank" \
+    '{
+       id: $id, title: $t, subtitle: $s, accessory: $a, exec: $e, score: $sc,
+       actions: [
+         { title: "Open", shortcut: "↵", exec: $e },
+         { title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy") },
+         { title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh)) }
+       ]
+     }'
+
+  rank=$((rank - 100))
+  emitted=$((emitted + 1))
+  ((emitted >= 25)) && break
+done < <(
+  grep -oP '<bookmark\s[^>]*>' "$XBEL" 2>/dev/null |
+    while IFS= read -r tag; do
+      [[ $tag =~ href=\"([^\"]+)\" ]] || continue
+      href=${BASH_REMATCH[1]}
+      [[ $tag =~ modified=\"([^\"]+)\" ]] || continue
+      modified=${BASH_REMATCH[1]}
+
+      # Only local files. A recent list can also hold smb:// and sftp://
+      # entries, which xdg-open would hand to a mount that is long gone.
+      [[ $href == file://* ]] || continue
+
+      printf '%s\t%s\n' "$modified" "$(urldecode "$(unescape_xml "${href#file://}")")"
+    done | sort -r
+)
+
+exit 0

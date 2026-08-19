@@ -1,0 +1,20 @@
+{
+  "id": "snip",
+  "title": "Snippets",
+  "keyword": "snip",
+  "aliases": [
+    "snippet",
+    "snippets",
+    "text",
+    "expand"
+  ],
+  "subtitle": "Snippet",
+  "glyph": "",
+  "search": "omacast-snippet {query}",
+  "when": "test -f \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast-snippets.json\"",
+  "minChars": 0,
+  "debounceMs": 80,
+  "maxRows": 20,
+  "tier": "substring",
+  "view": "list"
+}

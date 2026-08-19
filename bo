@@ -1028,6 +1028,354 @@ cmd_registry() {
   "$builder"
 }
 
+# ---------------------------------------------------------------- testing
+#
+# Nothing else looks at what an extension prints. A script that emits malformed
+# JSON fails silently in the launcher, because one unparseable line is skipped
+# so the rest of a long answer survives, and the result is a keyword that shows
+# nothing and says nothing. This runs each one and reads the answer the way the
+# launcher would, then says where it stopped making sense.
+
+# The query every extension is asked. Short, harmless, and nothing in
+# particular, because this tests the shape of an answer and not its content.
+TEST_QUERY="test"
+
+# ok, skipped and fail line up in one column, so one failure in a long run is
+# findable rather than buried in a sentence.
+test_line() {
+  local state="$1" name="$2" mark
+  shift 2
+  case "$state" in
+  ok) mark=$(green "$(printf '%-7s' ok)") ;;
+  skipped) mark=$(dim "$(printf '%-7s' skipped)") ;;
+  *) mark=$(red "$(printf '%-7s' fail)") ;;
+  esac
+  printf '  %s %-22s %s\n' "$mark" "$name" "$*"
+}
+
+# One extension JSON, read in a single pass: whether it is usable, which command
+# it names, how long to wait, that command with its placeholders filled in twice
+# over, and its `when` gate. A problem comes back as one line starting with `!`,
+# so a caller never has to parse a report to find out whether it is one.
+ext_meta() {
+  python3 - "$1" "$2" <<'PY'
+import json, re, shlex, sys
+
+VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player")
+TIERS = ("calc", "forced", "prefix", "substring", "weak", "file", "web")
+NUMBERS = ("minChars", "debounceMs", "timeoutMs", "maxRows")
+
+path, sample = sys.argv[1:3]
+
+
+def fail(message):
+    print("!" + message)
+    sys.exit(0)
+
+
+try:
+    ext = json.load(open(path, encoding="utf-8"))
+except Exception as e:
+    fail(f"not JSON: {e}")
+
+if not isinstance(ext, dict):
+    fail("the top level is not an object")
+
+# The launcher drops an extension with neither of these and says nothing, so a
+# typo in either key costs a keyword with no error anywhere.
+if not str(ext.get("id", "")).strip():
+    fail("no id, so the launcher ignores the file without a word")
+search = str(ext.get("search", "")).strip()
+if not search:
+    fail("no search, so the launcher ignores the file without a word")
+
+view = ext.get("view")
+if view is not None and view not in VIEWS:
+    fail(f"view is {view!r}, and it is one of: {', '.join(VIEWS)}")
+
+tier = ext.get("tier")
+if tier is not None and tier not in TIERS:
+    fail(f"tier is {tier!r}, and it is one of: {', '.join(TIERS)}")
+
+for key in NUMBERS:
+    if key not in ext:
+        continue
+    value = ext[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        fail(f"{key} is {value!r}, which is not a number")
+
+# {query} takes the query, shell quoted; every other placeholder takes an empty
+# argument, which is what the launcher passes for a filter nobody typed.
+def command(query):
+    return re.sub(
+        r"\{([A-Za-z0-9_-]+)\}",
+        lambda m: shlex.quote(query) if m.group(1).lower() == "query" else "''",
+        search,
+    )
+
+
+timeout = ext.get("timeoutMs", 4000)
+seconds = max(1, int((timeout + 999) // 1000))
+
+# An extension whose minChars is 0 is the kind that answers a bare `sys:` with
+# everything it has and a typed `sys:test` with nothing, so it is asked both
+# ways. Testing only the typed form would test almost nothing.
+bare = command("") if ext.get("minChars", 1) == 0 else ""
+
+print("ok")
+print(search.split()[0])
+print(seconds)
+print(command(sample))
+print(bare)
+print(str(ext.get("when", "")).replace("\n", " "))
+PY
+}
+
+# What came back, checked the way the launcher reads it. Prints how many rows
+# there were, or one `!` line naming the first problem with the output that
+# caused it under it.
+ext_rows() {
+  python3 - "$1" <<'PY'
+import json, sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read().strip()
+
+
+def fail(message, offending=""):
+    print("!" + message)
+    if offending:
+        print(offending[:400])
+    sys.exit(0)
+
+
+def number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+if text == "":
+    print(0)
+    sys.exit(0)
+
+# A whole document first, array or single object, then one object per line. The
+# launcher skips a line it cannot parse so that one bad row does not lose the
+# other forty; here that silence is the thing being hunted, so a bad line is the
+# answer rather than being stepped over.
+try:
+    whole = json.loads(text)
+except ValueError:
+    whole = None
+
+rows = None
+if isinstance(whole, list):
+    rows = whole
+elif isinstance(whole, dict):
+    rows = [whole]
+
+if rows is None:
+    rows = []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError as e:
+            fail(f"line {n} is not JSON: {e}", line)
+
+for n, row in enumerate(rows, 1):
+    dump = json.dumps(row) if not isinstance(row, str) else row
+    if not isinstance(row, dict):
+        fail(f"row {n} is not an object", dump)
+
+    title = row.get("title")
+    if title is None or isinstance(title, bool) or str(title).strip() == "":
+        fail(f"row {n} has no title, so the launcher drops it", dump)
+
+    if "exec" in row and not isinstance(row["exec"], str):
+        fail(f"row {n}: exec is not a string", dump)
+
+    if "score" in row and not number(row["score"]):
+        fail(f"row {n}: score is not a number", dump)
+
+    if "progress" in row:
+        progress = row["progress"]
+        if not number(progress):
+            fail(f"row {n}: progress is not a number", dump)
+        if not 0 <= progress <= 1:
+            fail(f"row {n}: progress is {progress}, and it is a fraction from 0 to 1", dump)
+
+    actions = row.get("actions")
+    if actions is not None:
+        if not isinstance(actions, list):
+            fail(f"row {n}: actions is not an array", dump)
+        for i, action in enumerate(actions, 1):
+            if not isinstance(action, dict):
+                fail(f"row {n}: action {i} is not an object", dump)
+            if str(action.get("title", "")).strip() == "":
+                fail(f"row {n}: action {i} has no title", dump)
+
+print(len(rows))
+PY
+}
+
+# Run one command and read what it printed. Prints a row count, or a `!` line
+# and the output that caused it, the same shape ext_rows uses.
+ext_answer() {
+  local cmd="$1" secs="$2" out err status
+  out=$(mktemp)
+  err=$(mktemp)
+
+  # stderr is kept apart, because the launcher reads stdout alone: a script that
+  # warns and still answers is fine, and one that only warns is not.
+  timeout "$secs" bash -lc "$cmd" >"$out" 2>"$err"
+  status=$?
+
+  if ((status == 124)); then
+    printf '!no answer in %ss\n%s\n' "$secs" "$cmd"
+  elif [[ ! -s $out && -s $err ]]; then
+    printf '!printed nothing, and wrote to stderr\n'
+    head -5 "$err"
+  else
+    ext_rows "$out"
+  fi
+
+  rm -f "$out" "$err"
+}
+
+rows_word() { ((${1:-0} == 1)) && printf '1 row' || printf '%s rows' "${1:-0}"; }
+
+test_extension() {
+  local file="$1" name binary secs when problem detail cmd
+  local -a info result queries counts=()
+  name=$(basename "$file" .json)
+
+  mapfile -t info < <(ext_meta "$file" "$TEST_QUERY")
+  problem="${info[0]:-!could not be read at all}"
+  [[ $problem == ok ]] || {
+    test_line fail "$name" "${problem#!}"
+    return 1
+  }
+  binary="${info[1]:-}"
+  secs="${info[2]:-4}"
+  queries=("${info[3]:-}")
+  [[ -n ${info[4]:-} ]] && queries+=("${info[4]}")
+  when="${info[5]:-}"
+
+  command -v "$binary" >/dev/null || {
+    test_line fail "$name" "search names $binary, which is not on PATH"
+    return 1
+  }
+
+  # The `when` gate first. An extension for software this machine does not have
+  # is not a failure, it is an extension that correctly never runs here.
+  if [[ -n $when ]] && ! bash -lc "$when" >/dev/null 2>&1; then
+    test_line skipped "$name" "when condition false: $when"
+    return 0
+  fi
+
+  for cmd in "${queries[@]}"; do
+    mapfile -t result < <(ext_answer "$cmd" "$secs")
+    problem="${result[0]:-!the output could not be read at all}"
+    [[ $problem != '!'* ]] || {
+      test_line fail "$name" "${problem#!}"
+      ((${#result[@]} > 1)) && printf '%s\n' "${result[@]:1}" | sed 's/^/          /'
+      return 1
+    }
+    counts+=("$problem")
+  done
+
+  detail="$(rows_word "${counts[0]}")"
+  [[ -n ${counts[1]:-} ]] && detail+=", ${counts[1]} bare"
+  test_line ok "$name" "$detail"
+}
+
+# A unit.toml that is wrong fails later and further away: bo registry refuses to
+# build, or a plugin links under a name Omarchy never enables.
+test_unit_toml() {
+  local ref="$1" dir kind key id manifest
+  local -a missing=()
+  dir=$(ref_dir "$ref")
+
+  for key in name summary version kind; do
+    [[ -n $(meta "$ref" "$key") ]] || missing+=("$key")
+  done
+  ((${#missing[@]} == 0)) || {
+    test_line fail unit.toml "no $(printf '%s\n' "${missing[@]}" | join_lines)"
+    return 1
+  }
+
+  [[ $(meta "$ref" name) == "$(ref_unit "$ref")" ]] || {
+    test_line fail unit.toml "name is $(meta "$ref" name), and the folder is $(ref_unit "$ref")"
+    return 1
+  }
+
+  kind=$(meta "$ref" kind)
+  case "$kind" in
+  plugin | hypr | setting) ;;
+  *)
+    test_line fail unit.toml "kind is '$kind', and it is one of: plugin, hypr, setting"
+    return 1
+    ;;
+  esac
+
+  if [[ $kind == plugin ]]; then
+    id=$(meta "$ref" id)
+    manifest="$dir/plugin/manifest.json"
+    [[ -n $id ]] || {
+      test_line fail unit.toml "kind is plugin and there is no id to link it under"
+      return 1
+    }
+    [[ -f $manifest ]] || {
+      test_line fail unit.toml "kind is plugin and there is no plugin/manifest.json"
+      return 1
+    }
+    [[ $(json_get "$manifest" id) == "$id" ]] || {
+      test_line fail unit.toml "id is $id, and manifest.json says $(json_get "$manifest" id)"
+      return 1
+    }
+  fi
+
+  test_line ok unit.toml "$kind, $(meta "$ref" version)"
+}
+
+test_unit() {
+  local ref="$1" file bad=0
+  say "$(bold "$ref")"
+  test_unit_toml "$ref" || bad=1
+
+  shopt -s nullglob
+  for file in "$(ref_dir "$ref")"/config/omarchy/omacast/extensions/*.json; do
+    test_extension "$file" || bad=1
+  done
+  shopt -u nullglob
+
+  return $bad
+}
+
+cmd_test() {
+  local ref refs failed=0
+  if (($# > 0)); then
+    refs=$(resolve_ref "$1")
+  else
+    refs=$(all_refs)
+  fi
+
+  command -v timeout >/dev/null || die "timeout is not installed, and a test that cannot give up would hang"
+
+  while read -r ref; do
+    [[ -z $ref ]] && continue
+    test_unit "$ref" || failed=1
+  done <<<"$refs"
+
+  say ""
+  if ((failed == 0)); then
+    say "$(green 'Every extension answered, and every unit.toml holds up.')"
+  else
+    say "$(red 'Something above needs fixing.')"
+  fi
+  return $failed
+}
+
 cmd_validate() {
   local ref failed=0 dir
   while read -r ref; do
@@ -1462,6 +1810,7 @@ bo - Omarchy customizations, from any marketplace
 
   bo market ...           add, remove and inspect marketplaces
   bo doctor               check every linked unit's dependencies exist
+  bo test [unit]          run each launcher extension and check what it prints
   bo validate             run omarchy plugin validate on every plugin unit
   bo registry [name]      rebuild a marketplace's registry.json (authors)
   bo sync                 copy the live shell.json into this checkout
@@ -1485,6 +1834,7 @@ outdated) cmd_outdated ;;
 relink) cmd_relink ;;
 market | marketplace) shift; cmd_market "$@" ;;
 doctor) cmd_doctor ;;
+test) shift; cmd_test "$@" ;;
 validate) cmd_validate ;;
 registry) shift; cmd_registry "$@" ;;
 sync) cmd_sync ;;

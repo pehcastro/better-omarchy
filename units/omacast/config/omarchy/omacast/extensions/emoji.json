@@ -1,0 +1,20 @@
+{
+  "id": "emoji",
+  "title": "Emoji",
+  "keyword": "emoji",
+  "aliases": [
+    "emojis",
+    "e",
+    "smiley",
+    "symbol"
+  ],
+  "subtitle": "Emoji",
+  "glyph": "",
+  "search": "omacast-emoji {query}",
+  "when": "test -f /usr/share/omarchy/shell/plugins/emojis/emojis.json",
+  "minChars": 0,
+  "debounceMs": 100,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

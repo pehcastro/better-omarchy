@@ -342,15 +342,31 @@ bo test              every unit
 bo test weather      one
 ```
 
-For each extension JSON in the unit it checks the JSON itself, that the command
-in `search` is on `PATH`, and then runs it with a sample query and checks every
-row that came back. An extension whose `when` fails on this machine is reported
-as skipped rather than as a failure. It also checks every `unit.toml`, and that
-a plugin unit's `manifest.json` carries the same `id`.
+For each extension JSON in the unit it checks the JSON itself, checks that the
+command named in `search` is on `PATH`, runs it, and reads what came back the
+way the launcher would: every row parsed, every `title` there, `exec` a string,
+`score` a number, `progress` a fraction, every action carrying a title. It also
+checks every `unit.toml`, and that a plugin unit's `manifest.json` carries the
+same `id`.
 
-`bo test` runs the command for real, with `{query}` replaced by a harmless term
-and every other placeholder empty. An extension that writes something when it
-runs will write it.
+```
+ok      theme                  0 rows, 22 bare
+skipped spotify-library        when condition false: test -s ...
+fail    weather                row 2 has no title, so the launcher drops it
+```
+
+An extension whose `when` fails on this machine is skipped rather than failed,
+because an extension for software you do not have is meant not to run here.
+
+`{query}` is replaced by a harmless term and every other placeholder by an empty
+argument, which is what the launcher passes for a filter nobody typed. An
+extension whose `minChars` is 0 is asked twice, once with the term and once with
+nothing, because that kind answers a bare `sys:` with everything it has and a
+typed `sys:test` with nothing. The two counts are the `rows` and the `bare` in
+the report.
+
+The command runs for real. An extension that writes something when it runs will
+write it.
 
 Editing the QML wants a full `omarchy restart shell` to be certain. After each
 reload, check `journalctl --user -n 50 | grep -iE "TypeError|error"`: a

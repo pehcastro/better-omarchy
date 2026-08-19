@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "2c0f9489a2bf53be1e8e2f83986d9c09db593a1b",
+  "generated_at_commit": "0c02d06d1da6f647c9734782b5ba1c81fda412ef",
   "units": {
     "nkz-keys": {
       "name": "nkz-keys",
@@ -23,12 +23,13 @@
         "ALT+F4",
         "SUPER+E",
         "SUPER+B",
-        "SUPER+R"
+        "SUPER+R",
+        "SUPER+grave"
       ],
       "pluginId": "",
       "path": "units/nkz-keys",
       "files": 5,
-      "hash": "1c845a838aaa52caf166158557184c7b45bd9e850bfee69f229f55a26c8e5d04",
+      "hash": "329e9025606dec6f049cb7aeb8eaa9b58d1172c198f05c657f4d84e1f2a54e90",
       "commit": "2c0f9489a2bf53be1e8e2f83986d9c09db593a1b",
       "updated": "2026-08-18T20:21:13-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -59,10 +60,10 @@
       ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 56,
-      "hash": "b537886e9b8637cca9c8ceda97608bef901b9f6d84ba77de98b4dfce40ff1631",
-      "commit": "6c83ab84f1498058f0c4689c57dd2b03af41e81c",
-      "updated": "2026-08-18T20:07:15-03:00",
+      "files": 63,
+      "hash": "367bec1cd76022f2101ebb6585032b3fc16dbabfacbfd42fce0352ee609d8f88",
+      "commit": "0c02d06d1da6f647c9734782b5ba1c81fda412ef",
+      "updated": "2026-08-18T20:55:46-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {

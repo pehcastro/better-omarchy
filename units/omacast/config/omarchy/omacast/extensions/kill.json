@@ -1,0 +1,19 @@
+{
+  "id": "kill",
+  "title": "Processes",
+  "keyword": "kill",
+  "aliases": [
+    "ps",
+    "proc",
+    "process",
+    "quit"
+  ],
+  "subtitle": "Process",
+  "glyph": "",
+  "search": "omacast-kill {query}",
+  "minChars": 2,
+  "debounceMs": 200,
+  "maxRows": 10,
+  "tier": "substring",
+  "view": "list"
+}

@@ -1,0 +1,68 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `kill:` keyword: find a running process and
+# end it.
+#
+#   kill:chrome     every process whose name or command line matches
+#
+# Two characters minimum, and no answer at all for a bare `kill:`. Listing
+# every process on the machine with SIGTERM one keypress away is a way to lose
+# a session by leaning on the return key.
+
+set -uo pipefail
+
+query="${1:-}"
+
+((${#query} >= 2)) || exit 0
+
+needle="${query,,}"
+self=$$
+parent=$PPID
+rank=90000
+
+# --sort=-rss does the ordering, so the process actually eating the machine is
+# the one under the cursor rather than the one that happened to start first.
+#
+# comm is a single kernel token and never contains a space, so it can sit in
+# the middle of the line and still leave args as the whole remainder.
+while read -r pid rss cpu comm args; do
+  [[ -z ${pid:-} ]] && continue
+  [[ $pid == "$self" || $pid == "$parent" ]] && continue
+
+  # Kernel threads have no command line worth showing and cannot be signalled.
+  [[ $args == \[*\] ]] && continue
+
+  # Never offer to kill the thing that is drawing this list, or the shell it
+  # runs inside: the row would work exactly once.
+  case $args in
+    *quickshell*|*omarchy-shell*|*omacast*) continue ;;
+  esac
+
+  [[ ${comm,,} == *"$needle"* || ${args,,} == *"$needle"* ]] || continue
+
+  memory=$(numfmt --to=iec --from-unit=1024 --suffix=B "$rss" 2>/dev/null || printf '%sK' "$rss")
+
+  # The full command line of a browser tab is several hundred characters of
+  # sandbox flags. The first part of it is the part that identifies it.
+  line="${args//$'\t'/ }"
+  line="${line/#$HOME/\~}"
+  ((${#line} > 88)) && line="${line:0:88}…"
+
+  jq -cn --arg id "$pid" --arg t "$comm" --arg s "$line" \
+    --arg d "PID $pid  ·  ${cpu}% CPU" --arg a "$memory" \
+    --arg term "kill -TERM $pid" --arg force "kill -KILL $pid" \
+    --arg pid "$pid" --argjson sc "$rank" \
+    '{
+       id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
+       exec: $term, score: $sc,
+       actions: [
+         { title: "Terminate", shortcut: "↵", exec: $term },
+         { title: "Force Kill", exec: $force },
+         { title: "Copy PID", exec: ("printf %s " + ($pid | @sh) + " | wl-copy") }
+       ]
+     }'
+
+  rank=$((rank - 100))
+  ((rank <= 87000)) && break
+done < <(ps -eo pid=,rss=,pcpu=,comm=,args= --sort=-rss 2>/dev/null)
+
+exit 0

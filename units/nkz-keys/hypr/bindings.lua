@@ -48,3 +48,11 @@ hl.on("window.active", function(window)
     unbind_copy_path()
   end
 end)
+
+-- Super+` returns to the workspace you came from, and pressing it again brings
+-- you back. Omarchy has this on Super+Ctrl+Tab, which is a chord; this is the
+-- key next to 1, where the thing that flips between two places belongs.
+--
+-- Not Super+Tab: that walks forward through every workspace in order, which is
+-- a different question. This one only ever knows about two.
+o.bind("SUPER + grave", "Previous workspace", hl.dsp.focus({ workspace = "previous" }))

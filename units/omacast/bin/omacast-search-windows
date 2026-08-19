@@ -4,8 +4,9 @@
 #   win:            every window
 #   win:chrome      by class or title
 #
-# Focus goes through the Lua dispatcher, not `dispatch focuswindow`: under a Lua
-# config the old string form returns ok and does nothing.
+# Focus and close both go through the Lua dispatcher, not `dispatch
+# focuswindow` or `dispatch closewindow`: under a Lua config the old string
+# form returns ok and does nothing.
 
 set -uo pipefail
 
@@ -19,11 +20,21 @@ hyprctl clients -j 2>/dev/null | jq -c --arg q "${query,,}" '
     | select($q == "" or ((.class + " " + .title) | ascii_downcase | contains($q)))
   ]
   | to_entries[]
+  | .key as $i
+  | .value
+  | ("address:" + .address) as $target
+  | ("hyprctl dispatch " +
+     ("hl.dsp.focus({ window = \"" + $target + "\" })" | @sh)) as $focus
+  | ("hyprctl dispatch " +
+     ("hl.dsp.window.close({ window = \"" + $target + "\" })" | @sh)) as $close
   | {
-      id: .value.address,
-      title: (if .value.title == "" then .value.class else .value.title end),
-      subtitle: (.value.class + "  ·  " + .value.workspace),
-      exec: ("hyprctl dispatch " +
-             ("hl.dsp.focus({ window = \"address:" + .value.address + "\" })" | @sh)),
-      score: (90000 - (.key * 500))
+      id: .address,
+      title: (if .title == "" then .class else .title end),
+      subtitle: (.class + "  ·  " + .workspace),
+      exec: $focus,
+      score: (90000 - ($i * 500)),
+      actions: [
+        { title: "Focus", shortcut: "↵", exec: $focus },
+        { title: "Close Window", exec: $close }
+      ]
     }'

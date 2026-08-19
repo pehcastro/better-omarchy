@@ -1,0 +1,19 @@
+{
+  "id": "recent",
+  "title": "Recent Files",
+  "keyword": "recent",
+  "aliases": [
+    "recents",
+    "last",
+    "opened"
+  ],
+  "subtitle": "Recent",
+  "glyph": "",
+  "search": "omacast-recent {query}",
+  "when": "test -f \"$HOME/.local/share/recently-used.xbel\"",
+  "minChars": 0,
+  "debounceMs": 120,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

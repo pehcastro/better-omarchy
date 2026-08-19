@@ -1,0 +1,57 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `snip:` keyword: text you keep retyping,
+# expanded into the clipboard.
+#
+#   snip:           every snippet
+#   snip:sig        the ones whose name or text matches
+#
+# Snippets live in ~/.config/omarchy/omacast-snippets.json, a flat object of
+# name to text:
+#
+#   { "sig": "Luiz\nhttps://nkz.md", "addr": "..." }
+#
+# No file means no snippets, which is not an error and not a row telling you
+# so. The extension's `when` keeps it out of the launcher entirely until you
+# write one.
+
+set -uo pipefail
+
+query="${1:-}"
+SNIPPETS="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast-snippets.json"
+
+[[ -f $SNIPPETS ]] || exit 0
+
+jq -c --arg q "${query,,}" '
+  # A hand-edited file is a file that is sometimes mid-edit. Anything that is
+  # not an object of strings is skipped rather than turned into a broken row.
+  if type != "object" then empty else
+    [ to_entries[]
+      | select((.value | type) == "string" and .value != "")
+      | select($q == ""
+               or (.key | ascii_downcase | contains($q))
+               or (.value | ascii_downcase | contains($q)))
+    ]
+    | to_entries[]
+    | .key as $i
+    | .value
+    | ("printf %s " + (.value | @sh) + " | wl-copy") as $copy
+    | {
+        id: .key,
+        title: .key,
+        # Newlines in a one-line row read as missing text, so the subtitle
+        # shows the shape of the snippet rather than only its first line.
+        subtitle: (.value | gsub("\\s+"; " ") | .[0:110]),
+        preview: .value,
+        exec: $copy,
+        score: (90000 - ($i * 100)),
+        actions: [
+          { title: "Copy Snippet", shortcut: "↵", exec: $copy },
+          # The launcher has to be gone before the keystrokes are sent, or the
+          # window that gets typed into is the search box.
+          { title: "Type Into Window", exec: ("sleep 0.2; wtype " + (.value | @sh)) },
+          { title: "Copy Name", exec: ("printf %s " + (.key | @sh) + " | wl-copy") }
+        ]
+      }
+  end' "$SNIPPETS" 2>/dev/null
+
+exit 0

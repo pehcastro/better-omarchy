@@ -19,64 +19,64 @@ DATA="/usr/share/omarchy/shell/plugins/emojis/emojis.json"
 # With no query the answer is neither nothing nor all 1800 of them. These terms
 # resolve through the same matcher a typed search uses, so the default set is a
 # list of intentions rather than a second copy of the data.
-DEFAULTS='["heart","thumbs up","fire","tada","rocket","check mark","cross mark",
-           "warning","pray","clap","wave","hundred","thinking","sparkles",
-           "star","bulb","bug","wrench","laptop","calendar","coffee","pizza",
-           "brain","muscle","rainbow","robot","ghost","skull","eyes","joy",
-           "sob","cool","heart_eyes","grin","ok hand","shrug"]'
+DEFAULTS='["red heart","thumbs up","fire","tada","rocket","check mark button",
+           "cross mark","warning","pray","clap","wave","hundred","thinking",
+           "sparkles","star","bulb","bug","wrench","laptop","calendar","coffee",
+           "pizza","brain","muscle","rainbow","robot","ghost","skull","eyes",
+           "face with tears of joy","sob","smiling face with sunglasses",
+           "heart_eyes","grin","ok hand","shrug"]'
 
 jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" '
   # A whole-word hit beats a prefix hit beats a substring hit. Inside a band an
   # earlier and shorter keyword wins, which is what puts ⭐ "star" above
   # 💫 "dizzy star" and 🔥 "fire burn" above 🚒 "fire_engine fire engine".
   def rank($needle):
-    (.k | ascii_downcase) as $k
-    | ($k | split(" ")) as $words
-    | (if ($words | index($needle)) != null then 3000
-       elif any($words[]; startswith($needle)) then 2000
-       elif ($k | contains($needle)) then 1000
-       else 0 end) as $band
+    (if (.w | index($needle)) != null then 3000
+     elif any(.w[]; startswith($needle)) then 2000
+     elif (.k | contains($needle)) then 1000
+     else 0 end) as $band
     | if $band == 0 then 0
       else
-        (($k | index($needle)) // 200) as $at
-        | $band + (200 - ([$at, 200] | min)) + (100 - ([($k | length), 100] | min))
+        ((.k | index($needle)) // 200) as $at
+        | $band + (200 - ([$at, 200] | min)) + (100 - ([(.k | length), 100] | min))
       end;
 
-  # The keyword string is a name followed by its aliases, and repeats words
-  # between them. Dropping the repeats leaves something that reads as a label.
-  def label:
-    (.k | gsub("_"; " ") | split(" "))
-    | reduce .[] as $w ([]; if index($w) then . else . + [$w] end)
-    | join(" ")
-    | .[0:64];
-
   def row($score):
-    (label) as $name
-    | ("printf %s " + (.e | @sh) + " | wl-copy") as $copy
+    ("printf %s " + (.e | @sh) + " | wl-copy") as $copy
     | {
         id: .e,
-        title: $name,
+        title: .name,
         glyph: .e,
         exec: $copy,
         score: $score,
         actions: [
           { title: "Copy Emoji", shortcut: "↵", exec: $copy },
-          # The launcher closes first, so the keystrokes need a window to
-          # land in by the time they are sent.
+          # The launcher closes first, so the keystrokes need a window to land
+          # in by the time they are sent.
           { title: "Type It", exec: ("sleep 0.2; wtype " + (.e | @sh)) },
-          { title: "Copy Name", exec: ("printf %s " + ($name | @sh) + " | wl-copy") }
+          { title: "Copy Name", exec: ("printf %s " + (.name | @sh) + " | wl-copy") }
         ]
       };
 
-  . as $all
+  # Lowercasing and splitting once rather than once per comparison: the default
+  # set alone asks 36 questions of every entry in the file.
+  [ .[]
+    | (.k | ascii_downcase) as $k
+    # The keyword string is a name followed by its aliases, and repeats words
+    # between them. Dropping the repeats leaves something that reads as a label.
+    | ($k | gsub("_"; " ") | split(" ")
+       | reduce .[] as $w ([]; if index($w) then . else . + [$w] end)
+       | join(" ") | .[0:64]) as $name
+    | { e: .e, k: $k, w: ($k | split(" ")), name: $name }
+  ] as $all
   | (if $q == "" then
        [ $defaults[]
          | . as $needle
-         | ([ $all[] | select(rank($needle) > 0) ] | max_by(rank($needle)))
+         | ([ $all[] | . + { r: rank($needle) } | select(.r > 0) ] | max_by(.r))
          | select(. != null)
        ]
      else
-       [ $all[] | select(rank($q) > 0) ] | sort_by(-(rank($q))) | .[0:40]
+       [ $all[] | . + { r: rank($q) } | select(.r > 0) ] | sort_by(-.r) | .[0:40]
      end)
   | to_entries[]
   | .key as $i
