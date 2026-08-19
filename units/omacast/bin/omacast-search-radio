@@ -281,7 +281,16 @@ now_playing() {
        id: "now",
        kind: "player",
        view: "radioplayer",
-       score: 99000,
+       # The ceiling of a row's own score, not a comfortable margin above the
+       # stations. `local` is clamped to 99999 and never crosses a tier, so this
+       # is the highest a row in this answer can rank and the player cannot be
+       # pushed down the list by a station the ranker happens to like. The view
+       # no longer depends on that, but a player that is not first is still
+       # wrong, and this is where it is cheapest to say so.
+       score: 99999,
+       # Where an action lands afterwards. The view rewrites the first action to
+       # whichever control is armed and needs to keep this on it.
+       followUp: $followUp,
        title: $t,
        subtitle: $s,
        station: $station,
@@ -388,6 +397,11 @@ stations() {
 case "${1:-}" in
   play) shift; play "$@"; exit 0 ;;
   ctl)  shift; ctl  "$@"; exit 0 ;;
+  # What is playing and nothing else, for the bar widget. It polls, so it must
+  # never touch the network: without its own entry point it would have to run
+  # the whole search to find out whether the radio is on. Nothing playing prints
+  # nothing, which is how the widget knows to be absent rather than empty.
+  status) now_playing "radio:"; exit 0 ;;
 esac
 
 query="${1:-}"

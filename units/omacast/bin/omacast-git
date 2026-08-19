@@ -191,8 +191,14 @@ if [[ -z $needle ]]; then
          # have opened anyway are one key away rather than a terminal and a cd.
          { title: "Open in Lazygit",
            exec: ("omarchy-launch-tui --app-id=org.omarchy.lazygit lazygit -p " + $quoted) },
+         # herdr takes no path: it is a session manager, not a viewer. Passing
+         # the repo as an argument opened a terminal that died before it drew.
+         # A session named after the repo is the closest thing it has to
+         # "open this project", and attaching to it again later is the point of
+         # a named session.
          { title: "Open in Herdr",
-           exec: ("omarchy-launch-tui --app-id=org.omarchy.herdr herdr " + $quoted) },
+           exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $quoted
+                  + " herdr --session " + ($name | @sh)) },
          { title: "Open in Editor",
            exec: ("omarchy-launch-editor " + $quoted) },
          { title: "Open Terminal Here",

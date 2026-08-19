@@ -23,10 +23,16 @@ import qs.Ui
 // clock is time spent listening, which is the only elapsed number that means
 // anything on a stream with no beginning.
 //
+// Keyboard first, because this is a launcher. Up and down walk the rows as
+// they do in every other view, left and right walk the five controls, and
+// Enter presses the one with the ring on it. The launcher routes left and
+// right here through `nudge`; Enter arrives on its own, through the row's
+// first action, which `applyArm` points at the armed control.
+//
 // Rows carry:
 //   kind      "player" for the one at the top, "station" for the rest
 //   status    Connecting | Buffering | Playing | Paused
-//   station volume muted elapsedSeconds
+//   station volume muted elapsedSeconds followUp
 //   controls  { playPause, stop, mute, volumeUp, volumeDown }
 Item {
   // The card cannot hold a view that draws past its own height, and every view
@@ -41,20 +47,43 @@ Item {
   // Room left in the card. Set by the launcher; this view only clips to it.
   property int maxHeight: 0
 
-  // The player is only ever the first row, and only when the script put one
-  // there. Nothing playing means this whole block is absent and the stations
-  // start at the top, which is the same view drawing one thing less rather
-  // than a second view to switch to.
-  readonly property var player: {
+  // The player row, wherever it ended up.
+  //
+  // This looked for it at index 0 and the panel vanished the moment anything
+  // was typed. The launcher does not promise an order: after `Rank.merge` the
+  // rows are re-scored by frecency and by pins, both of which lift a row inside
+  // its tier, and a pin is worth 20000 against the 9000 that separated the
+  // player from the stations. A station you had pinned or played often
+  // therefore sorted above it, the first row stopped being the player, and a
+  // check on rows[0] read that as "nothing is playing". A station playing means
+  // the player is on screen, so the player is found by what it is and not by
+  // where it sits.
+  readonly property int playerIndex: {
     var rows = view.launcher.rows
-    if (rows.length === 0) return null
-    return String(rows[0].kind || "") === "player" ? rows[0] : null
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i].kind || "") === "player") return i
+    }
+    return -1
   }
 
-  readonly property bool hasPlayer: view.player !== null
-  // How far the launcher's selection is ahead of this list's own index.
-  readonly property int offset: view.hasPlayer ? 1 : 0
-  readonly property var stations: view.launcher.rows.slice(view.offset)
+  readonly property var player: view.playerIndex >= 0
+    ? view.launcher.rows[view.playerIndex] : null
+  readonly property bool hasPlayer: view.playerIndex >= 0
+  readonly property bool playerSelected: view.hasPlayer
+    && view.launcher.selectedIndex === view.playerIndex
+
+  // Everything that is not the player, each carrying the launcher index it came
+  // from. A fixed offset would be wrong for the same reason rows[0] was: the
+  // player is not guaranteed to be the row above them.
+  readonly property var stations: {
+    var out = []
+    var rows = view.launcher.rows
+    for (var i = 0; i < rows.length; i++) {
+      if (i === view.playerIndex) continue
+      out.push({ row: rows[i], at: i })
+    }
+    return out
+  }
 
   readonly property string status: view.hasPlayer ? String(view.player.status || "") : ""
   readonly property bool paused: view.status === "Paused"
@@ -64,6 +93,93 @@ Item {
 
   readonly property int panelHeight: view.hasPlayer ? Style.space(118) : 0
   readonly property int rowHeight: Style.space(58)
+
+  // ---------------------------------------------------------- the transport
+  //
+  // Five controls, in one list, because three things read from it: the buttons
+  // drawn on the panel, the ring that says which one Enter will press, and the
+  // action written into the row so that Enter presses it. Two of those used to
+  // be a mouse handler and nothing else, which is why none of this worked
+  // without a pointer.
+  readonly property var transport: [
+    { key: "playPause",  title: view.paused ? "Resume" : "Pause",
+      glyph: view.paused ? "󰐊" : "󰏤", primary: true,  danger: false, on: false },
+    // Stop is as large as play and drawn in the warning colour. It is the
+    // control whose absence caused this rewrite, so it is not a small grey
+    // glyph at the end of a row.
+    { key: "stop",       title: "Stop",
+      glyph: "󰓛", primary: true,  danger: true,  on: false },
+    { key: "volumeDown", title: "Volume Down",
+      glyph: "󰝞", primary: false, danger: false, on: false },
+    { key: "volumeUp",   title: "Volume Up",
+      glyph: "󰝝", primary: false, danger: false, on: false },
+    { key: "mute",       title: view.muted ? "Unmute" : "Mute",
+      glyph: "󰝟", primary: false, danger: false, on: view.muted }
+  ]
+
+  // Which control Enter will press. Play and pause, always, until the arrows
+  // move it.
+  property int armed: 0
+
+  // Left and right, from the launcher's key handler.
+  //
+  // The scheme: up and down walk the rows as they do everywhere, left and right
+  // walk the five controls, and Enter presses the one with the ring on it. It
+  // only answers while the selection is on the player, so left and right never
+  // move anything while you are picking a station, and the ring is only drawn
+  // then either: a ring you cannot press would be a lie about where Enter goes.
+  // The player is the first row, so reaching the controls from the list is one
+  // press of Up.
+  //
+  // No wrapping at the ends. Wrapping saves one keypress and costs you knowing
+  // where you are, and the two ends of this row are Pause and Mute, which are
+  // not neighbours in any sense a listener would expect.
+  function nudge(delta) {
+    if (!view.playerSelected) return
+    view.armed = Math.max(0, Math.min(view.transport.length - 1, view.armed + delta))
+    view.applyArm()
+  }
+
+  // Point the row's first action at the armed control.
+  //
+  // `activate` runs `row.actions[0]` when that action carries a `query`, and it
+  // reads it at the moment Enter is pressed rather than when the row was built.
+  // So arming a control is writing it into that slot. The alternative was a
+  // second key route in the launcher for Enter, which would have to know what a
+  // radio is; this keeps the knowledge here.
+  //
+  // The rows array is rebuilt on every refresh, which throws this away, so it
+  // is re-applied whenever the rows change rather than only when the ring
+  // moves.
+  function applyArm() {
+    var row = view.player
+    if (!row || !row.controls) return
+    if (!row.actions || row.actions.length === 0) return
+
+    var control = view.transport[view.armed]
+    if (!control) return
+
+    var exec = String(row.controls[control.key] || "")
+    if (exec === "") return
+
+    row.actions[0].title = control.title
+    row.actions[0].exec = exec
+    // The follow-up is what keeps the launcher here after the press. The script
+    // put it on the row so this can rewrite the action without losing it.
+    row.actions[0].query = String(row.followUp || "radio:")
+  }
+
+  onArmedChanged: view.applyArm()
+  Component.onCompleted: view.applyArm()
+
+  // Back to play and pause when the player goes away, so the next station does
+  // not open with Stop under the ring.
+  onHasPlayerChanged: if (!view.hasPlayer) view.armed = 0
+
+  Connections {
+    target: view.launcher
+    function onRowsChanged() { view.applyArm() }
+  }
 
   // Seconds since the reading, added to it. The script reports a position at
   // the moment it ran; re-running it every second to move a number would be
@@ -146,7 +262,7 @@ Item {
     height: view.panelHeight
     visible: view.hasPlayer
 
-    readonly property bool selected: view.hasPlayer && view.launcher.selectedIndex === 0
+    readonly property bool selected: view.playerSelected
 
     Rectangle {
       anchors.fill: parent
@@ -161,7 +277,7 @@ Item {
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      onEntered: view.launcher.select(0)
+      onEntered: view.launcher.select(view.playerIndex)
       onClicked: view.launcher.activate(view.player)
     }
 
@@ -302,22 +418,16 @@ Item {
       spacing: Style.space(2)
 
       Repeater {
-        model: [
-          { key: "playPause", glyph: view.paused ? "󰐊" : "󰏤", size: "primary", danger: false, on: false },
-          // Stop is deliberately as large as play and drawn in the warning
-          // colour on hover. It is the control whose absence caused this
-          // rewrite, so it is not a small grey glyph at the end of a row.
-          { key: "stop",       glyph: "󰓛", size: "primary", danger: true,  on: false },
-          { key: "volumeDown", glyph: "󰝞", size: "small",   danger: false, on: false },
-          { key: "volumeUp",   glyph: "󰝝", size: "small",   danger: false, on: false },
-          { key: "mute",       glyph: "󰝟", size: "small",   danger: false, on: view.muted }
-        ]
+        model: view.transport
 
         Item {
           id: button
 
           required property var modelData
-          readonly property bool primary: button.modelData.size === "primary"
+          required property int index
+          readonly property bool primary: button.modelData.primary === true
+          // Where Enter goes, drawn only while Enter can go there.
+          readonly property bool armed: view.playerSelected && button.index === view.armed
 
           // One box for every button, so the glyph sizes do not shuffle the
           // spacing between them. Only the circle inside changes size.
@@ -331,7 +441,7 @@ Item {
             radius: width / 2
             color: {
               var tint = button.modelData.danger ? Color.urgent : Color.accent
-              if (button.primary) {
+              if (button.primary || button.armed) {
                 return Qt.rgba(tint.r, tint.g, tint.b, hover.containsMouse ? 0.32 : 0.18)
               }
               if (hover.containsMouse) {
@@ -340,6 +450,13 @@ Item {
               }
               return "transparent"
             }
+
+            // The ring, on the one Enter will press. A ring rather than a
+            // brighter fill: two of these buttons are already filled because
+            // they are the loud ones, and a keyboard cursor has to be legible
+            // on top of whatever the button looks like anyway.
+            border.width: button.armed ? Math.max(1, Style.space(2)) : 0
+            border.color: button.modelData.danger ? Color.urgent : Color.accent
           }
 
           Text {
@@ -374,6 +491,12 @@ Item {
             cursorShape: Qt.PointingHandCursor
             onClicked: {
               if (!view.player || !view.player.controls) return
+              // The pointer moves the ring too. Otherwise clicking Stop and
+              // then pressing Enter would run whatever the arrows were last
+              // left on, which is the sort of thing that gets a player a
+              // reputation for doing the wrong thing.
+              view.launcher.select(view.playerIndex)
+              view.armed = button.index
               view.run(view.player.controls[button.modelData.key])
             }
           }
@@ -393,26 +516,36 @@ Item {
     visible: view.shown > 0
     clip: true
     focus: false
-    // The player is index 0 when there is one, so this list is offset by it.
-    currentIndex: view.launcher.selectedIndex - view.offset
+    // Found rather than computed, because the player is not guaranteed to be
+    // the row above this list even though it is drawn above it.
+    currentIndex: {
+      for (var i = 0; i < view.stations.length; i++) {
+        if (view.stations[i].at === view.launcher.selectedIndex) return i
+      }
+      return -1
+    }
     highlightMoveDuration: 0
     model: view.stations
 
     delegate: Item {
       id: station
 
+      // Each entry is the row plus the launcher index it came from, so
+      // selecting and activating speak the launcher's numbering rather than
+      // this list's.
       required property var modelData
-      required property int index
+      readonly property var box: station.box.row
+      readonly property int at: station.box.at
 
       width: list.width
       height: view.rowHeight
 
-      readonly property bool selected: (station.index + view.offset) === view.launcher.selectedIndex
+      readonly property bool selected: station.at === view.launcher.selectedIndex
       // The one already on. It is the row you are least likely to want to press
       // and the one you most want to find, so it is marked rather than being
       // identical to the nine it is not.
       readonly property bool onAir: view.hasPlayer
-        && String(station.modelData.title || "") === String(view.player.station || "")
+        && String(station.box.title || "") === String(view.player.station || "")
 
       Rectangle {
         anchors.fill: parent
@@ -427,8 +560,8 @@ Item {
       MouseArea {
         anchors.fill: parent
         hoverEnabled: true
-        onEntered: view.launcher.select(station.index + view.offset)
-        onClicked: view.launcher.activate(station.modelData)
+        onEntered: view.launcher.select(station.at)
+        onClicked: view.launcher.activate(station.box)
       }
 
       Rectangle {
@@ -446,7 +579,7 @@ Item {
         Image {
           anchors.fill: parent
           anchors.margins: Style.space(4)
-          source: String(station.modelData.art || "")
+          source: String(station.box.art || "")
           fillMode: Image.PreserveAspectFit
           sourceSize.width: width * Screen.devicePixelRatio
           sourceSize.height: height * Screen.devicePixelRatio
@@ -455,8 +588,8 @@ Item {
 
         Text {
           anchors.centerIn: parent
-          visible: String(station.modelData.art || "") === ""
-          text: String(station.modelData.iconGlyph || "")
+          visible: String(station.box.art || "") === ""
+          text: String(station.box.iconGlyph || "")
           color: Qt.darker(view.launcher.foreground, 1.8)
           font.family: view.launcher.fontFamily
           font.pixelSize: Style.font.body
@@ -473,7 +606,7 @@ Item {
 
         Text {
           width: parent.width
-          text: String(station.modelData.title || "")
+          text: String(station.box.title || "")
           color: station.selected ? view.launcher.selectedText : view.launcher.foreground
           font.family: view.launcher.fontFamily
           font.pixelSize: Style.font.body
@@ -484,8 +617,8 @@ Item {
           width: parent.width
           visible: text !== ""
           text: {
-            var where = String(station.modelData.subtitle || "")
-            var what = String(station.modelData.detail || "")
+            var where = String(station.box.subtitle || "")
+            var what = String(station.box.detail || "")
             if (where !== "" && what !== "") return where + "  ·  " + what
             return where !== "" ? where : what
           }
@@ -520,7 +653,7 @@ Item {
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           visible: !station.onAir
-          text: String(station.modelData.accessory || "")
+          text: String(station.box.accessory || "")
           color: Qt.darker(view.launcher.foreground, 2.1)
           font.family: view.launcher.fontFamily
           font.pixelSize: Style.font.caption

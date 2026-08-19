@@ -243,7 +243,7 @@ starts with a test you edit rather than one you have to remember to start.
 
 Run `bo test weather` after every change. Nothing else checks what a script
 prints: malformed JSON fails silently in the launcher and shows as an empty
-result.
+result. It is one extension, so it takes about a second.
 
 ## The extension JSON
 
@@ -383,9 +383,44 @@ matches too easily to sit level with a named thing.
 ## Testing it
 
 ```bash
-bo test              every unit
-bo test weather      one
+bo test                    every unit
+bo test weather            one unit, or one extension: whichever the name is
+bo test omacast/git        one extension, said in full
+bo test omacast/git tz     as many as you like
+bo test --fast             every unit, only the checks that run nothing
+bo test weather --only cases
 ```
+
+A bare name is read as a unit first and as an extension second, so
+`bo test git` finds the `git` extension wherever it lives. An extension answers
+to its file name, its `id`, its `keyword` and any of its aliases, so
+`bo test tz` and `bo test timezone` are the same run. `unit/extension` says the
+second thing explicitly, and `marketplace/unit/extension` leaves nothing to
+guess.
+
+`--only` takes any of four kinds of check, comma separated:
+
+| kind | What it does | Runs the extension |
+|---|---|---|
+| `manifest` | `unit.toml`, and each extension's own JSON | no |
+| `answer` | runs it and reads the rows it prints | yes |
+| `actions` | every action names a program that exists | yes |
+| `cases` | the assertions in `<extension>.cases.json` | yes |
+
+`--fast` is `--only manifest`: every file read, nothing run, no network, well
+under a second. A narrowed run says what it left out on the last line, because
+a fast pass that reads like a full one is how a skipped check goes unrun for a
+week.
+
+Extensions are checked at once, `nproc` of them at a time, and each one's lines
+are held until its turn to print, so a parallel run reads exactly like the
+serial one it replaces. `--jobs 1` puts it back to one at a time. Nothing is
+remembered between runs: every check runs every time.
+
+For a hook or CI: `--quiet` prints nothing at all when everything holds and the
+failures when it does not. Exit is 0 when everything held, 1 when something
+failed, and 2 when the target matched nothing, so a pre-commit hook can tell
+"no extension for that file" from "that extension is broken".
 
 For each extension JSON in the unit it checks the JSON itself, checks that the
 command named in `search` is on `PATH`, runs it, and reads what came back the

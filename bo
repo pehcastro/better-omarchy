@@ -1657,6 +1657,22 @@ cmd_registry() {
 # particular, because this tests the shape of an answer and not its content.
 TEST_QUERY="test"
 
+# The kinds of check, in the order they run. `manifest` only reads files;
+# each of the other three runs the extension, which is where the seconds go.
+# A run can be narrowed to any of them, so editing one JSON does not cost a
+# round trip to GitHub.
+TEST_KINDS_ALL="manifest answer actions cases"
+TEST_KINDS="$TEST_KINDS_ALL"
+wants_kind() { [[ " $TEST_KINDS " == *" $1 "* ]]; }
+kind_exists() { [[ " $TEST_KINDS_ALL " == *" $1 "* ]]; }
+kinds_left_out() {
+  local kind
+  for kind in $TEST_KINDS_ALL; do
+    wants_kind "$kind" || printf '%s ' "$kind"
+  done
+}
+kinds_as_list() { printf '%s\n' $1 | join_lines; }
+
 # ok, skipped and fail line up in one column, so one failure in a long run is
 # findable rather than buried in a sentence.
 test_line() {
@@ -1905,6 +1921,13 @@ test_extension() {
     return 1
   }
 
+  # Nothing below this line runs without running the extension, so a manifest
+  # run stops here and says the file itself is sound.
+  if ! wants_kind answer && ! wants_kind actions && ! wants_kind cases; then
+    test_line ok "$name" "reads as an extension"
+    return 0
+  fi
+
   # The `when` gate first. An extension for software this machine does not have
   # is not a failure, it is an extension that correctly never runs here.
   if [[ -n $when ]] && ! bash -lc "$when" >/dev/null 2>&1; then
@@ -1912,7 +1935,9 @@ test_extension() {
     return 0
   fi
 
-  for cmd in "${queries[@]}"; do
+  wants_kind answer || queries=()
+
+  for cmd in ${queries[@]+"${queries[@]}"}; do
     mapfile -t result < <(ext_answer "$cmd" "$secs")
     problem="${result[0]:-!the output could not be read at all}"
     [[ $problem != '!'* ]] || {
@@ -1923,12 +1948,15 @@ test_extension() {
     counts+=("$problem")
   done
 
-  detail="$(rows_word "${counts[0]}")"
-  [[ -n ${counts[1]:-} ]] && detail+=", ${counts[1]} bare"
-  test_line ok "$name" "$detail"
+  if ((${#counts[@]} > 0)); then
+    detail="$(rows_word "${counts[0]}")"
+    [[ -n ${counts[1]:-} ]] && detail+=", ${counts[1]} bare"
+    test_line ok "$name" "$detail"
+  fi
 
-  test_actions "$file" "$binary" "$secs" || return 1
-  test_cases "$file" "$binary" "$secs" || return 1
+  wants_kind actions && { test_actions "$file" "$binary" "$secs" || return 1; }
+  wants_kind cases && { test_cases "$file" "$binary" "$secs" || return 1; }
+  return 0
 }
 
 # Every action on every row has to be able to run.
@@ -2055,6 +2083,9 @@ test_actions() {
   mapfile -t lines < <(python3 -c "$ACTIONS_PY" "$binary" "$probe" "$secs" 2>&1)
 
   if ((${#lines[@]} <= 1)); then
+    # The answer line already vouches for this extension. With `answer` left
+    # out there is no such line, and silence reads as nothing having run.
+    wants_kind answer || test_line ok "$name actions" "$(rows_word "${lines[0]:-0}") checked"
     return 0
   fi
 
@@ -2251,45 +2282,283 @@ test_unit_toml() {
   test_line ok unit.toml "$kind, $(meta "$ref" version)"
 }
 
-test_unit() {
-  local ref="$1" dir file bad=0
-  dir=$(ref_dir "$ref")
-
-  say "$(bold "$ref")"
-  test_unit_toml "$ref" || bad=1
-
+# Every extension JSON a unit ships. `<name>.cases.json` belongs to the
+# extension beside it and is checked as part of it, never loaded as one of its
+# own.
+ext_files() {
+  local dir file
+  dir=$(ref_dir "$1") || return 0
   shopt -s nullglob
   for file in "$dir"/config/omarchy/omacast/extensions/*.json; do
-    # `<name>.cases.json` belongs to the extension beside it and is checked as
-    # part of it, not loaded as an extension of its own.
     [[ $file == *.cases.json ]] && continue
-    test_extension "$file" "$dir" || bad=1
+    printf '%s\n' "$file"
   done
   shopt -u nullglob
+}
 
-  return $bad
+# Which extension files a name means. A person has four names for the same
+# thing depending on where they last saw it: the file, the `id`, the `keyword`
+# and its aliases. All four match, in one python pass so that naming an
+# extension is not slower than testing it.
+ext_named() {
+  local want="$1"
+  shift
+  (($# > 0)) || return 0
+  python3 - "$want" "$@" <<'PY'
+import json, os, sys
+
+want = sys.argv[1].lower()
+for path in sys.argv[2:]:
+    names = {os.path.basename(path)[:-len(".json")].lower()}
+    try:
+        ext = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        ext = {}
+    if isinstance(ext, dict):
+        names.add(str(ext.get("id", "")).lower())
+        names.add(str(ext.get("keyword", "")).lower())
+        for alias in ext.get("aliases") or []:
+            names.add(str(alias).lower())
+    if want in names:
+        print(path)
+PY
+}
+
+# One target on the command line, turned into `ref<TAB>file` lines: one per
+# extension to check, plus a bare `ref<TAB>` asking for that unit's manifest.
+#
+# The grammar has to live beside `bo add omacast` and `bo info better-omarchy/
+# omacast`, which is why a slash keeps meaning what it already meant. A pair is
+# read as marketplace/unit first, because that is what the rest of bo calls it,
+# and only falls through to unit/extension when no such unit exists.
+test_target() {
+  local q="$1" ref="" want="" file hit=0
+  local -a files=()
+
+  case "$q" in
+  */*/*)
+    ref="${q%/*}"
+    want="${q##*/}"
+    ;;
+  */*)
+    if ref_exists "$q"; then
+      ref="$q"
+    else
+      ref=$(resolve_ref "${q%/*}" 2>/dev/null) || ref=""
+      want="${q##*/}"
+    fi
+    ;;
+  *)
+    ref=$(all_refs | awk -F/ -v u="$q" '$NF == u')
+    [[ $ref == *$'\n'* ]] && ref=""
+    ;;
+  esac
+
+  # A bare word that names no unit is looked for as an extension across every
+  # unit, so `bo test git` works without knowing which unit ships git. A unit
+  # wins the name, because that is what a bare word means everywhere else in
+  # bo, and `<unit>/<extension>` still says the other thing.
+  if [[ -z $ref && -z $want ]]; then
+    local r
+    while read -r r; do
+      [[ -z $r ]] && continue
+      mapfile -t files < <(ext_files "$r")
+      while read -r file; do
+        [[ -z $file ]] && continue
+        printf '%s\t%s\n' "$r" "$file"
+        hit=1
+      done < <(ext_named "$q" ${files[@]+"${files[@]}"})
+    done < <(all_refs)
+    ((hit == 1)) && return 0
+
+    # Not a unit and not an extension: the same half-typed-name match every
+    # other command accepts gets the last word.
+    ref=$(resolve_ref "$q" 2>/dev/null) || return 0
+  fi
+
+  [[ -n $ref ]] || return 0
+  ref_exists "$ref" || return 0
+  mapfile -t files < <(ext_files "$ref")
+
+  if [[ -z $want ]]; then
+    printf '%s\t\n' "$ref"
+    for file in ${files[@]+"${files[@]}"}; do
+      printf '%s\t%s\n' "$ref" "$file"
+    done
+    return 0
+  fi
+
+  while read -r file; do
+    [[ -n $file ]] && printf '%s\t%s\n' "$ref" "$file"
+  done < <(ext_named "$want" ${files[@]+"${files[@]}"})
+}
+
+# How many extensions run at once. They are separate processes that mostly sit
+# waiting on somebody else's server, so the core count is a floor rather than a
+# ceiling; 16 is where the courtesy to the machine stops.
+test_jobs_default() {
+  local n
+  n=$(nproc 2>/dev/null || echo 4)
+  ((n > 16)) && n=16
+  ((n < 1)) && n=1
+  printf '%s' "$n"
+}
+
+# One queued item, run in its own process with its output held back. Nothing
+# here prints where anyone can see it: cmd_test replays the files in order, so
+# a parallel run reads exactly like a serial one.
+test_item() {
+  local ref="$1" file="$2"
+  if [[ -z $file ]]; then
+    test_unit_toml "$ref"
+  else
+    test_extension "$file" "$(ref_dir "$ref")"
+  fi
+}
+
+test_usage() {
+  cat <<'TXT'
+  bo test [target...] [--only kind[,kind]] [--fast] [--jobs n] [--quiet]
+
+Targets. With none, every unit.
+  bo test omacast              one unit, every extension in it
+  bo test git                  one extension, wherever it lives
+  bo test omacast/git          the same one, said in full
+  bo test omacast/git tz       as many as you like
+
+Kinds. --only takes any of them, comma separated.
+  manifest    unit.toml and each extension's own JSON. Runs nothing.
+  answer      runs each extension and reads the rows it prints
+  actions     every action on every row names a program that exists
+  cases       the assertions in <extension>.cases.json
+
+  --fast      manifest only, and says what it left out
+  --jobs n    extensions checked at once (default: cores, at most 16)
+  --quiet     print only what failed, for a hook
+
+Exit 0 when everything held, 1 when something failed, 2 when the target
+matched nothing. Results are never remembered between runs.
+TXT
 }
 
 cmd_test() {
-  local ref refs failed=0
-  if (($# > 0)); then
-    refs=$(resolve_ref "$1")
-  else
-    refs=$(all_refs)
+  local arg jobs="" quiet=0 only="" tmp i=0 rc line
+  local ref file failed=0 shown=0 last=""
+  local -a queue=() targets=()
+
+  while (($# > 0)); do
+    case "$1" in
+    --only)
+      [[ -n ${2:-} ]] || die "--only wants a kind: $TEST_KINDS_ALL"
+      only="${only:+$only,}$2"
+      shift
+      ;;
+    --only=*) only="${only:+$only,}${1#*=}" ;;
+    --fast) only="${only:+$only,}manifest" ;;
+    --jobs | -j)
+      jobs="${2:-}"
+      shift
+      ;;
+    --jobs=*) jobs="${1#*=}" ;;
+    -q | --quiet) quiet=1 ;;
+    -h | --help) test_usage && return 0 ;;
+    -*) die "unknown option: $1. Try: bo test --help" ;;
+    *) targets+=("$1") ;;
+    esac
+    shift
+  done
+
+  if [[ -n $only ]]; then
+    TEST_KINDS=""
+    for arg in ${only//,/ }; do
+      kind_exists "$arg" || die "no such kind: $arg. There is: $TEST_KINDS_ALL"
+      TEST_KINDS="$TEST_KINDS $arg"
+    done
   fi
+
+  [[ -n $jobs ]] || jobs=$(test_jobs_default)
+  [[ $jobs =~ ^[1-9][0-9]*$ ]] || die "--jobs wants a number above zero, not '$jobs'"
 
   command -v timeout >/dev/null || die "timeout is not installed, and a test that cannot give up would hang"
 
-  while read -r ref; do
-    [[ -z $ref ]] && continue
-    test_unit "$ref" || failed=1
-  done <<<"$refs"
-
-  say ""
-  if ((failed == 0)); then
-    say "$(green 'Every extension answered, and every unit.toml holds up.')"
+  if ((${#targets[@]} > 0)); then
+    for arg in "${targets[@]}"; do
+      mapfile -t -O "${#queue[@]}" queue < <(test_target "$arg")
+    done
+    ((${#queue[@]} > 0)) || {
+      printf '%s nothing to test matches: %s\n' "$(red ERROR)" "${targets[*]}" >&2
+      return 2
+    }
   else
+    while read -r ref; do
+      [[ -z $ref ]] && continue
+      queue+=("$ref"$'\t')
+      while read -r file; do
+        [[ -n $file ]] && queue+=("$ref"$'\t'"$file")
+      done < <(ext_files "$ref")
+    done < <(all_refs)
+  fi
+
+  # Only the manifest lines survive a manifest run, so the extension jobs that
+  # would say nothing are dropped rather than started.
+  if ! wants_kind manifest; then
+    local -a kept=()
+    for line in "${queue[@]}"; do
+      [[ ${line#*$'\t'} == "" ]] || kept+=("$line")
+    done
+    queue=(${kept[@]+"${kept[@]}"})
+  fi
+
+  # A unit with no extensions under `--only cases` is not a pass, it is a run
+  # with nothing in it, and saying so beats a green line nobody earned.
+  if ((${#queue[@]} == 0)); then
+    ((quiet == 1)) || say "$(dim 'Nothing to check under those kinds.')"
+    return 0
+  fi
+
+  tmp=$(mktemp -d)
+
+  # Everything in the queue is an independent process, so they go at once and
+  # their output is held in a file each. Interleaved lines from a parallel run
+  # would be worse than the slow serial one this replaces.
+  for ((i = 0; i < ${#queue[@]}; i++)); do
+    while (($(jobs -rp | wc -l) >= jobs)); do wait -n; done
+    (
+      test_item "${queue[i]%%$'\t'*}" "${queue[i]#*$'\t'}" >"$tmp/$i.out" 2>&1
+      printf '%s' "$?" >"$tmp/$i.rc"
+    ) &
+  done
+  wait
+
+  for ((i = 0; i < ${#queue[@]}; i++)); do
+    ref="${queue[i]%%$'\t'*}"
+    rc=$(cat "$tmp/$i.rc" 2>/dev/null || echo 1)
+    ((rc == 0)) || failed=1
+    ((quiet == 1 && rc == 0)) && continue
+    [[ -s "$tmp/$i.out" ]] || continue
+    [[ $ref == "$last" ]] || {
+      say "$(bold "$ref")"
+      last="$ref"
+    }
+    cat "$tmp/$i.out"
+    shown=1
+  done
+
+  rm -rf "$tmp"
+
+  ((quiet == 1 && failed == 0)) && return 0
+
+  ((shown == 1)) && say ""
+  if ((failed != 0)); then
     say "$(red 'Something above needs fixing.')"
+  elif [[ $TEST_KINDS == "$TEST_KINDS_ALL" ]] && ((${#targets[@]} == 0)); then
+    say "$(green 'Every extension answered, and every unit.toml holds up.')"
+  elif [[ $TEST_KINDS == "$TEST_KINDS_ALL" ]]; then
+    say "$(green 'Everything asked for held up.')"
+  else
+    # A narrowed pass has to say what it did not look at, or a fast run reads
+    # like a full one and the checks it skipped go unrun for a week.
+    say "$(green 'Everything asked for held up.') $(dim "Left out: $(kinds_as_list "$(kinds_left_out)").")"
   fi
   return $failed
 }
@@ -2963,7 +3232,8 @@ bo - Omarchy customizations, from any marketplace
 
   bo market ...           add, remove and inspect marketplaces
   bo doctor               check every linked unit's dependencies exist
-  bo test [unit]          run each launcher extension and check what it prints
+  bo test [target...]     run launcher extensions and check what they print
+  bo test --fast          only the checks that run nothing (under a second)
   bo validate             run omarchy plugin validate on every plugin unit
   bo registry [name]      rebuild a marketplace's registry.json (authors)
   bo sync                 copy the live shell.json into this checkout
