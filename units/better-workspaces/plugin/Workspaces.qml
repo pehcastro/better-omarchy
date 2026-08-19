@@ -217,46 +217,12 @@ Panel {
     return ids
   }
 
-  // Workspaces on their way out, kept in the row long enough to animate. A
-  // button that disappears between two frames reads as a glitch; one that fades
-  // and closes its own gap reads as the workspace being finished with.
-  property var leavingIds: []
-
   readonly property int leaveMs: root.setting("leaveMs", 260)
 
-  // What was live last time, so a departure can be spotted. Diffing against
-  // what is drawn would read a property that already includes the change, and
-  // the diff would always be empty.
-  property var previousLive: []
-
-  onLiveIdsChanged: {
-    var gone = []
-    for (var i = 0; i < root.previousLive.length; i++) {
-      var id = root.previousLive[i]
-      if (root.liveIds.indexOf(id) < 0 && root.leavingIds.indexOf(id) < 0) gone.push(id)
-    }
-    root.previousLive = root.liveIds.slice()
-    if (gone.length === 0) return
-
-    root.leavingIds = root.leavingIds.concat(gone)
-    leaveTimer.restart()
-  }
-
-  Timer {
-    id: leaveTimer
-    interval: root.leaveMs
-    onTriggered: root.leavingIds = []
-  }
-
-  // What the row actually draws: what is live, plus what is still leaving.
-  readonly property var shownIds: {
-    var ids = root.liveIds.slice()
-    for (var i = 0; i < root.leavingIds.length; i++) {
-      if (ids.indexOf(root.leavingIds[i]) < 0) ids.push(root.leavingIds[i])
-    }
-    ids.sort(function (left, right) { return left - right })
-    return ids
-  }
+  // What the row draws. The delegates are fixed at 1 to 10 and take their place
+  // from this, so nothing is created or destroyed as workspaces come and go:
+  // rebuilding the model made every button flash back in whenever one left.
+  readonly property var shownIds: root.liveIds
 
   function workspaceIds() { return root.shownIds }
 
@@ -347,13 +313,11 @@ Panel {
   // window to open another one is a normal thing to do and the name should
   // survive it. Five seconds is long enough for that and short enough that the
   // workspace is gone before you wonder why it is still there.
-  // Off by default, and it should stay that way. Hiding an empty workspace from
-  // the bar costs the user nothing: the name is still there when they go back.
-  // Deleting the name is not reversible, and somebody who names a workspace
-  // "invoices" and opens it once a month would lose it the first time they
-  // restarted the shell. Anyone who wants their names to be disposable can say
-  // so; nobody should have to discover it.
-  readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", false)
+  // Leaving the bar and giving the name back are the same event, not two
+  // settings that can disagree. A workspace you have finished with is finished
+  // with: nothing running, you are not on it, so it goes back to being a number
+  // you can use for anything.
+  readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", true)
   readonly property int releaseAfterMs: root.setting("releaseAfterMs", 5000)
 
   // id -> 0 while it still has windows, or the moment it emptied. A workspace
@@ -439,16 +403,22 @@ Panel {
     id: grid
     anchors.fill: parent
     anchors.rightMargin: root.vertical ? 0 : Style.spaceReal(1.5)
-    columns: root.vertical ? 1 : root.workspaceIds().length + (root.newVisible ? 1 : 0)
+    columns: root.vertical ? 1 : 10 + (root.newVisible ? 1 : 0)
     columnSpacing: root.vertical ? 0 : Style.space(1)
     rowSpacing: root.vertical ? Style.space(2) : 0
 
     Repeater {
-      model: root.workspaceIds()
+      // Always all ten. Which of them is on screen is a property of the button,
+      // not of the model, so a workspace leaving does not rebuild its
+      // neighbours and set them all animating again.
+      model: 10
 
       WidgetButton {
         id: wsButton
-        required property int modelData
+        required property int index
+        readonly property int modelData: index + 1
+
+        readonly property bool shown: root.shownIds.indexOf(modelData) >= 0
 
         readonly property var workspace: root.workspaceById(modelData)
         readonly property bool occupied: workspace !== null && workspace.toplevels.values.length > 0
@@ -459,13 +429,15 @@ Panel {
         // to its label instead of the fixed slot a numeric row can rely on.
         text: root.displayName(modelData)
         tooltipText: root.fullName(modelData)
-        readonly property bool leaving: root.leavingIds.indexOf(modelData) >= 0
+        // One fade, and the gap closes behind it. No scale, no bounce: this is
+        // a workspace being finished with, and it should read as tidying up.
+        opacity: shown ? (focused ? 1 : (occupied ? 0.6 : 0.35)) : 0
 
-        opacity: leaving ? 0 : (focused ? 1 : (occupied ? 0.6 : 0.35))
-        scale: leaving ? 0.85 : 1
+        Layout.preferredWidth: shown ? implicitWidth : 0
+        Layout.preferredHeight: implicitHeight
 
         Behavior on opacity { NumberAnimation { duration: root.leaveMs; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: root.leaveMs; easing.type: Easing.OutCubic } }
+        Behavior on Layout.preferredWidth { NumberAnimation { duration: root.leaveMs; easing.type: Easing.OutCubic } }
         horizontalMargin: 6
         verticalPadding: 6
         fixedWidth: root.vertical ? root.barSize : -1

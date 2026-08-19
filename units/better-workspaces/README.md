@@ -6,15 +6,13 @@ and a way to reach a fresh one.
 `Super+F2` renames the workspace you are on, or right-click any of them.
 `Super+=` goes to the first free workspace, which the `+` in the bar also does.
 
-An empty workspace is not drawn, named or not. A row of placeholders is the
-reason names used to be cut short, and hiding one costs nothing: the name is
-still there, and comes back the moment you go to it. Quitting everything on
-"spotify" leaves the row shorter and the name where you left it.
+A workspace you have finished with leaves. Nothing running on it and you are
+not on it, so after five seconds it fades out of the bar and its name goes back
+to being a number. Quitting everything on "spotify" and going back to "coding"
+leaves a free workspace behind, not a label pointing at nothing.
 
-Turning `releaseEmptyNames` on makes names disposable instead: a workspace you
-use and then empty goes back to being a number, and the name is gone. It is off
-by default because deleting a name cannot be undone, and someone who calls a
-workspace "invoices" and opens it once a month should not lose it.
+Leaving and being renamed are the same event. `releaseEmptyNames` turns the
+whole thing off if you would rather names stayed.
 
 ## Settings
 
@@ -22,7 +20,7 @@ workspace "invoices" and opens it once a month should not lose it.
 |---|---|---|
 | `hideEmpty` | `true` | draw only workspaces that have a window, a name, or your attention |
 | `showNewButton` | `true` | the trailing `+` |
-| `releaseEmptyNames` | `false` | drop a name once its workspace is finished with |
+| `releaseEmptyNames` | `true` | give the name back when the workspace leaves |
 | `releaseAfterMs` | `5000` | how long after it goes quiet |
 | `emptyLingerMs` | `5000` | how long an emptied workspace stays in the row |
 | `leaveMs` | `260` | the fade as it goes |
