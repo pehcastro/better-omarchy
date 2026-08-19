@@ -55,7 +55,17 @@ $EDITOR monitors.lua
 `hyprctl monitors all` lists what you have and every mode each one takes. `bo
 add` links whatever `.lua` it finds, so the example alone links nothing.
 
-The scale is re-applied on `monitor.added`, not just at load. Waking from sleep,
+`bo` links this file twice: into `modules.d` like any other unit Lua, and to
+`~/.config/hypr/monitors.lua`. That second path is not decoration.
+`omarchy-hyprland-monitor-clamshell` runs on every wake, parses that exact file
+to learn the scale to restore, and falls back to a hardcoded `2` when it is not
+there. That is why the screen kept coming back from sleep at twice the size.
+
+The local is named `omarchy_monitor_scale` for the same reason: that parser
+resolves a bare word through the locals in the file, and that is the name it
+looks for last.
+
+The scale is also re-applied on `monitor.added`, not just at load. Waking from sleep,
 closing and opening the lid, and plugging a display all re-add the output, and
 whatever scale Hyprland picks at that moment otherwise wins: the screen ends up
 at 2x and stays there until the next reload. This unit also unbinds `Super+/` and

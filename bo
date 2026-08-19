@@ -366,6 +366,15 @@ link_hypr() {
       ensure_modules_loader
     }
     link_path "$file" "$HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
+
+    # monitors.lua is read by name, not just loaded. `omarchy-hyprland-monitor-clamshell`
+    # runs on every wake and parses ~/.config/hypr/monitors.lua to learn the
+    # scale to restore, falling back to a hardcoded 2 when that path does not
+    # exist. A unit that owns the monitor config has to answer there too, or the
+    # screen comes back from sleep at twice the size.
+    if [[ $(basename "$file") == "monitors.lua" ]]; then
+      link_path "$file" "$HYPR_DIR/monitors.lua"
+    fi
   done
   shopt -u nullglob
   ((found > 0)) && reload_hypr
@@ -377,6 +386,7 @@ unlink_hypr() {
   shopt -s nullglob
   for file in "$(ref_dir "$ref")"/hypr/*.lua; do
     unlink_path "$HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
+    [[ $(basename "$file") == "monitors.lua" ]] && unlink_path "$HYPR_DIR/monitors.lua"
     ((found++))
   done
   shopt -u nullglob
