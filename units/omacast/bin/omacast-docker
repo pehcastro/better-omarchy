@@ -1,12 +1,23 @@
 #!/bin/bash
-# Emits one JSON row per container for OmaCast's `docker:` keyword.
+# Emits one JSON row per container for OmaCast's `docker:` keyword, drawn by
+# the `docker` view rather than by the list.
 #
 #   docker:          every container, running ones first
-#   docker:pg        by name, image or id
+#   docker:pg        by name, image, compose service or id
 #
-# Running before stopped, because a stopped container is something you are about
-# to start and a running one is something you are about to look inside, and the
-# second is the more common errand.
+# Running before restarting before stopped. A running container is something
+# you are about to look inside, a restarting one is a crash loop you came here
+# to deal with, and a stopped one is something you are about to start. The
+# `band` field is that order; the view spends it on the colour of one edge of
+# each tile rather than on a heading, because a heading is a thing you read and
+# a coloured edge is a thing you see.
+#
+# Two calls to the daemon per keystroke and no more: `docker ps -aq` for the
+# ids and one `docker inspect` for all of them. Inspect is what carries health,
+# restart count, the real start time and the port map as a structure; asking
+# `docker ps` for its preformatted Ports string and parsing it back would be
+# slower to write and would lose which container port each host port belongs
+# to. Measured here: ps 10ms, inspect 21ms for seven containers.
 #
 # The extension's `when` asks the daemon rather than asking whether the binary
 # exists: a machine with Docker installed and the daemon off would otherwise
@@ -21,62 +32,303 @@ needle="${query,,}"
 command -v docker >/dev/null 2>&1 || exit 0
 docker info --format '{{.ServerVersion}}' >/dev/null 2>&1 || exit 0
 
-running=()
-stopped=()
+# --------------------------------------------------------------- live numbers
+#
+# `docker stats --no-stream` costs a full second on this machine, every time,
+# because it waits for a second sample before it can divide one CPU reading by
+# another. At a debounce of 80ms that is not a cost the keyword can carry:
+# typing `docker:` would queue several one-second processes and the first rows
+# would land after the user had given up.
+#
+# So the numbers come out of a file, and the file is filled by a process nobody
+# waits for. Each run reads the cache if it is recent enough to still be true,
+# and separately starts a refresh if it is old enough to be worth redoing. The
+# first `docker:` of a session therefore carries no CPU or memory; the
+# extension's `refreshMs` re-runs this script a beat later and the numbers
+# appear in place, with no spinner and without moving the selection.
+#
+# A lock, because refreshMs means this script runs every couple of seconds
+# while the rows are on screen, and each of those runs would otherwise start
+# its own sampler.
+runtime="${XDG_RUNTIME_DIR:-/tmp}"
+stats_file="$runtime/omacast-docker-stats.tsv"
+stats_lock="$runtime/omacast-docker-stats.lock"
 
-# One `docker ps` for everything. Asking per state would be one round trip to
-# the daemon per state, for an ordering that is two lines of bash.
-while IFS=$'\t' read -r id name image state status; do
-  [[ -n $id ]] || continue
-  if [[ -n $needle ]]; then
-    [[ "${name,,} ${image,,} ${id,,}" == *"$needle"* ]] || continue
-  fi
-  if [[ $state == "running" ]]; then
-    running+=("$id	$name	$image	$state	$status")
-  else
-    stopped+=("$id	$name	$image	$state	$status")
-  fi
-done < <(docker ps --all --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}\t{{.Status}}' 2>/dev/null)
+now=$(printf '%(%s)T' -1)
+stats_age=99999
+[[ -f $stats_file ]] && stats_age=$(( now - $(stat -c %Y "$stats_file" 2>/dev/null || echo 0) ))
 
-rank=90000
-emitted=0
+if (( stats_age > 2 )); then
+  stats_tmp="$stats_file.$$"
+  # setsid, so a timeout that kills this script's process group does not take
+  # the sampler with it half way through. The redirections are on the whole
+  # command, so the child never holds the stdout the launcher is reading: an
+  # inherited pipe would make the launcher wait out the full second anyway.
+  setsid --fork flock -n "$stats_lock" -c \
+    "docker stats --no-stream --format '{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}' > ${stats_tmp@Q} 2>/dev/null && mv -f ${stats_tmp@Q} ${stats_file@Q} || rm -f ${stats_tmp@Q}" \
+    </dev/null >/dev/null 2>&1
+fi
 
-while IFS=$'\t' read -r id name image state status; do
-  [[ -n $id ]] || continue
+# Ten seconds and it is dropped rather than drawn. A container that has been
+# idle for a minute showing 40% is worse than one showing nothing.
+stats_json='{}'
+if (( stats_age <= 10 )); then
+  # Keyed by the 12-character id `docker stats` prints, which is the prefix of
+  # the full id inspect returns.
+  stats_json=$(jq -Rn '
+    [ inputs
+      | split("\t")
+      | select(length >= 4)
+      | { id: .[0], cpu: .[1], mem: .[2], memPct: .[3] }
+    ] | INDEX(.id)' < "$stats_file" 2>/dev/null)
+  [[ -n $stats_json ]] || stats_json='{}'
+fi
 
-  quoted=$(printf '%q' "$id")
+# ------------------------------------------------------------------ the rows
 
-  jq -cn --arg id "$id" --arg t "$name" --arg d "$image" \
-    --arg s "$state" --arg a "$status" \
-    --arg logs "omarchy-launch-tui --app-id=org.omarchy.docker docker logs -f --tail 200 $quoted" \
-    --arg shell "omarchy-launch-tui --app-id=org.omarchy.docker docker exec -it $quoted sh -c 'command -v bash >/dev/null && exec bash || exec sh'" \
-    --arg q "$quoted" --arg n "$name" \
-    --argjson sc "$rank" '
-      # Start, stop and restart would otherwise fail invisibly: nothing is
-      # watching for a non-zero exit once the launcher has closed.
-      def act($verb; $past):
-        { title: (($verb | ascii_upcase)[0:1] + $verb[1:]),
-          exec: ("out=$(docker " + $verb + " " + $q + " 2>&1)"
-                 + " && omarchy-notification-send " + (($n + " " + $past) | @sh)
-                 + " || omarchy-notification-send -u normal "
-                 + (("docker " + $verb + " failed") | @sh) + " \"$out\"") };
-      {
-        id: ("docker:" + $id), title: $t, detail: $d, subtitle: $s,
-        accessory: $a, exec: $logs, score: $sc,
-        actions: (
-          [ { title: "Follow Logs", shortcut: "↵", exec: $logs } ]
-          + (if $s == "running"
-             then [ { title: "Shell Inside", exec: $shell },
-                    act("stop"; "stopped"), act("restart"; "restarted") ]
-             else [ act("start"; "started"), act("restart"; "restarted") ] end)
-          + [ { title: "Copy Container ID", exec: ("printf %s " + ($id | @sh) + " | wl-copy") },
-              { title: "Copy Name", exec: ("printf %s " + ($n | @sh) + " | wl-copy") } ]
-        )
-      }'
+ids=$(docker ps --all --quiet 2>/dev/null)
+[[ -n $ids ]] || exit 0
 
-  rank=$((rank - 100))
-  emitted=$((emitted + 1))
-  ((emitted >= 20)) && break
-done < <(printf '%s\n' "${running[@]}" "${stopped[@]}")
+# One object per container, carrying only the fields the view reads.
+# `--format '{{json .}}'` would be one template shorter and twenty kilobytes
+# per container longer.
+#
+# The Labels guard is not decoration: `index` on a container with no labels at
+# all aborts the whole template, so one unlabelled container would empty the
+# keyword rather than losing its own compose name.
+template='{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"restarts":{{json .RestartCount}},"state":{{json .State}},"ports":{{json .NetworkSettings.Ports}}'
+# A meter needs a denominator. HostConfig carries the two the container was
+# given: a memory cap in bytes and a CPU quota in billionths of a core, both 0
+# when the container was never limited, in which case the whole machine is the
+# denominator and the tile says so.
+template+=',"memCap":{{json .HostConfig.Memory}},"nanoCpus":{{json .HostConfig.NanoCpus}}'
+template+=',"project":{{if .Config.Labels}}{{json (index .Config.Labels "com.docker.compose.project")}}{{else}}""{{end}}'
+template+=',"service":{{if .Config.Labels}}{{json (index .Config.Labels "com.docker.compose.service")}}{{else}}""{{end}}}'
+
+# What the machine has, so an unlimited container can be drawn against
+# something. Both are free: nproc is a syscall and meminfo is a read.
+host_cores=$(nproc 2>/dev/null || echo 1)
+host_mem=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) * 1024 ))
+
+# --slurp, because the ordering of the bands and the scores that carry it both
+# need every container at once.
+#
+# shellcheck disable=SC2086
+docker inspect --type container --format "$template" $ids 2>/dev/null | jq -c --slurp \
+  --arg needle "$needle" \
+  --argjson stats "$stats_json" \
+  --argjson now "$now" \
+  --argjson cores "$host_cores" \
+  --argjson hostmem "$host_mem" '
+
+  # Docker writes RFC3339 with nanoseconds, which fromdateiso8601 refuses, and
+  # writes the year 1 for a container that has never stopped.
+  def epoch:
+    (. // "")
+    | if . == "" then 0
+      else (sub("\\.[0-9]+"; "") | fromdateiso8601? // 0)
+      end
+    | if . < 0 then 0 else . end;
+
+  # A port bound to every address is reachable as localhost; one bound to a
+  # particular address is only reachable there, and saying localhost about it
+  # would send the user somewhere that is not listening.
+  def hostFor:
+    if . == null or . == "" or . == "0.0.0.0" or . == "::" then "localhost" else . end;
+
+  # Which published ports are worth opening in a browser. A deny list rather
+  # than an allow list on purpose: a container publishing 7788 is far more
+  # likely to be a dev server than a database, guessing wrong costs one browser
+  # tab, and an allow list would leave most real services with a dead chip.
+  def dbPort:
+    . as $p
+    | [22, 25, 53, 123, 1433, 3306, 5432, 5672, 6379, 9092, 11211, 27017]
+    | index($p) != null;
+
+  def published:
+    (.ports // {})
+    | to_entries
+    | map(
+        select(.value != null)
+        | (.key | split("/")) as $parts
+        | .value
+        | map({
+            container: ($parts[0] | tonumber? // 0),
+            proto:     ($parts[1] // "tcp"),
+            host:      (.HostPort | tonumber? // 0),
+            addr:      (.HostIp | hostFor)
+          })
+      )
+    | add // []
+    # One -p binds both 0.0.0.0 and ::, which is one service and two map
+    # entries. Collapsing on host port and protocol together keeps two
+    # genuinely different services apart if they ever share a number.
+    | group_by([.host, .proto])
+    | map(.[0])
+    | sort_by(.host)
+    | map(. + { label: ("\(.host)" + (if .proto != "tcp" then "/" + .proto else "" end)),
+                web:   (.container | dbPort | not) })
+    | map(. + { url: (if .web then "http://\(.addr):\(.host)" else "\(.addr):\(.host)" end) })
+    | map(. + { exec: (if .web
+                       then "omarchy-launch-browser " + (.url | @sh)
+                       else "printf %s " + (.url | @sh) + " | wl-copy" end) });
+
+  # Paused sits with running: it still holds its ports and its memory, and it
+  # is not a container you are about to start. The number is the sort key and
+  # the colour of the bar down the left edge of the tile; there is no heading
+  # anywhere that says these words, which is the point.
+  def band:
+    if   . == "running" or . == "paused" then 0
+    elif . == "restarting" then 1
+    else 2 end;
+
+  # `docker stats` reports sizes as text and the tiles need them as numbers to
+  # add up. Both binary and decimal suffixes, because the daemon has used both
+  # over the years and getting it wrong by a factor of 1.024 in a bar nobody
+  # can measure is the kind of error that never gets found.
+  def bytes:
+    (. // "") | ascii_upcase
+    | (capture("^(?<n>[0-9.]+) *(?<u>[A-Z]*)$") // null) as $m
+    | if $m == null then 0
+      else ($m.n | tonumber)
+           * ({ "B": 1, "KB": 1000, "MB": 1000000, "GB": 1000000000, "TB": 1000000000000,
+                "KIB": 1024, "MIB": 1048576, "GIB": 1073741824, "TIB": 1099511627776
+              }[$m.u] // 1)
+      end;
+
+  def human:
+    if   . >= 1073741824 then "\((. / 1073741824 * 10 | round) / 10)GiB"
+    elif . >= 1048576    then "\((. / 1048576 | round))MiB"
+    elif . >= 1024       then "\((. / 1024 | round))KiB"
+    else "\(. | round)B" end;
+
+  [ .[]
+    | (.name | sub("^/"; "")) as $name
+    | (.state.Status // "unknown") as $status
+    | (.id[0:12]) as $short
+    | published as $open
+    # Ports are part of the haystack, because `docker:8080` is a question
+    # people actually ask: you know which port is answering and you want the
+    # container behind it, which is the one thing the name never tells you.
+    | select(
+        $needle == ""
+        or (($name + " " + (.image // "") + " " + .id + " "
+             + (.service // "") + " " + (.project // "") + " "
+             + ($open | map("\(.host) \(.container)") | join(" ")))
+            | ascii_downcase | contains($needle))
+      )
+    | ($status | band) as $b
+    | ($b == 0) as $up
+    | ($stats[$short] // null) as $live
+    | {
+        name: $name,
+        cid: $short,
+        full: .id,
+        image: (.image // ""),
+        status: $status,
+        band: $b,
+        health: (.state.Health.Status // ""),
+        restarts: (.restarts // 0),
+        exitCode: (.state.ExitCode // 0),
+        oom: (.state.OOMKilled == true),
+        # Seconds, and the view decides whether that reads as uptime or as how
+        # long ago it died. A preformatted "2 days" would go stale while the
+        # rows sat on screen.
+        since: ((if $up then (.state.StartedAt | epoch) else (.state.FinishedAt | epoch) end)
+                | if . > 0 then ($now - .) else 0 end),
+        project: (.project // ""),
+        service: (.service // ""),
+        ports: $open,
+        cpu: (if $live then ($live.cpu | rtrimstr("%") | tonumber? // null) else null end),
+        mem: (if $live then ($live.mem | split(" / ")[0]) else null end),
+        memBytes: (if $live then ($live.mem | split(" / ")[0] | bytes) else 0 end),
+        memPct: (if $live then ($live.memPct | rtrimstr("%") | tonumber? // null) else null end),
+        # What the memory bar is a fraction of, and what to call it. Docker
+        # already divides by the right thing when it computes MemPerc, so the
+        # only work left is saying out loud which thing that was: a bar against
+        # a 512MiB cap and a bar against 62GiB of host mean opposite things at
+        # the same length.
+        memCap: ((.memCap // 0) | if . > 0 then . else $hostmem end),
+        memCapText: ((.memCap // 0) | if . > 0 then (. | human) + " limit"
+                     else ($hostmem | human) + " host" end),
+        # CPU the same way. `docker stats` reports one busy core as 100%, so on
+        # a sixteen core box a container with no quota is drawn against 1600
+        # and a container held to 0.15 of a core is drawn against 15.
+        cpuFull: (((.nanoCpus // 0) | if . > 0 then (. / 1000000000) else $cores end) * 100),
+        cpuFullText: (((.nanoCpus // 0) | if . > 0 then (. / 1000000000) else $cores end)
+                      | if . == 1 then "1 cpu" else "\((. * 100 | round) / 100) cpus" end)
+      }
+  ]
+  # jq sorts stably, so within a state the containers keep the order
+  # `docker ps` gave them, which is newest first.
+  | sort_by(.band)
+  | .[0:20]
+  | to_entries[]
+  | .key as $i
+  | .value as $c
+  | ($c.full | @sh) as $q
+  | ("omarchy-launch-tui --app-id=org.omarchy.docker docker logs -f --tail 200 " + $q) as $logs
+  # TERM travels into the container because foot sets TERM=foot, no image ships
+  # foot terminfo, and the first program to ask ncurses about the terminal gets
+  # nothing back. The name printed first is not decoration: `docker exec` on a
+  # big image takes a moment to answer and a window that opens entirely blank
+  # reads as one that has hung. The trailing read keeps a failure on screen;
+  # without it the window opens and closes faster than the error can be read.
+  | ("omarchy-launch-tui --app-id=org.omarchy.docker bash -c "
+     + (( "printf " + ("%s\\n" | @sh) + " " + ($c.name | @sh) + "; "
+        + "docker exec -it -e TERM=xterm-256color " + $q + " sh -c "
+        + ("command -v bash >/dev/null && exec bash || exec sh" | @sh)
+        + " || { printf " + ("\\n[exit %s] press any key\\n" | @sh)
+        + " \"$?\"; read -rsn1; }" ) | @sh)) as $shell
+  | {
+      id: ("docker:" + $c.cid),
+      view: "docker",
+      # The docker view is what draws these, but a row still needs a title and
+      # a subtitle: the launcher reads them for recents, for frecency and for
+      # the heading on the action panel.
+      title: $c.name,
+      subtitle: $c.status,
+      detail: $c.image,
+      accessory: ($c.ports | map(.label) | join(" ")),
+      exec: $logs,
+      score: (90000 - $i * 100),
+      cid: $c.cid, full: $c.full, image: $c.image, status: $c.status,
+      band: $c.band, health: $c.health, restarts: $c.restarts,
+      exitCode: $c.exitCode, oom: $c.oom, since: $c.since,
+      project: $c.project, service: $c.service, ports: $c.ports,
+      cpu: $c.cpu, cpuFull: $c.cpuFull, cpuFullText: $c.cpuFullText,
+      mem: $c.mem, memBytes: $c.memBytes, memPct: $c.memPct,
+      memCap: $c.memCap, memCapText: $c.memCapText,
+      hostCores: $cores, hostMem: $hostmem,
+      actions: (
+        [ { title: "Follow Logs", shortcut: "↵", exec: $logs } ]
+        + (if $c.band == 0 then [ { title: "Shell Inside", exec: $shell } ] else [] end)
+        # One container publishing four ports is four services, and this is
+        # where that stops being a string. The view draws the same list as
+        # chips you can click; these entries are how the keyboard reaches them.
+        + ($c.ports | map({
+            title: ((if .web then "Open " else "Copy " end) + .url),
+            exec: .exec
+          }))
+        # Start, stop and restart would otherwise fail invisibly: nothing is
+        # watching for a non-zero exit once the launcher has closed.
+        # Stop, not start, for a container in a crash loop: it is already
+        # trying to run, and stopping it is the thing you came here to do.
+        + ( [ (if $c.band <= 1 then "stop" else "start" end), "restart" ]
+            | map(. as $verb
+                | { title: (($verb[0:1] | ascii_upcase) + $verb[1:]),
+                    exec: ("out=$(docker " + $verb + " " + $q + " 2>&1)"
+                           + " && omarchy-notification-send "
+                           + (($c.name + " "
+                               + (if $verb == "stop" then "stopped"
+                                  elif $verb == "start" then "started"
+                                  else "restarted" end)) | @sh)
+                           + " || omarchy-notification-send -u normal "
+                           + (("docker " + $verb + " failed") | @sh) + " \"$out\"") }) )
+        + [ { title: "Copy Container ID", exec: ("printf %s " + ($c.full | @sh) + " | wl-copy") },
+            { title: "Copy Name", exec: ("printf %s " + ($c.name | @sh) + " | wl-copy") } ]
+      )
+    }
+'
 
 exit 0

@@ -116,13 +116,55 @@ Removing a plugin unit deliberately does not run `plugin disable`. For a bar
 widget that command deletes the layout entry, taking its position and every
 setting with it. Removing the symlink is enough, the stale entry renders nothing
 while the plugin is gone, and it is what makes a later `bo add` put the widget
-back where it was.
+back where it was. `bo remove` says so at the time rather than leaving you to
+find it in `shell.json`, and `bo remove --purge <unit>` takes the layout entry
+too, after asking and after copying `shell.json` aside. `--purge` works on a
+unit that is already off, which is when you will have read the line about it.
 
 **`setting`** runs `apply.sh` on add and `revert.sh` on remove. Both take
 `set -euo pipefail`, unlike the extension scripts, because `bo` reads their exit
 status: a setting that half applied has to say so rather than pass. `bo` records
 that a setting ran, not what it did, so `apply.sh` has to be safe to run twice.
 A unit with no `revert.sh` warns on remove and leaves the setting as it is.
+
+## What a unit is allowed to run, and who says so
+
+`omarchy plugin add` never runs anything from the plugin, never executes an
+install hook and never asks for sudo. `bo add` does run things: a unit's `bin/`
+goes on your PATH, and a `setting` unit's `apply.sh` runs there and then. That
+capability is most of what a unit is for, so it stays, but it is consented to
+rather than discovered.
+
+Before anything happens, `bo add` prints the whole plan for a unit that
+executes: what is linked where, what lands in `~/.local/bin`, whether an
+`apply.sh` runs, and whether plugin code will live inside `omarchy-shell`. Then
+it asks. `--yes` (or `--trust`) answers for you, and with no terminal and no
+`--yes` nothing happens at all. A unit that only links files other programs read
+is not worth a question and does not get one.
+
+`bo list` marks a unit that runs something with a yellow `!`, and `bo info`
+spells out what. A `requires` dependency is asked about on its own terms, and
+saying no to it is saying no to the unit that wanted it.
+
+`bo update` never applies on its own either. It prints one line per changed
+unit, ones you have on first, marks a version bump differently from a
+content-only change, marks the units that run code, and then asks per
+marketplace. `bo update --yes` is the scripted form.
+
+## What `bo remove` takes and what it leaves
+
+The rule: take back what `bo` put there, keep what you arranged by hand.
+
+Taken: every symlink `bo` made, in `modules.d`, `~/.local/bin`, `~/.config` and
+`~/.config/omarchy/plugins`; any directory under `~/.config` that only existed
+for this unit; the unit's entry in `shell.json`'s `plugins[]`, because that list
+is what keeps the shell loading a plugin whose files are gone. If `bo add` moved
+a file of yours aside as `<name>.before-bo.<timestamp>`, remove puts the newest
+one back.
+
+Kept: a widget's place in the bar and the settings on it, which is the only
+reason `bo remove` then `bo add` leaves you where you were. `--purge` is how you
+ask for those to go too.
 
 ## config/
 
@@ -147,6 +189,7 @@ then every directory that only existed for this unit is removed, up to
 | `~/.config/omarchy/plugins/<id>/` | symlinks to unit plugin folders |
 | `~/.local/bin/` | symlinks to unit scripts |
 | `~/.config/...` | whatever the unit's `config/` mirrors |
+| `<anything>.before-bo.<timestamp>` | a file of yours that a link displaced, put back on remove |
 
 Your `~/.config/hypr/hyprland.lua` gets exactly one added line,
 `require("hypr.modules")`. After that, adding a unit never edits a config file.

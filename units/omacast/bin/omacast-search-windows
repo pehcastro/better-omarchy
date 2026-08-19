@@ -1,8 +1,22 @@
 #!/bin/bash
 # Emits one JSON row per open window for OmaCast's `win:` keyword.
 #
-#   win:            every window
+#   win:            every window, grouped by the workspace it is on
 #   win:chrome      by class or title
+#   win:general     by workspace name, because that is a thing you know
+#
+# The answer is a picture of the session, not a list of strings, so the rows
+# carry the structure the `windows` view draws with: which workspace, whether
+# that workspace is the one you are on, how many windows are on it in total,
+# and the handful of facts that make one window different from another sharing
+# a class. Everything here comes from a single `hyprctl clients -j`, which has
+# always carried it; the script simply used to throw it away.
+#
+# Rows are ordered workspace by workspace, ascending, and within a workspace by
+# where the window actually sits on screen: left to right, then top to bottom,
+# with floating windows after the tiled ones they sit over. Ordering by focus
+# history instead would put the window you are already in at the top, and the
+# top row is the one Enter runs.
 #
 # Focus and close both go through the Lua dispatcher, not `dispatch
 # focuswindow` or `dispatch closewindow`: under a Lua config the old string
@@ -12,13 +26,87 @@ set -uo pipefail
 
 query="${1:-}"
 
-hyprctl clients -j 2>/dev/null | jq -c --arg q "${query,,}" '
-  [ .[]
-    | select(.mapped and .workspace.id > 0)
-    | { class: (.class // ""), title: (.title // ""), address: .address,
-        workspace: (.workspace.name // (.workspace.id | tostring)) }
-    | select($q == "" or ((.class + " " + .title) | ascii_downcase | contains($q)))
-  ]
+clients=$(hyprctl clients -j 2>/dev/null)
+# Which workspace is live on each monitor, and what the monitors are called.
+# The focused window's own workspace would answer the single-monitor case, but
+# not the second screen, which has an active workspace of its own and nothing
+# focused on it.
+monitors=$(hyprctl monitors -j 2>/dev/null)
+
+# No compositor, no answer. Silence beats an error row: `win:` is typed inside
+# Hyprland, so this only fires when something is already very wrong.
+[[ -n $clients ]] || exit 0
+[[ -n $monitors ]] || monitors="[]"
+
+jq -c -n \
+  --argjson clients "$clients" \
+  --argjson monitors "$monitors" \
+  --arg q "${query,,}" '
+
+  ($monitors | map(.activeWorkspace.id)) as $active
+  | ($monitors | map({ key: (.id | tostring), value: .name }) | from_entries) as $monNames
+
+  # Unmapped windows cannot be focused, so they are not offers. Windows on a
+  # special workspace are kept: a scratchpad terminal is exactly the window
+  # somebody types `win:` to find, and the old filter hid it.
+  | [ $clients[]
+      | select(.mapped == true)
+      | {
+          address: .address,
+          cls: (.class // ""),
+          name: (.title // ""),
+          wsId: (.workspace.id // 0),
+          wsRaw: (.workspace.name // ""),
+          monitor: ($monNames[((.monitor // -1) | tostring)] // ""),
+          floating: (.floating == true),
+          # 0 none, 1 maximised inside the gaps, 2 covering the monitor. The
+          # two are different enough to be worth telling apart on the row.
+          fullscreen: (.fullscreen // 0),
+          xwayland: (.xwayland == true),
+          pinned: (.pinned == true),
+          # A tab group draws as one window and answers as several. The count
+          # is the only warning that focusing this row changes what is visible.
+          grouped: ((.grouped // []) | length),
+          # focusHistoryID 0 is the window that has focus right now. It is not
+          # used for ordering, only for saying which one it is.
+          focusOrder: (.focusHistoryID // 999),
+          w: (.size[0] // 0), h: (.size[1] // 0),
+          x: (.at[0] // 0), y: (.at[1] // 0)
+        }
+    ] as $all
+
+  # Counted before the query narrows anything, so a workspace header can say
+  # "2 of 7" rather than claiming the two that matched are all there is.
+  | ($all | group_by(.wsId)
+          | map({ key: (.[0].wsId | tostring), value: length })
+          | from_entries) as $wsCount
+  | ($all | map(.wsId) | unique | length) as $wsTotal
+  | ($all | length) as $total
+
+  # The workspace name joins the haystack, so `win:general` is a workspace
+  # filter without needing a second filter syntax to learn. It costs the odd
+  # false hit on a window whose title contains a workspace name, and the
+  # grouping makes that obvious rather than confusing.
+  | [ $all[]
+      | . as $w
+      | select($q == ""
+               or (((.cls + " " + .name + " " + .wsRaw) | ascii_downcase) | contains($q)))
+      | . + {
+          special: ($w.wsId < 0),
+          # "special:magic" is the workspace called magic. The prefix is
+          # plumbing and does not belong on screen.
+          wsName: (if ($w.wsRaw | startswith("special:")) then ($w.wsRaw[8:])
+                   elif $w.wsRaw == "" then ($w.wsId | tostring)
+                   else $w.wsRaw end),
+          wsActive: (($active | index($w.wsId)) != null),
+          wsWindows: ($wsCount[($w.wsId | tostring)] // 0)
+        }
+    ]
+  | sort_by([ (if .special then 1 else 0 end), .wsId,
+              (if .floating then 1 else 0 end), .x, .y ]) as $rows
+
+  | ($rows | length) as $matched
+  | $rows
   | to_entries[]
   | .key as $i
   | .value
@@ -27,14 +115,42 @@ hyprctl clients -j 2>/dev/null | jq -c --arg q "${query,,}" '
      ("hl.dsp.focus({ window = \"" + $target + "\" })" | @sh)) as $focus
   | ("hyprctl dispatch " +
      ("hl.dsp.window.close({ window = \"" + $target + "\" })" | @sh)) as $close
+  | ("hyprctl dispatch " +
+     ("hl.dsp.focus({ workspace = " + (.wsId | tostring) + " })" | @sh)) as $goto
   | {
       id: .address,
-      title: (if .title == "" then .class else .title end),
-      subtitle: (.class + "  ·  " + .workspace),
+      # Set on every row rather than the first, because ranking can put any
+      # row first and only the first row has its view read.
+      view: "windows",
+      title: (if .name == "" then .cls else .name end),
+      # What the plain list would show, kept working: an unregistered view
+      # falls back to the list, and a half-registered feature should still
+      # answer the question.
+      subtitle: (.cls + "  ·  " + .wsName),
       exec: $focus,
-      score: (90000 - ($i * 500)),
-      actions: [
-        { title: "Focus", shortcut: "↵", exec: $focus },
-        { title: "Close Window", exec: $close }
-      ]
+      score: (90000 - ($i * 300)),
+
+      cls: .cls,
+      wsId: .wsId,
+      wsName: .wsName,
+      wsActive: .wsActive,
+      wsWindows: .wsWindows,
+      special: .special,
+      monitor: .monitor,
+      focused: (.focusOrder == 0),
+      floating: .floating,
+      fullscreen: .fullscreen,
+      xwayland: .xwayland,
+      pinned: .pinned,
+      grouped: .grouped,
+      width: .w,
+      height: .h,
+      session: { windows: $total, matched: $matched,
+                 workspaces: $wsTotal, monitors: ($monitors | length) },
+
+      actions: ([ { title: "Focus", shortcut: "↵", exec: $focus } ]
+        # A special workspace has a negative id the dispatcher will not take,
+        # and "go to the scratchpad" is a toggle rather than a destination.
+        + (if .special then [] else [ { title: "Go to Workspace", exec: $goto } ] end)
+        + [ { title: "Close Window", exec: $close } ])
     }'

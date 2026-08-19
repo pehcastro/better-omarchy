@@ -15,5 +15,5 @@
   "timeoutMs": 4000,
   "maxRows": 12,
   "tier": "substring",
-  "view": "list"
+  "view": "hosts"
 }

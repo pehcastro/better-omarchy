@@ -8,11 +8,11 @@
     "notepad"
   ],
   "subtitle": "Note",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-note {query}",
   "minChars": 0,
   "debounceMs": 120,
-  "maxRows": 12,
+  "maxRows": 8,
   "tier": "substring",
-  "view": "split"
+  "view": "notes"
 }

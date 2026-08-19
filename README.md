@@ -12,68 +12,183 @@ work appears in your list beside this one.
 curl -fsSL https://raw.githubusercontent.com/pehcastro/better-omarchy/master/setup.sh | bash
 ```
 
-That installs `bo`, adds this repo as your first marketplace, and lets you pick.
-Nothing turns on without you choosing it.
+That clones this repo, links `bo` into `~/.local/bin`, and leaves the clone as
+your first marketplace. Piped into `bash` like that it cannot open the picker,
+so it tells you to run `bo add` when you are ready. Nothing turns on without you
+choosing it.
 
-## What this adds to Omarchy
+## One plugin, one repo
 
-Omarchy has a plugin system, and it is good at what it is for: QML loaded into
-the running shell. It validates a manifest, hot-reloads on save, lets you clone
-a built-in to hack on it, and falls back to the stock bar when yours breaks.
-`bo` uses all of that rather than working around it, down to calling
-`omarchy plugin validate` itself and mutating config over the shell's own IPC.
+Omarchy's plugin system is good at what it is for: QML loaded into the running
+shell. It validates a manifest before installing, hot-reloads plugin code when
+you save a file, lets you clone a built-in to hack on it, and falls back to the
+stock bar when yours fails to load. Its installer is deliberately inert, and the
+manual says so: it "never runs anything from the plugin, never executes an
+install hook, and never asks for sudo." `bo` builds on that system rather than
+replacing it, down to running `omarchy plugin validate` on every plugin unit
+here.
 
-What it does not do is anything that is not QML. There is no manifest field for
-a keybinding, a script on your `PATH`, a file in `~/.config`, a package you
-need, a plugin you depend on, or one you conflict with. So a real customization
-arrives as a plugin plus a README telling you what to paste where, and taking it
-back out is a manual job.
+What has no room in it is more than one plugin per repo. The manual is direct
+about the unit of distribution: "A third-party plugin is just a git repo with a
+`manifest.json` at its root." `omarchy plugin add <git-url>` clones a repo,
+validates the repo root, reads `manifest.json` there for an id, and moves the
+checkout to `~/.config/omarchy/plugins/<id>/`. The validator wants that manifest
+in the folder it is handed, so a repo carrying two plugins in two subfolders
+never gets past it:
 
-A **unit** is a folder that can hold all of those at once, and knows what it
-touched:
+```
+$ omarchy plugin validate ./repo-with-two-plugins
+omarchy-plugin-validate: missing manifest.json in ./repo-with-two-plugins
+```
 
-| | Omarchy plugin | bo unit |
-|---|---|---|
-| QML in the shell | yes | yes, unchanged |
-| Hyprland keybinding or rule | no | yes |
-| Script on your PATH | no | yes |
-| Files in `~/.config` | no | yes |
-| Needs another unit | no | `requires` |
-| Fights another unit | no | `conflicts`, and a key-conflict check |
-| Commands it needs | no | `needs`, checked by `bo doctor` |
-| Removing it | leaves state behind | removes what it linked |
+The shell reads the installed directory the same way. Its scan of the
+third-party plugin directory is one manifest per top-level folder:
 
-And the second half: Omarchy has no distribution at all. There is no index, no
-search, no notion of a source. You install from a git URL somebody typed, one
-repo at a time, and there is no way to publish a collection or to be told a
-plugin you have moved on.
+```bash
+for sub in "$dir"/*/; do
+  [[ -f "$sub/manifest.json" ]] || continue
+```
 
-## Decentralized on purpose
+First-party plugins are allowed several manifests in one source directory, by a
+`*.manifest.json` sibling convention the same scan supports a few lines up.
+Omarchy's own repo uses it: eight bar widgets share
+`shell/plugins/bar/widgets/`. Third-party plugins do not get that.
 
-A **marketplace** is any git repo with a `registry.json` at its root. That is the
-whole mechanism. Publishing is `git push`. There is nobody to register with,
-nobody to approve you, and no server that can go away and take the index with
-it.
+The community directory records the consequence. Of its listings, a handful are
+marked as living in a multi-plugin repo, and those carry an empty install
+command and the note that "automatic installation is unavailable because this
+plugin is stored inside a multi-plugin repository without a transactional
+Omarchy update path."
 
-It is the shape [shadcn/ui](https://ui.shadcn.com) uses, and the one coding
-agents adopted for their own extensions: a repo, a manifest at a known path, a
-client that reads it, nobody in the middle. It buys four things here:
+So three small customizations are three repos, three `omarchy plugin add`
+commands, and no way to hand somebody your set. That is the pain this repo
+started from.
 
-- **Many sources, no centre.** Add as many marketplaces as you like. Yours ranks
-  no lower than this one, and this one is not privileged in the code.
-- **Read before you run.** A unit is scripts and QML in a repo you cloned.
-  `bo update` shows a per-unit changelog before applying anything.
-- **Updatable as a set.** A collection updates together and tells you which of
-  its parts you actually have on.
-- **A tool can drive it.** `registry.json` is machine readable, which is the same
-  reason agent marketplaces adopted the shape.
+To be fair about the half that is already solved: `omarchy plugin update` with
+no argument walks every git-managed plugin you have, fetches its origin, prints
+the diff and asks before fast-forwarding. Keeping up with plugins you have is
+handled.
 
-`bo` also installs a plain Omarchy plugin repo, wrapping it as a marketplace of
-one, so nothing you already have is stranded.
+## A marketplace is a file you host
 
-It buys no safety. A marketplace is code that runs unsandboxed, exactly as
-`omarchy plugin add` is. `bo` says so when you add one, and a readable registry
-is what lets you check first.
+Finding plugins is handled too, by [omarchyplugins.com](https://omarchyplugins.com),
+a community directory the official manual points authors and users at. It works,
+it is well stocked, and it is worth browsing before you write anything. It is
+also a directory in the usual sense: you open an issue with your repo, automated
+validation runs, and a maintainer approves the listing. One list, one set of
+maintainers, one place to be accepted into.
+
+This is the other model. Any git repo with a `registry.json` at its root is a
+marketplace. That is the whole mechanism. Publishing is `git push`, and the only
+person who decides what is in your marketplace is you.
+
+```bash
+bo market add https://github.com/someone/their-omarchy-units
+bo list                       # theirs appear beside these
+bo add their-thing
+```
+
+Units are named `marketplace/unit`, and you can drop the marketplace half when
+only one marketplace offers that name.
+
+The shape is borrowed from [shadcn/ui's GitHub registries](https://ui.shadcn.com/docs/registry/github),
+where, in their words, you "add a `registry.json` file to the root of the repo,
+describe the files you want to share, and users can install them with the shadcn
+CLI", and "you do not need to set up a registry server or publish generated JSON
+files." One qualifier, because it cuts both ways: shadcn also runs a central
+index of registries, and getting the short `@namespace` handle there means a
+pull request their team reviews. `bo` has no equivalent, which is the point and
+also the cost. Nobody vets a marketplace before you add it. What the model buys:
+
+- **Many sources.** Add as many marketplaces as you like. The only ordering
+  rule in `bo` is that the checkout it runs from is listed first, so it can
+  find itself and refuse to remove itself. Nothing else about it is special.
+- **One file to fetch.** A client can read `registry.json` off
+  raw.githubusercontent and see the whole catalogue before cloning anything.
+- **Updatable as a set.** `bo update` fetches every marketplace and prints one
+  line per unit whose registry entry moved, with a column marking the ones you
+  actually have on.
+- **Machine readable**, so a tool can drive it.
+
+## What a unit can hold
+
+A plugin manifest describes QML. The validator requires `schemaVersion`, `id`,
+`name`, `version`, `kinds` and `entryPoints`. Around those sit `description`,
+`author`, `license`, `keepLoaded`, an `omarchy` block the clone command uses,
+and a `barWidget` block that declares a widget's default section and its
+settings schema. That is the shape of it, and it is the right shape for what it
+does: the plugin system is about code inside the shell process.
+
+A customization is often not only that. It wants a Hyprland keybinding, a
+script on your `PATH`, a file under `~/.config`, a package you need installed,
+or another plugin turned on first. None of those have a manifest field, so
+today they arrive as a plugin plus a README telling you what to paste where.
+The community directory has a status for it: a sizeable slice of its listings
+are tagged "Manual setup".
+
+A **unit** is a folder that can carry all of them, and `bo` records what it
+linked so it can take it back out.
+
+| A unit folder | Where `bo` puts it |
+|---|---|
+| `plugin/` | `~/.config/omarchy/plugins/<id>`, then `omarchy plugin enable` |
+| `hypr/*.lua` | `~/.config/hypr/modules.d/`, then `hyprctl reload` |
+| `bin/*` | `~/.local/bin/` |
+| `config/**` | `~/.config/`, path for path |
+| `apply.sh`, `revert.sh` | run on add and on remove |
+
+And four `unit.toml` fields with no manifest equivalent:
+
+- `requires` turns another unit on first, and `bo add` refuses if no
+  marketplace you have offers it.
+- `conflicts` refuses to turn a unit on while the one it fights is on.
+- `needs` lists commands, and `bo doctor` says which are not on your `PATH`.
+- `keys` lists the shortcuts a unit claims, and `bo status` reports two linked
+  units claiming the same one. It compares those declared strings, not your
+  live Hyprland bindings, so it catches unit against unit and not unit against
+  something you bound yourself.
+
+Removal follows from that and not from being tidier. `omarchy plugin remove`
+disables the plugin and deletes or backs up its folder, which cleans up
+everything it knows about. What it cannot know about is the line you pasted
+into `bindings.lua` by hand, because no manifest field ever mentioned it. A
+unit has somewhere to put that line, so `bo remove` can take it back out.
+
+## Existing plugins still work
+
+`bo market add` also takes a plain Omarchy plugin repo, the kind
+`omarchy plugin add` installs: a `manifest.json` at the root and no
+`registry.json`. `wrap_plugin_repo` turns it into a marketplace holding one
+unit. It reads the id, name, version, author and description out of the
+manifest, writes a `unit.toml` and a generated `registry.json` under `.bo/`,
+and points that unit's `plugin/` at the repo root with a relative symlink. One
+checkout, not a copy, and the author's tree is left exactly as published.
+
+```bash
+bo market add https://github.com/ericvrp/omarchy-bar-autohide
+bo add bar-autohide
+```
+
+Nothing is asked of the author, and nothing more is claimed for it either: a
+wrapped plugin has no `needs`, no `keys`, no `conflicts` and no content hash,
+so `bo doctor`, `bo status` and the per-unit changelog have nothing to say
+about it.
+
+## Safety
+
+It buys no safety, and on one axis it is worse than what it builds on. Both
+tools land unsandboxed code in a long-lived shell process, and both warn you
+when you add a source. But `omarchy plugin add` never executes anything from
+the plugin at install time. `bo add` does: it links a unit's `bin/` scripts
+into your `PATH`, and a `setting` unit runs its `apply.sh` there and then. That
+is what buys the extra reach described above, and it is a real trade, not a
+free one.
+
+Two smaller differences worth knowing. `omarchy plugin update` shows a full
+diff and asks per plugin before it fast-forwards; `bo update` prints its
+per-unit summary and then fast-forwards without asking, so run `bo outdated`
+first if you want the decision. And nobody reviews a marketplace before you add
+it. A readable registry is what lets you look first.
 
 ## The units in this marketplace
 
@@ -95,8 +210,9 @@ on `Super+Z`. Exactly one: press twice and the second press does nothing.
 workspace, with no gaps, border or rounding. Open a second and all three return.
 
 **[nkz-keys](units/nkz-keys/README.md)** is one person's setup: `Alt+F4`,
-`Super+E`, `Super+B`, `Super+R`, and a `monitors.lua` that is gitignored because
-that file is wrong on any other machine. Copy it, do not add it.
+`Super+E`, `Super+B`, `Super+R`, `Super+grave`, and a `monitors.lua` that is
+gitignored because that file is wrong on any other machine. Copy it, do not
+add it.
 
 ## bo
 
@@ -121,28 +237,12 @@ bo doctor               check every linked unit's dependencies exist
 bo test [unit]          run each launcher extension, check what it prints,
                         and run the cases it ships
 bo validate             run omarchy plugin validate on every plugin unit
-bo registry             rebuild registry.json (for marketplace authors)
+bo registry [name]      rebuild a marketplace's registry.json (authors)
 bo sync                 copy the live shell.json into this checkout
 bo version              what this is and where it lives
 ```
 
-## Using another marketplace
-
-```bash
-bo market add https://github.com/someone/their-omarchy-units
-bo list                       # theirs appear beside these
-bo add their-thing
-```
-
-Units are named `marketplace/unit`, and you can drop the marketplace half when
-only one offers that name.
-
-`bo` also reads a plain Omarchy plugin repo, the kind `omarchy plugin add`
-takes, so an existing plugin installs and removes through `bo` without its
-author changing anything.
-
-**A marketplace is code that runs on your machine.** Units link scripts into
-your `PATH` and QML into your shell process, unsandboxed. Read what you turn on.
+Run `bo` with no arguments for the interactive version of all of this.
 
 ## Further
 

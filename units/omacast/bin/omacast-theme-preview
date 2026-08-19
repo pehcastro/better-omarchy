@@ -1,0 +1,29 @@
+#!/bin/bash
+# Repaint every running foot terminal in one theme's colours, without setting it.
+#
+# Foot changes palette when it is sent OSC escape sequences on its tty, which
+# makes a live preview possible: no config write, no restart, and nothing to
+# undo beyond sending the previous colours back the same way.
+#
+# Modelled on omarchy-theme-set-foot, which does exactly this for the current
+# theme. The difference is the argument: this takes any theme's directory, so a
+# launcher can walk a list and show each one on the real desktop.
+
+set -uo pipefail
+
+dir="${1:-}"
+[[ -n $dir && -f "$dir/colors.toml" ]] || exit 0
+pgrep -x foot >/dev/null || exit 0
+
+osc=$(omarchy-theme-osc "$dir/colors.toml" 2>/dev/null)
+[[ -n $osc ]] || exit 0
+
+# Every foot's child, because the escape has to reach the tty the program is
+# writing to rather than the terminal process itself.
+for foot_pid in $(pgrep -x foot); do
+  for child_pid in $(pgrep -P "$foot_pid"); do
+    tty=$(readlink "/proc/$child_pid/fd/1" 2>/dev/null)
+    [[ $tty == /dev/pts/* ]] && printf '%b' "$osc" >"$tty" 2>/dev/null
+  done
+done
+exit 0

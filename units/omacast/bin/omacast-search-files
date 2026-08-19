@@ -8,6 +8,14 @@
 # fd's --max-results short-circuits the walk, so the first N hits are traversal
 # order, not relevance. It takes a wide slice here and the ranking happens
 # below, or the answer is whatever the filesystem happened to reach first.
+#
+# The rows carry more than a name because the `files` view draws them as files:
+# a type mark or a thumbnail, the size, the age, and the folder as a path.
+# Everything that costs a process is paid once for the whole answer rather than
+# once per row: one `stat` over the survivors and one `jq` over the lot. The
+# version of this script that emitted rows in a loop forked jq twenty times on
+# every keystroke, so adding four facts per row is still cheaper than what it
+# replaces.
 
 set -uo pipefail
 
@@ -28,36 +36,153 @@ done
 # `format:pdf` and `format:.pdf` mean the same thing.
 [[ -n $format ]] && args+=(--extension "${format#.}")
 
-fd "${args[@]}" -- "$query" "$root" 2>/dev/null |
-  awk -v q="${query,,}" -v home="$HOME" '
-    {
-      path = $0
-      n = split(path, parts, "/")
-      base = parts[n]
-      lower = tolower(base)
+# What kind of thing this is, from the extension alone. Reading magic bytes
+# would be more honest and would cost a process per row, which is the one thing
+# this script cannot afford; the extension is what the user typed and what every
+# file manager goes by anyway.
+kind_of() {
+  case "${1,,}" in
+  png | jpg | jpeg | gif | webp | avif | bmp | svg | tiff | tif | heic | ico) printf 'image' ;;
+  mp4 | mkv | webm | mov | avi | m4v | wmv | flv) printf 'video' ;;
+  mp3 | flac | ogg | wav | m4a | opus | aac | wma) printf 'audio' ;;
+  pdf | epub | djvu | doc | docx | odt | rtf | txt | md | org | tex) printf 'doc' ;;
+  csv | tsv | xlsx | xls | ods) printf 'sheet' ;;
+  zip | tar | gz | xz | zst | 7z | rar | bz2 | tgz) printf 'archive' ;;
+  sh | bash | zsh | fish | py | js | mjs | ts | tsx | jsx | rs | go | c | h | cpp | hpp | java | rb | lua | qml | vim | pl | php | swift | kt) printf 'code' ;;
+  json | yaml | yml | toml | ini | conf | xml | html | css | scss | sql) printf 'data' ;;
+  *) printf 'file' ;;
+  esac
+}
 
-      # Depth is a decent proxy for "the one you meant": a file you named sits
-      # nearer the top than a build artefact buried in a dependency tree.
-      score = 60000 - (n * 1500)
-
-      at = index(lower, q)
-      if (at == 1) score += 25000
-      else if (at > 1) score += 12000 - (at * 200)
-
-      if (score < 1000) score = 1000
-
-      display = path
-      sub("^" home, "~", display)
-
-      dir = display
-      sub("/[^/]*$", "", dir)
-
-      printf "%d\t%s\t%s\t%s\n", score, base, dir, path
-    }' |
-  sort -rn |
-  head -20 |
-  while IFS=$'\t' read -r score base dir path; do
-    jq -cn --arg id "$path" --arg t "$base" --arg s "$dir" \
-      --arg e "xdg-open $(printf '%q' "$path")" --argjson sc "$score" \
-      '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc}'
+human_size() {
+  local v=${1:-0} i=0 rem=0
+  local units=(B K M G T P)
+  while ((v >= 1024 && i < 5)); do
+    rem=$(((v % 1024) * 10 / 1024))
+    v=$((v / 1024))
+    i=$((i + 1))
   done
+  # One decimal only where it changes the reading: "1.5K" says something "1K"
+  # does not, and "437M" needs no fraction at all.
+  if ((i > 0 && v < 10)); then
+    printf '%d.%d%s' "$v" "$rem" "${units[i]}"
+  else
+    printf '%d%s' "$v" "${units[i]}"
+  fi
+}
+
+short_age() {
+  local d=$1
+  ((d < 0)) && d=0
+  if ((d < 60)); then
+    printf 'now'
+  elif ((d < 3600)); then
+    printf '%dm' $((d / 60))
+  elif ((d < 86400)); then
+    printf '%dh' $((d / 3600))
+  elif ((d < 2592000)); then
+    printf '%dd' $((d / 86400))
+  elif ((d < 31536000)); then
+    printf '%dmo' $((d / 2592000))
+  else
+    printf '%dy' $((d / 31536000))
+  fi
+}
+
+mapfile -t hits < <(
+  fd "${args[@]}" -- "$query" "$root" 2>/dev/null |
+    awk -v q="${query,,}" -v home="$HOME" '
+      {
+        path = $0
+        n = split(path, parts, "/")
+        base = parts[n]
+        lower = tolower(base)
+
+        # Depth is a decent proxy for "the one you meant": a file you named sits
+        # nearer the top than a build artefact buried in a dependency tree.
+        score = 60000 - (n * 1500)
+
+        at = index(lower, q)
+        if (at == 1) score += 25000
+        else if (at > 1) score += 12000 - (at * 200)
+
+        if (score < 1000) score = 1000
+
+        display = path
+        sub("^" home, "~", display)
+
+        dir = display
+        sub("/[^/]*$", "", dir)
+
+        printf "%d\t%s\t%s\t%s\n", score, base, dir, path
+      }' |
+    sort -rn |
+    head -20
+)
+
+((${#hits[@]})) || exit 0
+
+paths=()
+for hit in "${hits[@]}"; do
+  paths+=("${hit##*$'\t'}")
+done
+
+# One stat for the whole answer. Keyed by name rather than read positionally,
+# because a file that vanished between the walk and here is simply absent from
+# stat's output: reading the lines in order would then hand every later row the
+# wrong file's size, silently.
+declare -A SIZE MTIME
+while IFS=$'\t' read -r name bytes mtime; do
+  SIZE["$name"]=$bytes
+  MTIME["$name"]=$mtime
+done < <(stat -c $'%n\t%s\t%Y' -- "${paths[@]}" 2>/dev/null)
+
+now=$(date +%s)
+
+rows=()
+for hit in "${hits[@]}"; do
+  IFS=$'\t' read -r score base dir path <<<"$hit"
+  [[ -n ${SIZE[$path]+set} ]] || continue
+
+  ext=""
+  # A dot at the start is a hidden file, not an extension: ".bashrc" has no
+  # type mark, and calling it "BASHRC" is a lie the badge would repeat forever.
+  if [[ $base == ?*.* ]]; then
+    ext="${base##*.}"
+    ((${#ext} > 5)) && ext=""
+  fi
+  kind=$(kind_of "$ext")
+
+  # Only an image gets an `art`, because only an image can draw itself. Handing
+  # the view a file:// URL for a PDF gets a broken image where the type mark
+  # should be, which is worse than no picture at all.
+  art=""
+  [[ $kind == image ]] && art="file://$path"
+
+  # The folder twice as well, for the same reason: `~/Sync` is what the row
+  # shows and `/home/you/Sync` quoted is what "Open Folder" has to run.
+  rows+=("$path"$'\t'"$base"$'\t'"$dir"$'\t'"${ext^^}"$'\t'"$kind"$'\t'"$(human_size "${SIZE[$path]}")"$'\t'"$(short_age $((now - ${MTIME[$path]:-now})))"$'\t'"$(printf '%q' "$path")"$'\t'"$art"$'\t'"$(printf '%q' "${path%/*}")"$'\t'"$score")
+done
+
+((${#rows[@]})) || exit 0
+
+# One jq for the whole answer. The path arrives twice: raw as the id and the
+# title, and shell-quoted for the commands, because quoting it here would mean
+# reimplementing `printf %q` in jq.
+printf '%s\n' "${rows[@]}" |
+  jq -cR 'split("\t") |
+    {
+      id: .[0], title: .[1], dir: .[2], ext: .[3], kind: .[4],
+      size: .[5], age: .[6], art: .[8],
+      subtitle: .[2], accessory: .[5],
+      exec: ("xdg-open " + .[7]),
+      score: (.[10] | tonumber),
+      actions: [
+        { title: "Open", shortcut: "↵", exec: ("xdg-open " + .[7]) },
+        { title: "Copy Path", exec: ("printf %s " + .[7] + " | wl-copy") },
+        { title: "Open Folder", exec: ("xdg-open " + .[9]) },
+        { title: "Reveal in Files", exec: ("nautilus --select " + .[7]) }
+      ]
+    }'
+
+exit 0

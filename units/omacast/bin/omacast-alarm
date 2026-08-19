@@ -6,16 +6,50 @@
 #   alarm:1h30m
 #   alarm:5m
 #   alarm:in 2 hours call mum
-#   alarm:half an hour
-#   alarm:                       what is already pending
+#   alarm:half an hour tea       a fraction, said out loud
+#   alarm:                       what is already pending, and how long is left
+#
+# The reminders themselves are Omarchy's: `omarchy reminder <minutes> <message>`
+# arms a transient systemd user timer that sends the notification. This script
+# only reads the words and hands over, so a reminder set here is the same object
+# as one set from the bar, cancels the same way, and survives this launcher.
 #
 # `omarchy reminder` takes whole minutes and nothing finer. A duration that
 # does not divide is rounded up rather than down, because an alarm that fires
 # early is a broken alarm, and the row says what it rounded to: setting a
 # different time from the one that was typed without mentioning it is worse
 # than refusing.
+#
+# A time with no words after it is refused rather than set. `omarchy reminder 25`
+# on its own stores "25-min reminder", which is a notification that arrives and
+# tells you nothing: by the time it fires, the one thing you needed it to carry
+# is the one thing it did not.
+#
+# One instruction, spelled with a leading `--`, for the rows to call back into:
+#
+#   omacast-alarm --cancel UNIT   stop one pending reminder
+#
+# The launcher passes a query as a single shell-quoted argument, so a typed
+# `alarm:--cancel x` arrives as one word and is parsed as a duration, not obeyed.
 
 set -uo pipefail
+
+reminder_dir="${XDG_RUNTIME_DIR:-/tmp}/omarchy-reminders"
+
+# Stopping the timer is the whole cancel as far as the notification goes, but
+# `omarchy reminder` only removes the message file when the reminder actually
+# fires. Cancelling without this left one behind under $XDG_RUNTIME_DIR for
+# every reminder anybody ever changed their mind about.
+if (($# >= 2)) && [[ $1 == --cancel ]]; then
+  unit="$2"
+  # A unit name, not a path. The name goes straight into an `rm` under
+  # $XDG_RUNTIME_DIR, and a `/` in it would let that `rm` point anywhere.
+  [[ $unit == omarchy-reminder-* && $unit != */* ]] || exit 0
+  systemctl --user stop "${unit%.timer}.timer" >/dev/null 2>&1
+  rm -f -- "$reminder_dir/${unit%.timer}.message" 2>/dev/null
+  omarchy-shell -q omarchy.indicators refresh >/dev/null 2>&1
+  exit 0
+fi
 
 query="${1:-}"
 
@@ -96,32 +130,37 @@ say_duration() {
 # ---- pending reminders
 
 # `reminder show --json` already knows the remaining time and the wall clock,
-# so this reformats rather than recomputes. Enter on a row stops that one timer
-# and refreshes the bar indicator, which is the only way to cancel a single
-# reminder: `reminder clear` drops all of them.
+# so this reformats rather than recomputes. Enter on a row cancels that one
+# reminder: `reminder clear` drops all of them, which is a different question
+# and gets its own row only when there is more than one to drop.
+#
+# Nothing pending prints nothing. A placeholder row saying "no reminders" is an
+# alarm-shaped thing with no alarm in it, and the launcher already draws a
+# proper "Nothing in Reminder" under an empty answer.
 list_pending() {
   local json
   json=$(omarchy reminder show --json 2>/dev/null) || return 0
   [[ -z $json ]] && return 0
 
   printf '%s' "$json" | jq -c '
-    if (.count // 0) == 0 then
-      { id: "alarm-empty", title: "Nothing pending",
-        subtitle: "Type a time: alarm:25m tea", exec: "", score: 90000,
-        view: "hero" }
+    if (.count // 0) == 0 then empty
     else
       ( .reminders
         | to_entries[]
         | { id: .value.unit,
             title: .value.label,
-            subtitle: ("in " + .value.remaining + ", at " + .value.atTime),
-            exec: ("systemctl --user stop " + (.value.timer | @sh)
-                   + "; omarchy-shell -q omarchy.indicators refresh >/dev/null 2>&1"),
-            score: (90000 - .key * 100),
+            subtitle: (.value.remaining + " left"),
+            detail: ("fires at " + .value.atTime),
+            accessory: "Cancel",
+            glyph: "󰢌",
+            exec: ("omacast-alarm --cancel " + (.value.unit | @sh)),
+            score: (90000 - .key),
             view: "list" } ),
-      { id: "alarm-clear", title: "Clear every reminder",
-        subtitle: "Stops all of them", exec: "omarchy reminder clear",
-        score: 10000, view: "list" }
+      ( if (.count // 0) > 1 then
+          { id: "alarm-clear", title: "Cancel every reminder",
+            subtitle: ((.count | tostring) + " pending"),
+            exec: "omarchy reminder clear", score: 10000, view: "list" }
+        else empty end )
     end'
 }
 
@@ -218,14 +257,13 @@ message=""
 
 # ---- the row
 
-if ((total == 0)); then
-  # Something was typed, but no time in it. Say what a time looks like rather
-  # than answering with nothing, since the keyword was asked for by name.
-  jq -cn --arg t "Add a time" \
-    --arg s "alarm:25m tea  ·  alarm:in 2 hours call mum  ·  alarm:half an hour" \
-    '{id: "alarm-help", title: $t, subtitle: $s, exec: "", score: 90000, view: "hero"}'
-  exit 0
-fi
+# Half an alarm is not an alarm, and both halves fail the same way: a row that
+# offered to set one anyway would be offering to store something that cannot do
+# its job. No time yet, or no words yet, means the sentence is not finished, so
+# there is nothing to show and the launcher says "Nothing in Reminder" until
+# there is.
+((total == 0)) && exit 0
+[[ -z ${message//[[:space:]]/} ]] && exit 0
 
 minutes=$(((total + 59) / 60))
 ((minutes < 1)) && minutes=1
@@ -236,15 +274,9 @@ if ((minutes * 60 != total)); then
   detail="Rounded up from $(format_span "$total")  ·  Omarchy reminders are whole minutes"
 fi
 
-if [[ -n $message ]]; then
-  title="$message"
-  subtitle="Reminder in $(say_duration "$minutes"), at $fire_at"
-  command="omarchy reminder $minutes $(printf '%q' "$message")"
-else
-  title="$(say_duration "$minutes")"
-  subtitle="Reminder at $fire_at"
-  command="omarchy reminder $minutes"
-fi
+title="$message"
+subtitle="Reminder in $(say_duration "$minutes"), at $fire_at"
+command="omarchy reminder $minutes $(printf '%q' "$message")"
 
 jq -cn --arg t "$title" --arg s "$subtitle" --arg d "$detail" --arg e "$command" \
   '{
@@ -253,6 +285,11 @@ jq -cn --arg t "$title" --arg s "$subtitle" --arg d "$detail" --arg e "$command"
      actions: [
        { title: "Set Reminder", shortcut: "↵", exec: $e },
        { title: "Show Pending", exec: "omarchy reminder show" },
-       { title: "Clear Every Reminder", exec: "omarchy reminder clear" }
+       { title: "Cancel Every Reminder", exec: "omarchy reminder clear" }
      ]
    }'
+
+# The pending reminders under the one being set, so arming a second is done
+# while looking at the first. This is the whole reason the set row is a hero and
+# these are a list: they are two different things on one card, not five results.
+list_pending

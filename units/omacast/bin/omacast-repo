@@ -37,8 +37,14 @@ MAX_ROWS=12
 roots=()
 collect_roots() {
   local candidates=() c
-  if [[ -n ${OMACAST_REPO_ROOTS:-} ]]; then
-    IFS=: read -r -a candidates <<<"$OMACAST_REPO_ROOTS"
+  # Two names for the same thing: the environment variable somebody exports in
+  # their shell, and what `settings:` saved, which the launcher hands over as
+  # OMACAST_ROOTS. The explicit export wins, because a person who typed it in a
+  # terminal a second ago means it more than a form they filled in last month.
+  roots_setting="${OMACAST_REPO_ROOTS:-${OMACAST_ROOTS:-}}"
+
+  if [[ -n $roots_setting ]]; then
+    IFS=: read -r -a candidates <<<"$roots_setting"
   else
     candidates=(
       "$HOME/localhost" "$HOME/Projects" "$HOME/projects" "$HOME/Work"
@@ -458,7 +464,27 @@ done
 # was written under the old scheme rather than hoping each key still means what
 # it used to. An empty answer cached during a broken run is exactly the fault
 # this prevents, and it cost two recordings before anybody looked.
-CACHE_FORMAT=2
+#
+# 3: `dirty` went from 0-or-1 to a count of changed files. A v2 entry saying
+# "1" would have been read as "one file changed" for as long as that repo's
+# index sat still, which can be months.
+CACHE_FORMAT=3
+
+# The field separator inside a cache line, and it is not a tab on purpose.
+#
+# Tab is an IFS whitespace character, so `IFS=$'\t' read -r a b c` collapses a
+# run of tabs into one delimiter and loses every empty field. A repo with no
+# upstream writes two empty fields in the middle of its line, and reading that
+# back shifted `dirty` and `committed` off the end: the next run handed an empty
+# string to `jq --argjson` and the repo disappeared from the answer entirely.
+# It only ever happened on the second run, so it read as a caching problem
+# rather than as a separator problem, and a repo with no remote was simply
+# missing from `repo:` for as long as its index sat still.
+#
+# Unit separator is not whitespace and does not collapse. A v3 line written
+# with tabs fails the stamp comparison below and is recomputed, so nothing has
+# to be migrated.
+SEP=$'\x1f'
 
 state_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/v$CACHE_FORMAT/repo-state"
 mkdir -p "$state_cache" 2>/dev/null
@@ -483,10 +509,11 @@ while IFS=$'\t' read -r score touched repo gitdir; do
   cached=""
   [[ -s $cache_key ]] && cached=$(<"$cache_key")
 
-  if [[ ${cached%%$'\t'*} == "$stamp" && -n $cached ]]; then
-    IFS=$'\t' read -r _ branch upstream ab dirty committed <<<"$cached"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$stamp" "$branch" "$upstream" "$ab" "$dirty" "$committed" > "$cache_key"
+  if [[ ${cached%%"$SEP"*} == "$stamp" && -n $cached ]]; then
+    IFS=$SEP read -r _ branch upstream ab dirty committed <<<"$cached"
+    # Rewritten so the file's mtime says when this answer was last wanted,
+    # which is the only thing that keeps a cache of dead repos from growing.
+    printf '%s\n' "$stamp$SEP$branch$SEP$upstream$SEP$ab$SEP$dirty$SEP$committed" > "$cache_key"
     repo_state_cached=1
   else
     repo_state_cached=0
@@ -502,7 +529,16 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     "# branch.upstream "*) upstream="${line#\# branch.upstream }" ;;
     "# branch.ab "*) ab="${line#\# branch.ab }" ;;
     "#"*) ;;
-    ?*) dirty=1 ;;
+    # Counted, not flagged. "Dirty" is one bit and every uncommitted repo looks
+    # the same under it; the number is what tells a stray formatting change
+    # apart from the afternoon of work you walked away from. It costs nothing:
+    # these lines were already being read and thrown away.
+    #
+    # --untracked-files=no is unchanged and is the one thing this number does
+    # not see. Walking the worktree for untracked files is the expensive half of
+    # `git status`, and a repo whose only change is a new file still reads as
+    # clean here.
+    ?*) dirty=$((dirty + 1)) ;;
     esac
   done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch --untracked-files=no 2>/dev/null)
 
@@ -512,12 +548,15 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     committed=$(git -C "$repo" --no-optional-locks log -1 --format=%ct 2>/dev/null)
     [[ -n ${committed:-} ]] || committed=$touched
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$stamp" "$branch" "$upstream" "$ab" "$dirty" "$committed" > "$cache_key"
+    printf '%s\n' "$stamp$SEP$branch$SEP$upstream$SEP$ab$SEP$dirty$SEP$committed" > "$cache_key"
   fi
 
   [[ -n $branch ]] || branch="?"
   [[ -n ${committed:-} ]] || committed=$touched
+  # jq --argjson refuses an empty string, and it refuses it by printing to
+  # stderr and emitting no row at all. A number that arrived wrong should cost
+  # this repo its dirt count, not its place in the answer.
+  [[ $dirty =~ ^[0-9]+$ ]] || dirty=0
 
   # Assembled for the old list view, and kept apart for the new one: a layout
   # cannot give the branch and the ahead count different weights if they arrive
@@ -556,7 +595,7 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     --arg term "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
     --arg log "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted log --oneline --graph --decorate -40" \
     --arg branch "$branch" --arg ahead "${ahead_txt:-}" --arg behind "${behind_txt:-}" \
-    --argjson dirty "$dirty" --arg slug2 "${slug:-}" \
+    --argjson dirty "$dirty" --arg upstream "${upstream:-}" \
     --arg copypath "printf %s $quoted | wl-copy" \
     --arg clone "${remote:-}" \
     --arg web "$web" \
@@ -566,6 +605,22 @@ while IFS=$'\t' read -r score touched repo gitdir; do
       {
         id: $id, title: $title, detail: $detail, subtitle: $subtitle,
         accessory: $accessory, exec: $open, score: $score,
+
+        # The same four facts the subtitle spells out, kept apart so the
+        # `repos` view can weight them independently: the branch is a label,
+        # the drift is a pair of numbers, and dirtiness is the one that decides
+        # whether the row is worth looking at. Empty means zero rather than
+        # unknown, and an absent upstream is a real state (nothing to be ahead
+        # of) rather than a missing reading.
+        branch: $branch,
+        ahead: (if $ahead == "" then 0 else ($ahead | tonumber) end),
+        behind: (if $behind == "" then 0 else ($behind | tonumber) end),
+        dirty: $dirty,
+        upstream: $upstream,
+        path: $detail,
+        age: $accessory,
+        slug: $slug,
+
         actions: (
           [
             { title: "Open in Editor", shortcut: "↵", exec: $open },

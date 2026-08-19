@@ -13,6 +13,10 @@
 # No file means no snippets, which is not an error and not a row telling you
 # so. The extension's `when` keeps it out of the launcher entirely until you
 # write one.
+#
+# A row carries the snippet's text as `text`, plus how many lines and characters
+# it is. The name is a label on that text, not the subject of the row: you named
+# it, so you know what it is called and not what is in it.
 
 set -uo pipefail
 
@@ -35,6 +39,7 @@ jq -c --arg q "${query,,}" '
     | .key as $i
     | .value
     | ("printf %s " + (.value | @sh) + " | wl-copy") as $copy
+    | (.value | split("\n")) as $lines
     | {
         id: .key,
         title: .key,
@@ -42,6 +47,12 @@ jq -c --arg q "${query,,}" '
         # shows the shape of the snippet rather than only its first line.
         subtitle: (.value | gsub("\\s+"; " ") | .[0:110]),
         preview: .value,
+        # What the `snippets` view actually draws. The name is the one thing
+        # you already know, so the text goes across whole, newlines and all,
+        # and the view lays it out as the text it is rather than as a title.
+        text: .value,
+        lines: ($lines | length),
+        chars: (.value | length),
         exec: $copy,
         score: (90000 - ($i * 100)),
         actions: [

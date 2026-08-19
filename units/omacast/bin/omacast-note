@@ -2,19 +2,34 @@
 # Notes for OmaCast's `note:` keyword. One markdown file per note.
 #
 #   note:                       every note, newest first
-#   note:standup                notes whose name or text contains that
-#   note:new tuesday standup    the first row creates it, the rest are matches
+#   note:standup                notes whose title or text contains that
+#   note:remember the video     the first row writes that down; the rest match
 #
-# Creating and finding share one keyword on purpose. You rarely know which one
+# Capturing and finding share one keyword on purpose. You rarely know which one
 # you meant when you start typing: the same words either find the note or become
-# its title, and the list underneath tells you which.
+# one, and the list underneath tells you which.
+#
+# The keyword also has three instructions, spelled with a leading `--` so they
+# can never collide with something typed. The launcher passes a query as one
+# shell-quoted argument, so `note:--save x` arrives as the single word
+# "--save x" and is searched for, not obeyed.
+#
+#   omacast-note --save "text"    write it down and say nothing
+#   omacast-note --open "text"    write it down, then open it
+#   omacast-note --trash PATH     move a note to the wastebasket
+#
+# Writing is a mode of this script rather than a shell line in the row's `exec`
+# for one reason: a row that saved by stringing `mkdir && printf > file &&
+# editor` together only saved as far as the first thing that failed, and it
+# ended in a GUI editor, so "did it save?" and "did the editor start?" were the
+# same question with one answer. Now the file is written by the same program
+# that lists it, the editor is a separate row, and neither can take the other
+# down.
 #
 # Notes live in ~/Documents/Notes by default. Set NOTES_DIR to move them, or
 # `notesDir` in ~/.config/omarchy/omacast.json, which wins.
 
 set -uo pipefail
-
-query="${1:-}"
 
 config="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast.json"
 dir="${NOTES_DIR:-}"
@@ -25,71 +40,230 @@ fi
 dir="${dir:-$HOME/Documents/Notes}"
 dir="${dir/#\~/$HOME}"
 
+# The longest a first line may be before it stops being a title. Past this the
+# words are still the note, they are just no longer its name.
+TITLE_MAX=72
+
 # A slug that is safe as a filename and still readable a year later.
 slug() {
   printf '%s' "${1,,}" |
-    sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//' |
-    cut -c1-60
+    sed 's/[^a-z0-9]\+/-/g; s/^-\+//; s/-\+$//' |
+    cut -c1-60 |
+    sed 's/-\+$//'
 }
 
+# ---- writing
+
+# What the note is called, and what goes under that name. A short capture is its
+# own title and has no body; a long one keeps every word typed, because losing
+# the tail of a sentence to a filename limit is exactly the failure this keyword
+# exists to avoid.
+save_note() {
+  local text="$1" name target title
+  [[ -z ${text//[[:space:]]/} ]] && return 1
+
+  name=$(slug "$text")
+  [[ -z $name ]] && name="note-$(date +%Y%m%d-%H%M%S)"
+  target="$dir/$name.md"
+
+  mkdir -p "$dir" 2>/dev/null || return 1
+
+  # Never write over one that is already there. The row offering to create this
+  # checked a moment ago, and a note overwritten in the gap between the check
+  # and the keypress is somebody's writing gone. Opening it is the right answer
+  # to "this name is taken", and the row says so.
+  if [[ -e $target ]]; then
+    printf '%s' "$target"
+    return 0
+  fi
+
+  if ((${#text} > TITLE_MAX)); then
+    title=$(printf '%s' "${text:0:TITLE_MAX}" | sed 's/ [^ ]*$//')
+    [[ -z $title ]] && title="${text:0:TITLE_MAX}"
+    printf '# %s\n\n%s\n' "$title…" "$text" >"$target" 2>/dev/null || return 1
+  else
+    printf '# %s\n\n' "$text" >"$target" 2>/dev/null || return 1
+  fi
+
+  printf '%s' "$target"
+}
+
+# A launcher deletes with one keypress, so it must not be a real delete. gio
+# puts it where Files can put it back; without gio it goes to a folder of our
+# own rather than to nothing at all.
+trash_note() {
+  local file="$1" bin
+  [[ -f $file ]] || return 0
+
+  if command -v gio >/dev/null 2>&1 && gio trash -- "$file" 2>/dev/null; then
+    return 0
+  fi
+
+  bin="${XDG_DATA_HOME:-$HOME/.local/share}/omacast/notes-trash"
+  mkdir -p "$bin" 2>/dev/null || return 1
+  mv -n -- "$file" "$bin/$(date +%s)-$(basename "$file")" 2>/dev/null
+}
+
+# Two arguments, not one. A query reaches this script as a single shell-quoted
+# word, so `note:--save` arrives as `omacast-note --save` with nothing after it
+# and is searched for like any other text; only the row's own `exec` ever gets
+# here with a payload behind the flag.
+if (($# >= 2)); then
+  case "$1" in
+  --save)
+    save_note "$2" >/dev/null
+    exit 0
+    ;;
+  --open)
+    target=$(save_note "$2") || exit 0
+    [[ -n $target ]] || exit 0
+    # In the foreground, and by exec. This script is already the detached child
+    # the launcher started, so there is nothing here for the editor to get out
+    # of the way of, and backgrounding it would only make it the orphan of a
+    # shell that had already gone.
+    exec omawrite "$target" >/dev/null 2>&1
+    ;;
+  --trash)
+    trash_note "$2"
+    exit 0
+    ;;
+  esac
+fi
+
+# ---- reading
+
+# Trimmed, because a query of nothing but spaces is a bare `note:` with a
+# trailing space in it, not a request to make a note called nothing.
+query="${1:-}"
+query="${query#"${query%%[![:space:]]*}"}"
+query="${query%"${query##*[![:space:]]}"}"
+
+# How long ago, in the words a person uses about their own notes. The exact date
+# is on the row too; this is the half that answers "is this the one I wrote this
+# morning" without arithmetic.
+ago() {
+  local then="$1" now diff
+  now=$(date +%s)
+  diff=$((now - then))
+  ((diff < 0)) && diff=0
+  if ((diff < 3600)); then
+    printf 'just now'
+  elif ((diff < 86400)); then
+    printf '%dh ago' $((diff / 3600))
+  elif ((diff < 172800)); then
+    printf 'yesterday'
+  elif ((diff < 604800)); then
+    printf '%dd ago' $((diff / 86400))
+  else
+    date -d "@$then" '+%-d %b' 2>/dev/null
+  fi
+}
+
+# Named arguments, not positional ones. `jq --args` still reads a leading `--`
+# as one of its own options, so `note:--save` reached jq as an unknown flag and
+# the whole answer came back as an error on stderr and nothing on stdout.
 row() {
-  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg p "$4" --arg e "$5" \
-    --argjson sc "$6" --argjson acts "$7" \
-    '{id: $id, title: $t, subtitle: $s, preview: $p, exec: $e, score: $sc, actions: $acts}'
+  jq -cn \
+    --arg id "$1" --arg title "$2" --arg subtitle "$3" --arg detail "$4" \
+    --arg excerpt "$5" --arg kind "$7" --arg exec "$8" \
+    --argjson words "$6" --argjson score "$9" --argjson actions "${10}" '
+    { id: $id, title: $title, subtitle: $subtitle, detail: $detail,
+      excerpt: $excerpt, preview: $excerpt, words: $words,
+      kind: $kind, exec: $exec, score: $score, view: "notes",
+      actions: $actions }'
 }
 
-# The create row, first, whenever there is something to name a note after. The
-# script writes the file and opens it in one command, so the launcher does not
-# have to know that a note is a file at all.
-if [[ -n $query ]]; then
-  name=$(slug "$query")
-  [[ -z $name ]] && name="note"
+# The row that writes. First whenever there is anything to name a note after,
+# and it says which of the two things it is about to do, because "New note" over
+# a name that already exists would be a lie the moment it ran.
+name=""
+[[ -n $query ]] && name=$(slug "$query")
+
+# A query with no letters or digits in it, `///` or `...`, slugs to nothing.
+# There is no filename in it, so there is no note to offer: falling back to a
+# file called "note" would quietly collect every such typo in one place.
+if [[ -n $name ]]; then
   target="$dir/$name.md"
 
   if [[ -f $target ]]; then
-    # Already exists: opening it is what "new" should do here, rather than
-    # writing a second file with a number stuck on the end.
-    create_exec="omawrite $(printf '%q' "$target")"
-    create_label="Open “$query”"
+    kind="open"
+    label="Open “$query”"
+    hint="This note already exists"
+    primary="omawrite $(printf '%q' "$target")"
+    acts=$(jq -cn --arg e "$primary" --arg p "$target" \
+      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
+        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")}]')
   else
-    create_exec="mkdir -p $(printf '%q' "$dir") && printf '# %s\n\n' $(printf '%q' "$query") > $(printf '%q' "$target") && omawrite $(printf '%q' "$target")"
-    create_label="New note “$query”"
+    kind="new"
+    label="$query"
+    hint="Save as a new note"
+    primary="omacast-note --save $(printf '%q' "$query")"
+    # Enter saves and gets out of the way, because that is what typing a thought
+    # into a launcher is for. Opening the editor is the second action rather
+    # than the first: it is the slower half, and it used to be the half that
+    # decided whether anything was saved at all.
+    acts=$(jq -cn --arg e "$primary" --arg o "omacast-note --open $(printf '%q' "$query")" \
+      --arg q "$query" \
+      '[{title: "Save Note", shortcut: "↵", exec: $e},
+        {title: "Save and Open in Omawrite", exec: $o},
+        {title: "Copy Text", exec: ("printf %s " + ($q | @sh) + " | wl-copy")}]')
   fi
 
-  row "new:$name" "$create_label" "$name.md" "" "$create_exec" 99000 \
-    "$(jq -cn --arg e "$create_exec" --arg p "$target" \
-      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
-        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")}]')"
+  row "new:$name" "$label" "$hint" "$name.md" "" 0 "$kind" "$primary" 99000 "$acts"
 fi
 
 [[ -d $dir ]] || exit 0
 
-# Existing notes. A match on the filename or on the text, newest first, because
-# the note you want is nearly always one you touched recently.
-while IFS= read -r -d '' file; do
+# Existing notes, newest first, because the note you want is nearly always one
+# you touched recently. A match on the title outranks a match buried in the
+# text: you remember what you called it more often than you remember a phrase
+# halfway down it.
+index=0
+while IFS=$'\t' read -r -d '' modified file; do
+  modified=${modified%%.*}
   base=$(basename "$file" .md)
 
-  if [[ -n $query ]]; then
-    haystack="$base $(head -c 4000 "$file" 2>/dev/null)"
-    [[ ${haystack,,} == *"${query,,}"* ]] || continue
-  fi
-
-  # The first heading is a better title than the slug, when there is one.
   title=$(grep -m1 '^#\+ ' "$file" 2>/dev/null | sed 's/^#\+ *//')
   [[ -z $title ]] && title="$base"
 
-  modified=$(stat -c %Y "$file" 2>/dev/null || echo 0)
-  when=$(date -d "@$modified" '+%d %b %Y' 2>/dev/null)
-  preview=$(head -c 3000 "$file" 2>/dev/null)
+  # Everything that is not the title line, with the blank lines squeezed out, so
+  # the excerpt on the card starts at the first real sentence rather than at the
+  # gap under the heading.
+  body=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -c 2000)
+
+  if [[ -n $query ]]; then
+    if [[ ${title,,} == *"${query,,}"* || ${base,,} == *"${query,,}"* ]]; then
+      base_score=88000
+    elif [[ ${body,,} == *"${query,,}"* ]]; then
+      base_score=80000
+    else
+      continue
+    fi
+  else
+    base_score=88000
+  fi
+
+  # The body's words, not the file's. A capture that is only a title is zero
+  # words long, and saying "13 words" about it would make an empty note look
+  # like one somebody had written in.
+  words=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | wc -w)
+  words=${words:-0}
 
   open="omawrite $(printf '%q' "$file")"
 
-  row "$file" "$title" "$when" "$preview" "$open" "$((modified % 90000))" \
+  row "$file" "$title" "$(ago "$modified")" \
+    "$(date -d "@$modified" '+%-d %b %Y' 2>/dev/null)" \
+    "${body:0:400}" "$words" "note" "$open" "$((base_score - index))" \
     "$(jq -cn --arg e "$open" --arg p "$file" \
       '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
         {title: "Copy Contents", exec: ("wl-copy < " + ($p | @sh))},
         {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")},
-        {title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh))}]')"
-done < <(find "$dir" -maxdepth 2 -name '*.md' -type f -print0 2>/dev/null)
+        {title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh))},
+        {title: "Move to Wastebasket",
+         exec: ("omacast-note --trash " + ($p | @sh))}]')"
+
+  index=$((index + 1))
+done < <(find "$dir" -maxdepth 2 -name '*.md' -type f -printf '%T@\t%p\0' 2>/dev/null |
+  sort -z -rn)
 
 exit 0

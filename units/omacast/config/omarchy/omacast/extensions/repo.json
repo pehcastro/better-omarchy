@@ -16,7 +16,7 @@
   "timeoutMs": 5000,
   "maxRows": 12,
   "tier": "substring",
-  "view": "list",
+  "view": "repos",
   "settings": [
     {
       "key": "roots",

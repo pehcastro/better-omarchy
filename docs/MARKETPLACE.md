@@ -1,33 +1,53 @@
 # Running a marketplace
 
-A marketplace is a git repo with a `marketplace.json` at its root, units in
-`units/`, and a generated `registry.json` committed beside them. That is the
-whole distribution mechanism. There is no server, no account and no index to
-publish to: a user runs `bo market add <git-url>` and your units appear in their
-`bo list` next to everyone else's.
+A marketplace is a git repo with a `registry.json` at its root. That one file is
+what `bo market add` requires and what every client reads. In this repo it is
+generated from a `marketplace.json` and the unit folders under `units/`, and
+committed beside them.
 
-This repo is one, and nothing in `bo` is specific to it.
+That is the whole distribution mechanism. There is no server, no account and no
+index to publish to: a user runs `bo market add <git-url>` and your units appear
+in their `bo list` next to everyone else's.
+
+This repo is one, and the only thing `bo` treats specially about it is that the
+checkout `bo` runs from is listed first, so it can find itself and refuse to
+remove itself.
 
 ## What this adds, and what it builds on
 
 See the README for the short version. The part that matters when you are hosting
-one: Omarchy's plugin system covers QML in the shell and nothing else, and it has
-no distribution at all. There is no index, no search, no source but a git URL a
-person types. `omarchy-plugin-catalog`, despite the name, is a local `find` over
-two directories.
+one: Omarchy's plugin system covers QML in the shell, and one plugin per repo.
+Its manual puts it plainly, "a third-party plugin is just a git repo with a
+`manifest.json` at its root", and `omarchy plugin add` clones a git URL,
+validates that root and installs the manifest it finds there. A repo cannot
+carry two.
 
-So a registry is not a second opinion about plugins. It is the layer Omarchy does
-not have: a way to publish a collection, keep it updated as a set, and let a
-client discover what is in it before installing.
+Discovery is not missing from the ecosystem: [omarchyplugins.com](https://omarchyplugins.com)
+is a community directory the official manual links, and it is where people look.
+It is a directory with a door, though. You file an issue, validation runs, and a
+maintainer approves the listing. What is missing is the other option, where you
+publish a set yourself and a client reads it directly. That is what a registry
+is here.
+
+Inside the CLI there is no remote lookup at all: `omarchy-plugin-catalog`,
+despite the name, is a local `find` over two directories on your own disk and
+makes no network calls.
+
+So a registry is not a second opinion about plugins. It is the layer above them:
+a way to publish a collection, keep it updated as a set, and let a client see
+what is in it before installing, with nobody to ask first.
 
 `bo` builds on Omarchy rather than replacing it, and a marketplace author gets
 that for free:
 
 - Plugin units are checked with `omarchy plugin validate`, the same gate
   `omarchy plugin add` uses. There is no second validator to drift from it.
-- Config changes go through the shell's own IPC, because the shell holds
-  `shell.json` in memory and rewrites the whole file on every mutation of its
-  own. Editing that file behind its back gets your change overwritten.
+- Enabling a plugin goes through `omarchy plugin enable`, and every change is
+  followed by telling the shell to reload. The shell holds `shell.json` in
+  memory and rewrites the whole file on every mutation of its own, so a write
+  it does not know about gets overwritten. `bo` does edit that file directly in
+  one place, to drop a removed plugin's entry from `plugins[]`, and calls
+  `omarchy-shell shell reloadConfig` immediately after to close that window.
 - The reserved `omarchy.*` namespace is left alone. An id there is dropped by
   the shell with only a console warning, so it fails invisibly.
 
@@ -53,9 +73,14 @@ their tree is left exactly as published: the generated `unit.toml` and
 symlink back to the repo root, so there is one checkout to update rather than a
 copy to keep in step.
 
-What you gain over `omarchy plugin add` is removal: `bo remove` takes out the
-symlinks it made and leaves the bar layout entry alone, where `plugin disable`
-deletes that entry along with the widget's position and settings.
+What you gain over `omarchy plugin add` is a bar widget that comes back where
+you left it. `omarchy plugin disable` and `omarchy plugin remove` both route
+through the shell's `setEnabled`, which splices the widget's entry out of
+`bar.layout`, taking its section, position and per-entry settings with it
+(`shell/services/PluginRegistry.qml`). `bo remove` takes out only the symlinks
+it made and leaves that entry sitting there. It renders nothing while the
+plugin is gone, and it is what makes a later `bo add` put the widget back
+exactly where it was.
 
 What you do not gain is any of the rest. A plugin repo has no `needs`, no
 `keys`, no `conflicts` and no version history bo can read, so `bo doctor`,

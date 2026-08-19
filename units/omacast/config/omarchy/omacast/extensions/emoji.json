@@ -14,7 +14,7 @@
   "when": "test -f /usr/share/omarchy/shell/plugins/emojis/emojis.json",
   "minChars": 0,
   "debounceMs": 100,
-  "maxRows": 12,
+  "maxRows": 60,
   "tier": "substring",
-  "view": "list"
+  "view": "emoji"
 }

@@ -16,5 +16,5 @@
   "timeoutMs": 8000,
   "maxRows": 20,
   "tier": "prefix",
-  "view": "list"
+  "view": "vault"
 }

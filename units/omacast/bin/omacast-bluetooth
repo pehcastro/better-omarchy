@@ -1,18 +1,29 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `bt:` keyword: the devices you have paired, and
-# whether each one is connected right now.
+# Emits JSON rows for OmaCast's `bt:` keyword: the devices you have paired, the
+# ones the adapter can currently see, and which one you are connected to.
 #
-#   bt:              every paired device, connected first
+#   bt:              paired devices, connected first, then whatever is nearby
 #   bt:buds          the ones whose name or address matches
 #
 # Acting on a device goes through `omarchy-bluetooth-device`, not through
 # bluetoothctl directly, because connecting has to survive the rfkill soft block
 # Omarchy uses as the real on/off state: a bare `bluetoothctl connect` fails
-# outright while the block is set. Reading is bluetoothctl, since nothing in
-# Omarchy prints the paired list.
+# outright while the block is set.
 #
-# The adapter's own on/off is a row too. It is the answer when `bt:` looks
-# empty, and an empty list with Bluetooth switched off is the usual reason.
+# Reading is one busctl call to BlueZ rather than three to bluetoothctl. It is
+# not about speed: `bluetoothctl devices Paired` gives a name and an address and
+# nothing else, and the three facts the view actually wants (is this a headset,
+# is it in the room, is its battery about to die) live on properties bluetoothctl
+# only prints through `info`, which is one round trip per device. GetManagedObjects
+# hands over every device with every property in a single message, so the view
+# gets battery, kind and RSSI for the price of the call that used to get names.
+# bluetoothctl stays as the fallback for a machine where busctl or the BlueZ
+# object manager is not there, with the extra fields simply absent.
+#
+# The adapter's own on/off is not one more row among the devices. It is the
+# reason there are no devices, so when it is off it is the only row emitted and
+# the `radios` view draws it as the whole answer. See ResultRadios.qml for what
+# each of the extra fields on a row is for.
 
 set -uo pipefail
 
@@ -27,79 +38,222 @@ matches() {
   [[ ${hay,,} == *"$needle"* ]]
 }
 
-powered=1
-timeout 2s bluetoothctl show 2>/dev/null | grep -q "Powered: yes" || powered=0
+# One line per device: group address name paired connected rssi battery icon.
+# Group is the reading order the view wants and the only thing jq sorts on that
+# is not a signal or a name.
+#
+# Separated by U+001F rather than by tabs. A tab is IFS whitespace, so `read`
+# folds a run of them into one delimiter, and a device with no RSSI shifted its
+# battery into the RSSI slot and its icon into the battery slot: the row then
+# died on `--argjson battery audio-headset` and vanished from the list, which
+# looked exactly like the device was not paired.
+BLUEZ_JQ='
+  .data[0] as $o
+  | [ $o | to_entries[] | .value
+      | select(has("org.bluez.Device1"))
+      | .["org.bluez.Device1"] as $d
+      | { address: ($d.Address.data // ""),
+          # A control character in an advertised name would eat a field
+          # separator or a whole line, and a device gets to choose its own name.
+          name: (($d.Alias.data // $d.Name.data // $d.Address.data // "")
+                 | gsub("[[:cntrl:]]"; " ")),
+          named: (($d.Name.data // "") != ""),
+          connected: (($d.Connected.data // false) == true),
+          paired: ((($d.Paired.data // false) == true)
+                   or (($d.Bonded.data // false) == true)),
+          rssi: ($d.RSSI.data // null),
+          battery: (.["org.bluez.Battery1"].Percentage.data // null),
+          icon: ($d.Icon.data // "") } ]
+  | map(select(.address != ""))
+  # BlueZ remembers everything it has ever heard advertise. An unpaired device
+  # earns a row only if it has both a name and a live RSSI, which together mean
+  # "something you could recognise is in the room right now" rather than "a
+  # beacon walked past this laptop last Tuesday".
+  | map(select(.paired or (.rssi != null and .named)))
+  | map(. + { group: (if .connected then 0 elif .paired then 1 else 2 end) })
+  | sort_by([ .group, (0 - (.rssi // -127)), (.name | ascii_downcase) ])
+  | .[]
+  | [ (.group | tostring), .address, .name,
+      (if .paired then "1" else "0" end),
+      (if .connected then "1" else "0" end),
+      (.rssi // "" | tostring),
+      (.battery // "" | tostring),
+      .icon ]
+  | join("\u001f")'
 
-# Two list calls rather than one `info` per device: `info` is a round trip each,
-# and a headset plus a mouse plus a keyboard is already slower than the debounce.
-connected=$(timeout 3s bluetoothctl devices Connected 2>/dev/null)
+ADAPTERS_JQ='
+  [ .data[0] | to_entries[] | .value | select(has("org.bluez.Adapter1")) ]
+  | length'
+
+POWERED_JQ='
+  [ .data[0] | to_entries[] | .value
+    | select(has("org.bluez.Adapter1"))
+    | .["org.bluez.Adapter1"].Powered.data ]
+  | any'
+
+bluez=""
+if command -v busctl >/dev/null 2>&1; then
+  bluez=$(timeout 3s busctl --json=short call org.bluez / \
+    org.freedesktop.DBus.ObjectManager GetManagedObjects 2>/dev/null)
+fi
+
+devices=""
+if [[ -n $bluez ]]; then
+  adapters=$(jq -r "$ADAPTERS_JQ" <<<"$bluez" 2>/dev/null)
+  if [[ ${adapters:-0} == "0" ]]; then
+    # No adapter object at all. Either this machine has no Bluetooth, or the
+    # soft block took hci0 down with it, and those two want opposite answers:
+    # silence, or the whole card saying it is off. rfkill is the one that knows.
+    rfkill list bluetooth 2>/dev/null | grep -q . || exit 0
+    powered=0
+  else
+    [[ $(jq -r "$POWERED_JQ" <<<"$bluez" 2>/dev/null) == "true" ]] && powered=1 || powered=0
+  fi
+  devices=$(jq -r "$BLUEZ_JQ" <<<"$bluez" 2>/dev/null)
+else
+  # Fallback: names and connectedness, which is all bluetoothctl gives without
+  # a round trip per device. No battery, no kind, no signal, and the view draws
+  # the empty meter that means exactly that.
+  powered=1
+  timeout 2s bluetoothctl show 2>/dev/null | grep -q "Powered: yes" || powered=0
+  connected=$(timeout 3s bluetoothctl devices Connected 2>/dev/null)
+  devices=$(while read -r _ address name; do
+    [[ $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || continue
+    if [[ $connected == *"$address"* ]]; then group=0; conn=1; else group=1; conn=0; fi
+    printf '%s\x1f%s\x1f%s\x1f1\x1f%s\x1f\x1f\x1f\n' "$group" "$address" "${name:-$address}" "$conn"
+  done < <(timeout 3s bluetoothctl devices Paired 2>/dev/null |
+    { grep '^Device ' || true; } |
+    sort -t' ' -k3))
+fi
+
+if ((powered == 0)); then
+  jq -cn --argjson sc 99000 \
+    '{ id: "power", title: "Bluetooth is off", subtitle: "Adapter",
+       accessory: "Off", group: "Bluetooth", glyph: "",
+       exec: "omarchy-bluetooth-power on", score: $sc,
+       kind: "radio", radioOn: false, radioLabel: "Bluetooth",
+       actions: [
+         { title: "Turn Bluetooth On", shortcut: "↵", exec: "omarchy-bluetooth-power on" },
+         { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
+       ] }'
+  exit 0
+fi
+
+# The adapter row is emitted before the devices even though it ranks below them.
+# maxRows truncates in emission order and the launcher sorts by score after, so
+# emitting it last is how the strip disappears in a room full of headphones.
+if matches "bluetooth power adapter on off pair"; then
+  jq -cn --argjson sc 60000 \
+    '{ id: "power", title: "Bluetooth is on", subtitle: "Adapter",
+       accessory: "On", group: "Bluetooth", glyph: "",
+       exec: "omarchy-bluetooth-power off", score: $sc,
+       kind: "radio", radioOn: true, radioLabel: "Bluetooth", iface: "hci0",
+       actions: [
+         { title: "Turn Bluetooth Off", shortcut: "↵", exec: "omarchy-bluetooth-power off" },
+         { title: "Pair a New Device", exec: "omarchy-shell -q shell summon omarchy.bluetooth" },
+         { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
+       ] }'
+fi
+
+# The freedesktop icon name BlueZ reports, said out loud. A device whose icon is
+# not in this list still gets a word out of it, because "audio-card" with the
+# family stripped is already better than nothing on the row.
+kind_of() {
+  case "$1" in
+    audio-headset) echo "headset" ;;
+    audio-headphones) echo "headphones" ;;
+    audio-card | audio-speakers) echo "speaker" ;;
+    input-mouse) echo "mouse" ;;
+    input-keyboard) echo "keyboard" ;;
+    input-gaming) echo "gamepad" ;;
+    input-tablet) echo "tablet" ;;
+    camera-photo | camera-video) echo "camera" ;;
+    video-display) echo "display" ;;
+    phone) echo "phone" ;;
+    computer) echo "computer" ;;
+    printer) echo "printer" ;;
+    scanner) echo "scanner" ;;
+    "") echo "" ;;
+    *) echo "${1#audio-}" | sed -e 's/^input-//' -e 's/-/ /g' ;;
+  esac
+}
 
 score=90000
 
-while read -r _ address name; do
+while IFS=$'\x1f' read -r group address name paired connected rssi battery icon; do
   [[ $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || continue
   name="${name:-$address}"
   matches "$name" "$address" || continue
 
-  # A connected device leads: it is the one you are about to hang up on.
-  if [[ $connected == *"$address"* ]]; then
-    state="Connected"
-    primary="Disconnect"
-    exec="omarchy-bluetooth-device disconnect $address"
-    other="Connect"
-    other_exec="omarchy-bluetooth-device connect $address"
-    rank=$((score + 5000))
-  else
-    state="Paired"
-    primary="Connect"
-    exec="omarchy-bluetooth-device connect $address"
-    other="Disconnect"
-    other_exec="omarchy-bluetooth-device disconnect $address"
-    rank=$score
+  kind=$(kind_of "$icon")
+
+  # RSSI is dBm, which is a negative logarithm nobody compares by eye. The meter
+  # wants a proportion, so -100 is nothing and -50 is everything: that is the
+  # band a room-sized radio actually lives in, and either end of it saturates.
+  # A device with no RSSI has not been heard from, which the view draws as an
+  # empty meter rather than as a weak one, so the field is left out entirely.
+  signal=""
+  label=""
+  if [[ $rssi =~ ^-?[0-9]+$ ]]; then
+    signal=$(((rssi + 100) * 2))
+    ((signal < 0)) && signal=0
+    ((signal > 100)) && signal=100
+    label="${rssi} dBm"
   fi
+
+  extra="[]"
+  case "$group" in
+    0)
+      state="Connected"; primary="Disconnect"
+      exec="omarchy-bluetooth-device disconnect $address"
+      rank=$((score + 5000))
+      joined=true; known=true; mark="paired"
+      extra=$(jq -cn --arg a "$address" \
+        '[{ title: "Connect", exec: ("omarchy-bluetooth-device connect " + $a) }]')
+      ;;
+    1)
+      state="Paired"; primary="Connect"
+      exec="omarchy-bluetooth-device connect $address"
+      rank=$((score + 2000))
+      joined=false; known=true; mark="paired"
+      extra=$(jq -cn --arg a "$address" \
+        '[{ title: "Disconnect", exec: ("omarchy-bluetooth-device disconnect " + $a) }]')
+      ;;
+    *)
+      # Visible but not paired. Enter pairs it, which is a different promise
+      # from Enter on a paired device and is why the row is marked differently.
+      state="Nearby"; primary="Pair"
+      exec="omarchy-bluetooth-device pair $address"
+      rank=$score
+      joined=false; known=false; mark="nearby"
+      ;;
+  esac
 
   jq -cn --arg id "$address" --arg t "$name" --arg s "$state" --arg d "$address" \
     --arg a "$state" --arg p "$primary" --arg e "$exec" --arg addr "$address" \
-    --arg o "$other" --arg oe "$other_exec" --argjson sc "$rank" \
+    --arg kind "$kind" --arg mark "$mark" --arg label "$label" \
+    --argjson extra "$extra" --argjson sc "$rank" \
+    --argjson joined "$joined" --argjson known "$known" \
+    --argjson signal "${signal:-null}" --argjson battery "${battery:-null}" \
     '{
        id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
        group: "Bluetooth", glyph: "", exec: $e, score: $sc,
-       actions: [
-         { title: $p, shortcut: "↵", exec: $e },
-         { title: $o, exec: $oe },
+       kind: "device", radioOn: true, radioLabel: "Bluetooth",
+       joined: $joined, known: $known, mark: $mark,
+       deviceKind: $kind, meta: $addr,
+       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra + [
          { title: "Forget Device", exec: ("omarchy-bluetooth-device forget " + $addr) },
          { title: "Copy Address", exec: ("printf %s " + ($addr | @sh) + " | wl-copy") },
          { title: "Open Bluetooth Panel", exec: "omarchy-shell -q shell summon omarchy.bluetooth" }
-       ]
-     }'
+       ])
+     }
+     # An absent field and a field set to null are the same to the view, but
+     # only the absent one leaves the meter and the battery cell undrawn, so
+     # nothing that was never measured gets a zero drawn for it.
+     | if $signal == null then . else . + { signal: $signal, signalLabel: $label } end
+     | if $battery == null then . else . + { battery: $battery } end'
 
   score=$((score - 100))
-done < <(timeout 3s bluetoothctl devices Paired 2>/dev/null |
-  { grep '^Device ' || true; } |
-  sort -t' ' -k3)
-
-# ---- the adapter itself
-if matches "bluetooth power adapter on off pair"; then
-  if ((powered)); then
-    jq -cn --argjson sc 80000 \
-      '{ id: "power", title: "Bluetooth is on", subtitle: "Adapter",
-         accessory: "On", group: "Bluetooth", glyph: "",
-         exec: "omarchy-bluetooth-power off", score: $sc,
-         actions: [
-           { title: "Turn Bluetooth Off", shortcut: "↵", exec: "omarchy-bluetooth-power off" },
-           { title: "Pair a New Device", exec: "omarchy-shell -q shell summon omarchy.bluetooth" },
-           { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
-         ] }'
-  else
-    jq -cn --argjson sc 99000 \
-      '{ id: "power", title: "Bluetooth is off", subtitle: "Adapter",
-         accessory: "Off", group: "Bluetooth", glyph: "",
-         exec: "omarchy-bluetooth-power on", score: $sc,
-         actions: [
-           { title: "Turn Bluetooth On", shortcut: "↵", exec: "omarchy-bluetooth-power on" },
-           { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
-         ] }'
-  fi
-fi
+done <<<"$devices"
 
 exit 0

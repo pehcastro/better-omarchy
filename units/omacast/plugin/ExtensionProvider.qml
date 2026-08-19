@@ -100,7 +100,8 @@ Item {
 
     var filters = Query.extras(q, ext.keyword, ext.aliases)
     var command = ext.search === "" ? ""
-      : Extensions.buildCommand(ext, arg, filters, Util.shellQuote)
+      : Extensions.buildCommand(ext, arg, filters, Util.shellQuote,
+                                prov.launcher ? prov.launcher.settingsFor(ext.id) : null)
     var key = Extensions.cacheKey(ext, command, arg, filters)
 
     // Recorded before the cache check, not after: a refresh over a socket sends

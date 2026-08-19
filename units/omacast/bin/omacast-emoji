@@ -8,13 +8,56 @@
 # The data is the list Omarchy's own emoji picker already ships, read in place.
 # A second copy would drift apart from the first the moment either side gained
 # a codepoint, and 105KB is not worth owning twice.
+#
+# The answer is drawn as a grid of glyphs rather than as a list of names, so the
+# rows carry the character in `glyph` and nothing else has to be short.
+#
+# What you used lately leads the empty query, because the emoji anyone reaches
+# for twice a day is a set of about ten and it is not the same ten for two
+# people. Nothing here can see a copy happen, so the action records it:
+#
+#   omacast-emoji --used <char>
+#
+# runs alongside the copy that was always there. Until something calls it the
+# file does not exist, and the default set below is the whole answer.
 
 set -uo pipefail
 
-query="${1:-}"
 DATA="/usr/share/omarchy/shell/plugins/emojis/emojis.json"
+RECENT="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/omacast-emoji-recent"
+KEEP=24
+
+# ---- record
+#
+# One character keeps one line: reaching for the same face twice is one habit,
+# not two. Newest first, so reading the file is already the order it is shown
+# in. The rewrite goes through a temp file under a lock, because two copies in
+# the same second must not truncate each other.
+if [[ ${1:-} == "--used" ]]; then
+  char="${2:-}"
+  [[ -n $char ]] || exit 0
+
+  mkdir -p "$(dirname "$RECENT")"
+  exec {lock}>"$RECENT.lock"
+  flock -w 2 "$lock" || exit 0
+
+  tmp=$(mktemp "$RECENT.XXXXXX") || exit 0
+  {
+    printf '%s\n' "$char"
+    [[ -f $RECENT ]] && grep -vxF -- "$char" "$RECENT"
+  } | head -n "$KEEP" >"$tmp"
+  mv -f "$tmp" "$RECENT"
+  exit 0
+fi
+
+query="${1:-}"
 
 [[ -f $DATA ]] || exit 0
+
+# One line per character, newest first. Anything no longer in the data file
+# falls out on its own: the lookup below is by exact character.
+recents='[]'
+[[ -s $RECENT ]] && recents=$(jq -R -s 'split("\n") | map(select(length > 0))' "$RECENT")
 
 # With no query the answer is neither nothing nor all 1800 of them. These terms
 # resolve through the same matcher a typed search uses, so the default set is a
@@ -26,7 +69,7 @@ DEFAULTS='["red heart","thumbs up","fire","tada","rocket","check mark button",
            "face with tears of joy","sob","smiling face with sunglasses",
            "heart_eyes","grin","ok hand","shrug"]'
 
-jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" '
+jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" --argjson recents "$recents" '
   # A whole-word hit beats a prefix hit beats a substring hit. Inside a band an
   # earlier and shorter keyword wins, which is what puts ⭐ "star" above
   # 💫 "dizzy star" and 🔥 "fire burn" above 🚒 "fire_engine fire engine".
@@ -42,18 +85,25 @@ jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" '
       end;
 
   def row($score):
-    ("printf %s " + (.e | @sh) + " | wl-copy") as $copy
+    # Recording runs before the copy rather than after it: the copy is the
+    # thing the user pressed Enter for, and a slow write must not sit between
+    # the keypress and the clipboard.
+    ("omacast-emoji --used " + (.e | @sh)) as $used
+    | ($used + "; printf %s " + (.e | @sh) + " | wl-copy") as $copy
     | {
         id: .e,
         title: .name,
         glyph: .e,
+        # The grid writes one name under the wall, and the strip beside it is
+        # the only place a row can say it is here because you used it.
+        subtitle: (if .mru then "Recently used" else "Emoji" end),
         exec: $copy,
         score: $score,
         actions: [
           { title: "Copy Emoji", shortcut: "↵", exec: $copy },
           # The launcher closes first, so the keystrokes need a window to land
           # in by the time they are sent.
-          { title: "Type It", exec: ("sleep 0.2; wtype " + (.e | @sh)) },
+          { title: "Type It", exec: ($used + "; sleep 0.2; wtype " + (.e | @sh)) },
           { title: "Copy Name", exec: ("printf %s " + (.name | @sh) + " | wl-copy") }
         ]
       };
@@ -70,13 +120,21 @@ jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" '
     | { e: .e, k: $k, w: ($k | split(" ")), name: $name }
   ] as $all
   | (if $q == "" then
-       [ $defaults[]
-         | . as $needle
-         | ([ $all[] | . + { r: rank($needle) } | select(.r > 0) ] | max_by(.r))
-         | select(. != null)
-       ]
+       # What you reached for lately, then the standing set. A character in both
+       # is kept once and at the position it earned, which is why this dedupes
+       # in order rather than through unique_by: unique_by sorts, and sorting
+       # here would throw away the ordering that is the whole point.
+       ([ $recents[] as $ch | ($all[] | select(.e == $ch) | . + { mru: true }) ]
+        + [ $defaults[]
+            | . as $needle
+            | ([ $all[] | . + { r: rank($needle) } | select(.r > 0) ] | max_by(.r))
+            | select(. != null)
+          ])
+       | reduce .[] as $x ([]; if any(.[]; .e == $x.e) then . else . + [$x] end)
      else
-       [ $all[] | . + { r: rank($q) } | select(.r > 0) ] | sort_by(-.r) | .[0:40]
+       # Sixty rather than forty: the grid shows five rows of thirteen at the
+       # usual card width, so forty ended a screen short of full.
+       [ $all[] | . + { r: rank($q) } | select(.r > 0) ] | sort_by(-.r) | .[0:60]
      end)
   | to_entries[]
   | .key as $i

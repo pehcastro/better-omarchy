@@ -9,12 +9,12 @@
     "expand"
   ],
   "subtitle": "Snippet",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-snippet {query}",
   "when": "test -f \"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/omacast-snippets.json\"",
   "minChars": 0,
   "debounceMs": 80,
   "maxRows": 20,
   "tier": "substring",
-  "view": "list"
+  "view": "snippets"
 }

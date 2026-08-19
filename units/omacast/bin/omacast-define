@@ -41,7 +41,13 @@ cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/define"
 cache="$cache_dir/$lower.json"
 
 body=""
-if [[ -f $cache ]] && [[ -z $(find "$cache" -mtime +30 -print -quit 2>/dev/null) ]]; then
+# `settings:` writes this into omacast.json and the launcher hands it over in
+# the environment. Thirty days when nobody has said otherwise: a definition does
+# not change, and the cache exists so the second lookup of a word is instant.
+cache_days="${OMACAST_CACHEDAYS:-30}"
+[[ $cache_days =~ ^[0-9]+$ ]] || cache_days=30
+
+if [[ -f $cache ]] && [[ -z $(find "$cache" -mtime +"$cache_days" -print -quit 2>/dev/null) ]]; then
   body=$(<"$cache")
 fi
 

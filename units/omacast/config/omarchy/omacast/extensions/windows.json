@@ -12,6 +12,7 @@
   "search": "omacast-search-windows {query}",
   "minChars": 0,
   "debounceMs": 0,
-  "maxRows": 10,
-  "tier": "substring"
+  "maxRows": 14,
+  "tier": "substring",
+  "view": "windows"
 }

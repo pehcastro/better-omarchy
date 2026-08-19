@@ -4,6 +4,28 @@
 #   theme:            every theme, the current one first
 #   theme:tokyo       the ones that match
 #
+# Moving the selection applies the theme as you go, and leaving without choosing
+# puts back the one you started on. A list of theme names tells you nothing
+# about what any of them looks like, and the only way to judge one is to see it,
+# so the launcher previews on selection and reverts on Escape.
+#
+# The preview does not set the theme at all. It calls the one thing `omarchy
+# theme set` calls to retint the shell, with that theme's own colour files:
+#
+#   omarchy-shell shell applyTheme <colors.toml b64> <shell.toml b64>
+#
+# 44ms, against 800ms for `omarchy theme set`, and THEME_HEADLESS=1 does not
+# help because the cost is the lock, the symlinks and the background, not the
+# app hooks. Reverting is the same call with the theme you started on, and
+# because nothing was ever set, leaving without choosing leaves no trace.
+# Enter runs the real `omarchy theme set`.
+#
+# The preview also repaints every running foot terminal, because a theme you can
+# only see on the launcher is not a theme you can judge. Foot takes OSC escape
+# sequences on its tty and changes palette on the spot: no restart, no config
+# write, nothing to undo beyond sending the old colours back. That is the whole
+# reason previewing is worth doing at all.
+#
 # `omarchy theme set` lowercases whatever it is given and turns spaces into
 # dashes, so the prettified names `omarchy theme list` prints go straight back
 # in with no translation here.
@@ -14,6 +36,30 @@ query="${1:-}"
 command -v omarchy >/dev/null || exit 0
 
 current=$(omarchy theme current 2>/dev/null)
+
+# A theme's directory is its name lowercased with spaces as dashes, the same
+# translation `omarchy theme set` does.
+theme_dir() {
+  local name="${1,,}"
+  printf '%s' "/usr/share/omarchy/themes/${name// /-}"
+}
+
+# The retint call for one theme, or nothing when its files are missing: a
+# preview that cannot be reverted must not be offered.
+retint_cmd() {
+  local dir colors shell
+  dir="$(theme_dir "$1")"
+  [[ -f "$dir/colors.toml" ]] || return 0
+  colors=$(base64 -w0 "$dir/colors.toml" 2>/dev/null) || return 0
+  shell=$(base64 -w0 "$dir/shell.toml" 2>/dev/null || printf '')
+
+  # Shell first, terminals second, both from this theme's own files and neither
+  # touching what the current theme is. `omacast-theme-preview` is a sibling
+  # script because writing escape sequences to every foot tty does not fit in a
+  # single-quoted exec string.
+  printf 'omarchy-shell shell applyTheme %q %q; omacast-theme-preview %q' \
+    "$colors" "$shell" "$dir"
+}
 needle=${query,,}
 # "tokyo night", "tokyonight" and "tokyo-night" should all find the same theme,
 # because nobody remembers which spelling a theme shipped with.
@@ -37,9 +83,41 @@ while IFS= read -r theme; do
     score=$rank
   fi
 
+  # The palette itself, carried through to the view, so a card can be painted in
+  # the theme's own colours instead of naming it. /dev/null when the theme has
+  # no colours file: an empty object leaves the card unpainted, which is the
+  # honest answer, rather than a card in someone else's colours.
+  colors_toml="$(theme_dir "$theme")/colors.toml"
+  [[ -f $colors_toml ]] || colors_toml=/dev/null
+
   jq -cn --arg id "$theme" --arg t "$theme" --arg s "$subtitle" \
-    --arg e "omarchy theme set $(printf '%q' "$theme")" --argjson sc "$score" \
-    '{id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, glyph: "󰸌"}'
+    --arg e "omarchy theme set $(printf '%q' "$theme")" \
+    --arg pv "$(retint_cmd "$theme")" \
+    --arg back "$(retint_cmd "$current")" \
+    --argjson sc "$score" \
+    --argjson cur "$([[ $theme == "$current" ]] && echo true || echo false)" \
+    --rawfile toml "$colors_toml" \
+    '
+     # colors.toml is flat and every line is `key = "value"`, so it is read here
+     # rather than by a TOML parser: pulling in a second program per theme to
+     # read six hundred bytes costs more than the whole rest of this script.
+     ([ $toml | split("\n")[] | capture("^(?<k>[a-z_]+) *= *\"(?<v>[^\"]*)\"")? ]
+      | map({ key: .k, value: .v }) | from_entries) as $c
+     | { id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, glyph: "󰸌",
+         previewExec: $pv, revertExec: $back,
+         current: $cur,
+         mode: ($c.mode // "dark"),
+         bg: ($c.background // ""),
+         fg: ($c.foreground // ""),
+         dim: ($c.dark_foreground // $c.muted // ""),
+         accent: ($c.accent // ""),
+         # The window a theme paints on top of its background: without it two
+         # themes with the same near-black background look identical.
+         surface: ($c.lighter_background // $c.selection // ""),
+         # Six hues, always in the same order, so the cards can be compared
+         # column by column rather than read one at a time.
+         swatches: ([ $c.red, $c.yellow, $c.green, $c.cyan, $c.blue, $c.magenta ]
+                    | map(select(. != null and . != ""))) }'
 
   rank=$((rank - 100))
 done < <(omarchy theme list 2>/dev/null)

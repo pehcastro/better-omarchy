@@ -23,6 +23,11 @@
 # runs, which per keystroke is unusable. NetworkManager keeps scanning on its
 # own, so the list is current within about half a minute either way, and `Rescan`
 # is an action for when it is not.
+#
+# The rows are drawn by the `radios` view, so each one carries the fields that
+# view reads on top of the launcher's own: `signal` for the meter, `known` and
+# `secure` for the marks, `joined` for the one panel that is not a list row.
+# See ResultRadios.qml for what each field is for.
 
 set -uo pipefail
 
@@ -30,6 +35,30 @@ query="${1:-}"
 needle="${query,,}"
 
 command -v nmcli >/dev/null 2>&1 || exit 0
+
+panel="omarchy-shell -q shell summon omarchy.network"
+
+# The radio first, because nothing below it can be true while it is off. A radio
+# that is off is not one more row in a list of networks, it is the reason the
+# list is empty, so it is the only row emitted and the view draws it as the
+# whole answer.
+#
+# NetworkManager not running answers neither enabled nor disabled, and a row
+# claiming Wi-Fi is off would be a guess dressed as a reading, so that case
+# falls through to the listing and simply has no radio row.
+radio=$(nmcli -t -f WIFI radio 2>/dev/null)
+
+if [[ $radio == "disabled" ]]; then
+  jq -cn --argjson sc 99000 \
+    '{ id: "radio", title: "Wi-Fi is off", subtitle: "Radio", accessory: "Off",
+       group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi on", score: $sc,
+       kind: "radio", radioOn: false, radioLabel: "Wi-Fi",
+       actions: [
+         { title: "Turn Wi-Fi On", shortcut: "↵", exec: "nmcli radio wifi on" },
+         { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
+       ] }'
+  exit 0
+fi
 
 # Saved 802-11-wireless profiles, by name. A saved network connects with no
 # secret to collect, which is the difference that decides what Enter does.
@@ -42,22 +71,17 @@ while IFS= read -r line; do
   [[ $type == "802-11-wireless" && -n $name ]] && saved["$name"]=1
 done < <(nmcli -t -f TYPE,NAME connection show 2>/dev/null)
 
-score=90000
-seen=$'\n'
-
 emit() {
   local id="$1" title="$2" subtitle="$3" detail="$4" accessory="$5"
-  local primary="$6" exec="$7" extra="$8" rank="$9"
+  local primary="$6" exec="$7" extra="$8" rank="$9" fields="${10}"
 
   jq -cn --arg id "$id" --arg t "$title" --arg s "$subtitle" --arg d "$detail" \
     --arg a "$accessory" --arg p "$primary" --arg e "$exec" \
-    --argjson extra "$extra" --argjson sc "$rank" \
+    --argjson extra "$extra" --argjson sc "$rank" --argjson f "$fields" \
     '{ id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
        group: "Wi-Fi", glyph: "", exec: $e, score: $sc,
-       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra) }'
+       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra) } + $f'
 }
-
-panel="omarchy-shell -q shell summon omarchy.network"
 
 # The interface is resolved when the action runs rather than now: the row may
 # still be on screen after a roam, and reading the password off the wrong device
@@ -66,9 +90,35 @@ copy_password='iface=$(nmcli -t -f DEVICE,TYPE,STATE device'
 copy_password+=' | awk -F: -v w=wifi -v c=connected "\$2 == w && \$3 == c { print \$1; exit }");'
 copy_password+=' omarchy-network-password "$iface" | tr -d "\n" | wl-copy'
 
+# The radio row is emitted before the networks even though it ranks below them.
+# maxRows truncates in emission order and the launcher sorts by score after, so
+# emitting it last is how the strip disappears on a busy street.
+if [[ $radio == "enabled" ]] &&
+  [[ -z $needle || "wifi radio scan rescan on off" == *"$needle"* ]]; then
+  iface=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null |
+    awk -F: '$2 == "wifi" { print $1; exit }')
+  jq -cn --arg if "$iface" --argjson sc 60000 \
+    '{ id: "radio", title: "Wi-Fi is on", subtitle: "Radio", accessory: "On",
+       group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi off", score: $sc,
+       kind: "radio", radioOn: true, radioLabel: "Wi-Fi", iface: $if,
+       actions: [
+         { title: "Turn Wi-Fi Off", shortcut: "↵", exec: "nmcli radio wifi off" },
+         { title: "Rescan", exec: "nmcli device wifi rescan" },
+         { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
+       ] }'
+fi
+
+score=90000
+seen=$'\n'
+
 # SSID is asked for last so it is the remainder of the line: nmcli escapes a
 # colon inside a field as "\:", and splitting an SSID out of the middle means
 # unpicking that by hand. Nothing before it can contain a colon.
+#
+# FREQ and RATE rather than BAND: BAND says "5 GHz" outright but only arrived in
+# a recent nmcli, and one unknown field name makes the whole call print nothing,
+# which would empty the view on an older machine rather than lose one line of
+# detail. FREQ has been there for as long as this command has.
 while IFS= read -r line; do
   [[ -n $line ]] || continue
 
@@ -77,6 +127,10 @@ while IFS= read -r line; do
   signal="${rest%%:*}"
   rest="${rest#*:}"
   security="${rest%%:*}"
+  rest="${rest#*:}"
+  freq="${rest%%:*}"
+  rest="${rest#*:}"
+  rate="${rest%%:*}"
   ssid="${rest#*:}"
   ssid="${ssid//\\:/:}"
 
@@ -92,6 +146,34 @@ while IFS= read -r line; do
   quoted=$(printf '%q' "$ssid")
   if [[ -z $security ]]; then lock="Open"; else lock="$security"; fi
 
+  # 2.4 is one crowded band and 5 and 6 are two quiet ones, which is the whole
+  # reason two access points with the same name behave differently. The number
+  # of megahertz is not the point, so it never reaches the screen.
+  band=""
+  mhz="${freq%% *}"
+  if [[ $mhz =~ ^[0-9]+$ ]]; then
+    if ((mhz >= 5925)); then
+      band="6 GHz"
+    elif ((mhz >= 4900)); then
+      band="5 GHz"
+    elif ((mhz > 0)); then
+      band="2.4 GHz"
+    fi
+  fi
+
+  # The link rate is only worth the width on the network you are actually using,
+  # where it is the difference between "the Wi-Fi is slow" and "the internet is".
+  meta="$band"
+  if [[ $in_use == "*" && -n $rate ]]; then
+    meta="${meta:+$meta · }$rate"
+  fi
+
+  common=$(jq -cn --argjson sig "${signal:-0}" --arg lab "${signal:-0}%" \
+    --arg sec "$([[ $lock == "Open" ]] && echo "" || echo "$lock")" \
+    --arg meta "$meta" \
+    '{ kind: "network", radioOn: true, radioLabel: "Wi-Fi",
+       signal: $sig, signalLabel: $lab, secure: $sec, meta: $meta }')
+
   if [[ $in_use == "*" ]]; then
     down="out=\$(nmcli connection down id $quoted 2>&1)"
     down+=" && omarchy-notification-send \"Disconnected from $ssid\""
@@ -102,7 +184,8 @@ while IFS= read -r line; do
            { title: "Show QR Code", exec: "omarchy-shell -q shell summon omarchy.wifiqr" },
            { title: "Speed Test", exec: "omarchy-network-speedtest" },
            { title: "Open Network Panel", exec: $panel }
-         ]')" "$((score + 9000))"
+         ]')" "$((score + 9000))" \
+      "$(jq -cn --argjson c "$common" '$c + { joined: true, known: true, mark: "saved" }')"
 
   elif [[ -n ${saved[$ssid]:-} ]]; then
     up="out=\$(nmcli connection up id $quoted 2>&1)"
@@ -112,7 +195,8 @@ while IFS= read -r line; do
       "$(jq -cn --arg q "$quoted" --arg panel "$panel" '[
            { title: "Forget Network", exec: ("nmcli connection delete id " + $q) },
            { title: "Open Network Panel", exec: $panel }
-         ]')" "$((score + 4000))"
+         ]')" "$((score + 4000))" \
+      "$(jq -cn --argjson c "$common" '$c + { joined: false, known: true, mark: "saved" }')"
 
   elif [[ $lock == "Open" ]]; then
     # Nothing to prompt for, so this one connects from the row.
@@ -122,7 +206,8 @@ while IFS= read -r line; do
     emit "$ssid" "$ssid" "Open network" "$lock" "${signal}%" "Connect" "$join" \
       "$(jq -cn --arg panel "$panel" '[
            { title: "Open Network Panel", exec: $panel }
-         ]')" "$score"
+         ]')" "$score" \
+      "$(jq -cn --argjson c "$common" '$c + { joined: false, known: false, mark: "" }')"
 
   else
     emit "$ssid" "$ssid" "Needs a password" "$lock" "${signal}%" "Open Network Panel" "$panel" \
@@ -130,37 +215,11 @@ while IFS= read -r line; do
            { title: "Connect in a Terminal",
              exec: ("omarchy-launch-tui --app-id=org.omarchy.wifi nmcli --ask device wifi connect " + $q) },
            { title: "Copy Name", exec: ("printf %s " + ($s | @sh) + " | wl-copy") }
-         ]')" "$score"
+         ]')" "$score" \
+      "$(jq -cn --argjson c "$common" '$c + { joined: false, known: false, mark: "" }')"
   fi
 
   score=$((score - 100))
-done < <(nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list --rescan no 2>/dev/null)
-
-# ---- the radio itself, and a way to make the list newer
-radio=$(nmcli -t -f WIFI radio 2>/dev/null)
-# NetworkManager not running answers neither, and a row claiming Wi-Fi is off
-# would be a guess dressed as a reading.
-if [[ $radio == "enabled" || $radio == "disabled" ]] &&
-  [[ -z $needle || "wifi radio scan rescan on off" == *"$needle"* ]]; then
-  if [[ $radio == "enabled" ]]; then
-    jq -cn --argjson sc 70000 \
-      '{ id: "radio", title: "Wi-Fi is on", subtitle: "Radio", accessory: "On",
-         group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi off", score: $sc,
-         actions: [
-           { title: "Turn Wi-Fi Off", shortcut: "↵", exec: "nmcli radio wifi off" },
-           { title: "Rescan", exec: "nmcli device wifi rescan" },
-           { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
-         ] }'
-  else
-    # Nothing else can be true while the radio is off, so it leads.
-    jq -cn --argjson sc 99000 \
-      '{ id: "radio", title: "Wi-Fi is off", subtitle: "Radio", accessory: "Off",
-         group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi on", score: $sc,
-         actions: [
-           { title: "Turn Wi-Fi On", shortcut: "↵", exec: "nmcli radio wifi on" },
-           { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
-         ] }'
-  fi
-fi
+done < <(nmcli -t -f IN-USE,SIGNAL,SECURITY,FREQ,RATE,SSID device wifi list --rescan no 2>/dev/null)
 
 exit 0

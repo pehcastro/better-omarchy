@@ -10,7 +10,7 @@
   "minChars": 0,
   "debounceMs": 90,
   "timeoutMs": 5000,
-  "maxRows": 14,
+  "maxRows": 16,
   "tier": "substring",
-  "view": "list"
+  "view": "menutree"
 }

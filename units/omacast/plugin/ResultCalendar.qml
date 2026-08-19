@@ -43,10 +43,31 @@ Item {
     ? (new Date(year, month - 1, 1).getDay() - weekStart + 7) % 7 : 0
   readonly property int weeks: daysInMonth > 0 ? Math.ceil((offset + daysInMonth) / 7) : 0
 
-  readonly property int cellWidth: Math.max(Style.space(20), Math.floor((width - Style.space(36)) / 7))
-  readonly property int cellHeight: Style.space(34)
+  // Everything above and below the grid. The grid gets what is left of the room
+  // the launcher gave us, and this is what "left" means.
+  readonly property int chrome: Style.space(36) + Style.space(40) + Style.space(22) + Style.space(14)
 
-  implicitHeight: tabs.height + heading.height + weekdays.height + weeks * cellHeight + Style.space(14)
+  // A day is a square, because a month drawn out of wide short cells reads as a
+  // table of numbers rather than as a month. Three things argue over how big
+  // that square is and the smallest wins:
+  //
+  //   the card's width, divided seven ways, so the row always fits across;
+  //   the room left under the tabs, divided by the weeks, so a six-week month
+  //     on a short screen shrinks instead of running off the bottom;
+  //   a ceiling, because a 620-wide card divided seven ways is a 111px square,
+  //     and six rows of those is a month that fills the screen.
+  //
+  // Under the floor the square stops shrinking and the view clips, which is the
+  // only honest thing left to do with a month that does not fit at all.
+  readonly property int cellCeiling: Style.space(56)
+  readonly property int cellFloor: Style.space(22)
+  readonly property int widthLimit: Math.floor((width - Style.space(36)) / 7)
+  readonly property int heightLimit: (maxHeight > 0 && weeks > 0)
+    ? Math.floor((maxHeight - chrome) / weeks) : cellCeiling
+  readonly property int cellSize: Math.max(cellFloor,
+    Math.min(widthLimit, heightLimit, cellCeiling))
+
+  implicitHeight: tabs.height + heading.height + weekdays.height + weeks * cellSize + Style.space(14)
 
   function number(value, fallback) {
     var n = Number(value)
@@ -155,7 +176,7 @@ Item {
       delegate: Text {
         required property int index
 
-        width: view.cellWidth
+        width: view.cellSize
         height: weekdays.height
         text: view.weekdayNames[(index + view.weekStart) % 7]
         color: Qt.darker(view.launcher.foreground, 2.1)
@@ -186,12 +207,20 @@ Item {
         readonly property bool isToday: day > 0 && day === view.today
         readonly property bool marked: day > 0 && view.marks.indexOf(day) >= 0
 
-        width: view.cellWidth
-        height: view.cellHeight
+        width: view.cellSize
+        height: view.cellSize
+
+        // The dot hangs under the number, so the number sits that much above
+        // centre and the two of them read as one mark on the square rather than
+        // as a number with something loose beneath it.
+        readonly property int dotSize: Math.max(Style.space(3), Math.round(view.cellSize * 0.08))
+        readonly property int dotGap: Math.max(Style.space(2), Math.round(view.cellSize * 0.06))
 
         Rectangle {
           anchors.centerIn: number
-          width: Style.space(24)
+          // Proportional, because a fixed circle in a square that changes size
+          // is either a ring around the number or a blob behind the whole cell.
+          width: Math.max(Style.space(20), Math.round(view.cellSize * 0.62))
           height: width
           radius: width / 2
           visible: cell.isToday
@@ -200,22 +229,25 @@ Item {
 
         Text {
           id: number
-          anchors.top: parent.top
-          anchors.topMargin: Style.space(4)
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.verticalCenterOffset: -Math.round((cell.dotSize + cell.dotGap) / 2)
           anchors.horizontalCenter: parent.horizontalCenter
           text: cell.day > 0 ? String(cell.day) : ""
           // On the accent circle the day reads against the card's own
           // background, which is the one color guaranteed to sit under it.
           color: cell.isToday ? view.launcher.background : view.launcher.foreground
           font.family: view.launcher.fontFamily
-          font.pixelSize: Style.font.body
+          // The square grew, so the number in it grows too. Left at the body
+          // size, a 75px cell is mostly empty and the month reads as a sparse
+          // table again, which is the thing the square was meant to fix.
+          font.pixelSize: Math.max(Style.font.body, Math.round(view.cellSize * 0.26))
         }
 
         Rectangle {
-          anchors.top: parent.top
-          anchors.topMargin: Style.space(26)
+          anchors.top: number.bottom
+          anchors.topMargin: cell.dotGap
           anchors.horizontalCenter: parent.horizontalCenter
-          width: Style.space(4)
+          width: cell.dotSize
           height: width
           radius: width / 2
           visible: cell.marked

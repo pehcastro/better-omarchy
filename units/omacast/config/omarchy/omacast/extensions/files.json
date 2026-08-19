@@ -12,5 +12,6 @@
   "minChars": 2,
   "debounceMs": 180,
   "maxRows": 8,
-  "tier": "file"
+  "tier": "file",
+  "view": "files"
 }

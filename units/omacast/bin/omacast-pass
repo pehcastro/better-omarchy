@@ -5,7 +5,9 @@
 #   pass:            every entry
 #   pass:github      the ones whose name matches
 #
-# A row is the name of an entry and nothing else. No secret is ever a title, a
+# A row is the name of an entry, the folder it sits in, and which store answered.
+# Nothing more, and nothing derived from a secret: not its length, not its first
+# character, not whether it looks like a passphrase. No secret is ever a title, a
 # subtitle, a detail or an argument: the value is read inside `omacast-pass copy`
 # and goes straight down a pipe into wl-copy, so it never appears in a row, in
 # stdout, or in a /proc cmdline that every process on the box can read.
@@ -72,18 +74,34 @@ fi
 query="${1:-}"
 needle="${query,,}"
 score=90000
+store_label=""
 
 # `id` is the reference the copy path needs, which is not always the name you
 # would write down: 1Password's is a vault path with the field appended.
+#
+# `folder` and `name` go across apart rather than pre-joined, because the `vault`
+# view draws the hierarchy: `github/work` is a place, `deploy-key` is the thing
+# in it, and a view that got one string back would have to guess where to split.
+# `folder` is empty for an entry that sits at the top of the store, which is not
+# the same as an entry whose folder happens to share its name: `${entry%/*}` on
+# a name with no slash returns the name, so a top-level `github` used to file
+# itself under a folder called github that does not exist.
 row() {
-  local tool="$1" id="$2" title="$3" subtitle="$4" name="$5"
-  [[ -z $needle || ${title,,} == *"$needle"* || ${subtitle,,} == *"$needle"* ]] || return 0
+  local tool="$1" id="$2" name="$3" folder="$4" copyname="$5"
+  [[ -z $needle || ${name,,} == *"$needle"* || ${folder,,} == *"$needle"* ]] || return 0
 
-  jq -cn --arg id "$id" --arg t "$title" --arg s "$subtitle" \
-    --arg e "omacast-pass copy $(printf '%q' "$tool") $(printf '%q' "$id") $(printf '%q' "$title")" \
-    --arg name "$name" --argjson sc "$score" \
+  jq -cn --arg id "$id" --arg t "$name" --arg folder "$folder" \
+    --arg e "omacast-pass copy $(printf '%q' "$tool") $(printf '%q' "$id") $(printf '%q' "$name")" \
+    --arg name "$copyname" --argjson sc "$score" \
+    --arg tool "$tool" --arg store "$store_label" --argjson clear "$CLEAR_SECONDS" \
     '{
-       id: $id, title: $t, subtitle: $s, glyph: "󰌾", exec: $e, score: $sc,
+       id: $id, title: $t,
+       # A folderless entry still needs something in the subtitle for any view
+       # that only knows how to draw one, and the store it came from is the
+       # honest answer.
+       subtitle: (if $folder == "" then $store else $folder end),
+       glyph: "󰌾", exec: $e, score: $sc,
+       folder: $folder, name: $t, tool: $tool, store: $store, clearSeconds: $clear,
        actions: [
          { title: "Copy Password", shortcut: "↵", exec: $e },
          { title: "Copy Entry Name", exec: ("printf %s " + ($name | @sh) + " | wl-copy") }
@@ -93,18 +111,22 @@ row() {
 }
 
 if have_pass; then
+  store_label="Password Store"
   # Names come from the tree on disk rather than from `pass ls`, whose output is
   # drawn with box characters meant for a terminal.
   while IFS= read -r file; do
     entry="${file#"$STORE"/}"
     entry="${entry%.gpg}"
     [[ -n $entry ]] || continue
-    row pass "$entry" "${entry##*/}" "${entry%/*}" "$entry"
+    folder=""
+    [[ $entry == */* ]] && folder="${entry%/*}"
+    row pass "$entry" "${entry##*/}" "$folder" "$entry"
   done < <(find "$STORE" -type f -name '*.gpg' 2>/dev/null | sort)
   exit 0
 fi
 
 if have_op; then
+  store_label="1Password"
   # `op read op://vault/item/password` is the one call that never needs the item
   # id resolved a second time, so the row carries vault/item and the copy path
   # appends the field.

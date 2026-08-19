@@ -13,7 +13,7 @@
   "minChars": 0,
   "debounceMs": 100,
   "timeoutMs": 6000,
-  "maxRows": 20,
+  "maxRows": 24,
   "tier": "prefix",
-  "view": "list"
+  "view": "radios"
 }

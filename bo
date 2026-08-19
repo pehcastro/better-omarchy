@@ -51,6 +51,56 @@ die() {
   exit 1
 }
 
+# ---------------------------------------------------------------- consent
+#
+# Nothing that runs code, fetches a change into your checkout, or deletes
+# something you arranged by hand happens without an answer. `--yes` is the one
+# way to skip that, and a pipe or a cron job counts as "no answer available"
+# rather than "yes".
+
+ASSUME_YES=0
+PURGE=0
+
+# Whether there is a terminal to ask on, which is not the same as stdin being
+# one: nearly every loop in here is fed by a process substitution, so inside it
+# stdin is a pipe. Opening /dev/tty is the question that actually matters, and
+# it fails exactly where it should, in a cron job or a pipeline.
+interactive() { { : >/dev/tty; } 2>/dev/null; }
+
+confirm() {
+  local prompt="$1"
+  ((ASSUME_YES)) && return 0
+  interactive || {
+    warn "no terminal to ask on. Pass --yes to go ahead without being asked."
+    return 1
+  }
+  if command -v gum >/dev/null; then
+    gum confirm "$prompt" </dev/tty
+  else
+    local reply
+    printf '%s [y/N] ' "$prompt" >/dev/tty
+    read -r reply </dev/tty || return 1
+    [[ ${reply,,} == y* ]]
+  fi
+}
+
+# The flags every acting command shares, pulled out wherever they appear so
+# `bo add -y foo` and `bo add foo -y` are the same command. What is left goes in
+# ARGS for the caller to treat as unit names or a marketplace.
+ARGS=()
+parse_flags() {
+  ARGS=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+    -y | --yes | --trust) ASSUME_YES=1 ;;
+    --purge) PURGE=1 ;;
+    -*) die "unknown option: $arg" ;;
+    *) ARGS+=("$arg") ;;
+    esac
+  done
+}
+
 # Writes the registry for a wrapped Omarchy plugin. Kept in a variable rather
 # than a heredoc because it is called from inside a function that already reads
 # from stdin in other branches.
@@ -389,11 +439,23 @@ unlink_path() {
     case "$target" in
     "$root" | "$root"/*)
       rm -f "$dst"
+      restore_backup "$dst"
       return 0
       ;;
     esac
   done < <(market_roots)
   warn "$dst points outside every marketplace, leaving it alone"
+}
+
+# link_path moves anything already sitting at a path aside as `.before-bo.<ts>`.
+# Nothing used to bring those back, so a remove left the path empty and the old
+# file orphaned next to it. Put the newest one back instead.
+restore_backup() {
+  local dst="$1" newest
+  [[ -e $dst || -L $dst ]] && return 0
+  newest=$(ls -1dt "$dst".before-bo.* 2>/dev/null | head -1)
+  [[ -n $newest && -e $newest ]] || return 0
+  mv "$newest" "$dst" && say "  $(dim "put your own $(basename "$dst") back")"
 }
 
 shell_running() { pgrep -f '[q]uickshell.*omarchy' >/dev/null; }
@@ -421,6 +483,63 @@ sys.exit(0 if any(w.get("id") == sys.argv[1] for s in layout.values() for w in s
 PY
 }
 
+# Where a widget sits and how much of it the user typed, as `section<TAB>count`.
+# The count is the settings on the entry, everything but the id, and it is what
+# makes the difference between a stale line and a thing worth keeping.
+plugin_layout_place() {
+  python3 - "$1" <<'PY' 2>/dev/null
+import json, os, sys
+try:
+    layout = json.load(open(os.path.expanduser("~/.config/omarchy/shell.json")))["bar"]["layout"]
+except Exception:
+    sys.exit(1)
+for section, widgets in layout.items():
+    for widget in widgets:
+        if widget.get("id") == sys.argv[1]:
+            print(f"{section}\t{len(widget) - 1}")
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# One copy of shell.json before we write to it. The shell rewrites this file
+# whole rather than editing it, so a wrong edit is not something you undo by
+# hand, and `bo remove --purge` throws away settings nothing else has a copy of.
+backup_shell_json() {
+  local config="$CONFIG_HOME/omarchy/shell.json" copy
+  [[ -f $config ]] || return 0
+  copy="$config.before-bo.$(date +%s)"
+  [[ -e $copy ]] || cp -p "$config" "$copy"
+  printf '%s' "$copy"
+}
+
+# Drops a widget's whole layout entry, position and settings with it. Only
+# reached through `bo remove --purge`, and only after saying what goes.
+purge_layout_entry() {
+  local id="$1" config="$CONFIG_HOME/omarchy/shell.json"
+  [[ -f $config ]] || return 0
+
+  python3 - "$config" "$id" <<'PY'
+import json, sys
+path, wanted = sys.argv[1:3]
+try:
+    config = json.load(open(path))
+    layout = config["bar"]["layout"]
+except Exception:
+    raise SystemExit(0)
+
+for section, widgets in layout.items():
+    layout[section] = [w for w in widgets if w.get("id") != wanted]
+
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+
+  shell_running && omarchy-shell shell reloadConfig >/dev/null 2>&1
+  return 0
+}
+
 link_plugin() {
   local ref="$1" dir id
   dir=$(ref_dir "$ref")
@@ -446,8 +565,8 @@ link_plugin() {
 }
 
 unlink_plugin() {
-  local id
-  id=$(meta "$1" id)
+  local ref="$1" id
+  id=$(meta "$ref" id)
   [[ -n $id ]] || return 0
 
   # Deliberately no `plugin disable`: for a bar widget that command deletes its
@@ -462,12 +581,61 @@ unlink_plugin() {
   # are gone. A service plugin is the case that bites, since it has no layout
   # entry to notice and can leave the desktop in whatever state it last set.
   forget_plugin_enabled "$id"
+  purge_plugin_layout "$ref"
   rescan_plugins
+}
+
+# The one thing `bo remove` keeps that `omarchy plugin remove` would take. The
+# rule is: take back what bo put there, keep what you arranged by hand. Which
+# half is which gets said at the time rather than left for somebody to find in
+# shell.json, and `--purge` takes the second half too, after asking.
+purge_plugin_layout() {
+  local ref="$1" id place section settings copy
+  id=$(meta "$ref" id)
+  [[ -n $id ]] || return 0
+
+  place=$(plugin_layout_place "$id") || return 0
+  section=${place%%$'\t'*}
+  settings=${place##*$'\t'}
+
+  ((PURGE)) || {
+    say "  $(dim "kept $id in the bar layout ($section, $settings setting(s)); bo add puts the widget back there")"
+    say "  $(dim "bo remove --purge $(ref_unit "$ref") takes that too")"
+    return 0
+  }
+
+  say "  $(yellow 'purge') $id sits in the bar's $section section with $settings setting(s) on it"
+  confirm "Delete that layout entry too? A later bo add cannot bring it back." || {
+    say "  $(dim 'left the layout entry alone')"
+    return 0
+  }
+
+  copy=$(backup_shell_json)
+  [[ -n $copy ]] && say "  $(dim "shell.json copied to $(basename "$copy") first")"
+  purge_layout_entry "$id"
+}
+
+# Whether shell.json's plugins[] carries this id. Asked before writing a backup,
+# so a remove that changes nothing does not leave a copy of a file it never
+# touched. Matching the id anywhere in the text would also hit a layout entry.
+plugin_is_enabled_entry() {
+  python3 - "$CONFIG_HOME/omarchy/shell.json" "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    plugins = json.load(open(sys.argv[1])).get("plugins") or []
+except Exception:
+    sys.exit(1)
+def name(entry):
+    return entry.get("id") if isinstance(entry, dict) else entry
+sys.exit(0 if any(name(e) == sys.argv[2] for e in plugins) else 1)
+PY
 }
 
 forget_plugin_enabled() {
   local id="$1" config="$CONFIG_HOME/omarchy/shell.json"
   [[ -f $config ]] || return 0
+
+  plugin_is_enabled_entry "$id" && backup_shell_json >/dev/null
 
   BO_FORGET_ID="$id" BO_FORGET_CONFIG="$config" python3 -c "$FORGET_PLUGIN_PY"
 
@@ -625,6 +793,82 @@ LUA
   fi
 }
 
+# ------------------------------------------------------------ what a unit runs
+#
+# `omarchy plugin add` never runs anything from the plugin, never executes an
+# install hook and never asks for sudo. bo does run things: it puts a unit's
+# bin/ on your PATH and runs a setting's apply.sh. That capability is the point
+# of a unit, but it has to be agreed to rather than discovered afterwards.
+
+# One `what<TAB>detail` line per thing that will execute. No output means a unit
+# that only links files other programs read.
+unit_runs() {
+  local ref="$1" dir file names=()
+  dir=$(ref_dir "$ref") || return 0
+
+  shopt -s nullglob
+  for file in "$dir"/bin/*; do names+=("$(basename "$file")"); done
+  shopt -u nullglob
+
+  # One line however many there are. omacast alone ships 42 commands, and a
+  # prompt you have to scroll is a prompt people answer without reading.
+  if ((${#names[@]} > 6)); then
+    printf 'PATH\t%s commands in %s, including %s\n' \
+      "${#names[@]}" "$BIN_DIR" "$(printf '%s, ' "${names[@]:0:5}")and $((${#names[@]} - 5)) more"
+  elif ((${#names[@]} > 0)); then
+    printf 'PATH\t%s in %s\n' "$(printf '%s, ' "${names[@]}" | sed 's/, $//')" "$BIN_DIR"
+  fi
+
+  case "$(meta "$ref" kind)" in
+  setting)
+    [[ -f "$dir/apply.sh" ]] &&
+      printf 'runs\tapply.sh, now, as you; revert.sh when you remove it\n'
+    ;;
+  plugin)
+    printf 'runs\t%s inside omarchy-shell, unsandboxed, for as long as the shell lives\n' \
+      "$(meta "$ref" id)"
+    ;;
+  esac
+  return 0
+}
+
+unit_executes() { [[ -n $(unit_runs "$1") ]]; }
+
+# Everything an add will do to this machine, printed before any of it happens.
+unit_plan() {
+  local ref="$1" dir file rel what detail
+  dir=$(ref_dir "$ref")
+
+  say "$(bold "$ref") $(dim "$(meta "$ref" version)")"
+  say "  $(dim "$(meta "$ref" summary)")"
+
+  [[ -d "$dir/plugin" ]] &&
+    printf '  %-6s %s\n' links "plugin/  ->  $PLUGINS_DIR/$(meta "$ref" id)"
+
+  shopt -s nullglob
+  for file in "$dir"/hypr/*.lua; do
+    printf '  %-6s %s\n' links \
+      "hypr/$(basename "$file")  ->  $HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
+  done
+  shopt -u nullglob
+
+  local configs
+  configs=$(config_files "$ref" | wc -l)
+  if ((configs > 3)); then
+    printf '  %-6s %s\n' links "$configs files from config/ into $CONFIG_HOME, path for path"
+  else
+    while read -r rel; do
+      [[ -z $rel ]] && continue
+      printf '  %-6s %s\n' links "config/$rel  ->  $CONFIG_HOME/$rel"
+    done < <(config_files "$ref")
+  fi
+
+  while IFS=$'\t' read -r what detail; do
+    [[ -z $what ]] && continue
+    printf '  %s %s\n' "$(yellow "$(printf '%-6s' "$what")")" "$detail"
+  done < <(unit_runs "$ref")
+}
+
 # `conflicts` and `requires` name bare unit names, not refs, because a unit
 # author cannot know which marketplace a user got the other one from. Both are
 # resolved against whatever is available here.
@@ -647,7 +891,9 @@ check_requires() {
     [[ -n $resolved ]] || die "$ref needs a unit called '$other', and no marketplace here has one"
     is_linked "$resolved" || {
       say "  $(dim "$ref needs $resolved, turning that on first")"
-      link_unit "$resolved"
+      # A dependency gets asked about on its own terms, and saying no to it is
+      # saying no to the unit that wanted it.
+      link_unit "$resolved" || die "$ref needs $resolved, which was not turned on"
     }
   done < <(meta_list "$ref" requires)
 }
@@ -661,6 +907,21 @@ link_unit() {
   }
 
   check_conflicts "$ref"
+
+  # A unit that only links files other programs read is not worth a question.
+  # One that executes gets its plan printed either way, so even a `--yes` run
+  # leaves a record of what it was allowed to run.
+  if unit_executes "$ref"; then
+    unit_plan "$ref"
+    ((ASSUME_YES)) || {
+      say "  $(dim 'none of this is sandboxed. Read the code if you have not.')"
+      confirm "Turn on $(ref_unit "$ref")?" || {
+        say "$(dim skipped) $ref"
+        return 1
+      }
+    }
+  fi
+
   check_requires "$ref"
 
   # Every unit may carry hypr/ and bin/, whatever its kind: a bar widget that
@@ -684,12 +945,20 @@ link_unit() {
 unlink_unit() {
   local ref="$1" kind
   ref_exists "$ref" || die "no unit '$ref'"
+  kind=$(meta "$ref" kind)
+
   is_linked "$ref" || {
     say "$ref is already off"
+    # --purge on a unit that is already off is the second half of a remove
+    # somebody already did: that message is exactly when they read that the
+    # widget was still in the bar.
+    ((PURGE)) && [[ $kind == plugin ]] && {
+      purge_plugin_layout "$ref"
+      rescan_plugins
+    }
     return 0
   }
 
-  kind=$(meta "$ref" kind)
   case "$kind" in
   plugin) unlink_plugin "$ref" ;;
   setting) unlink_setting "$ref" ;;
@@ -720,14 +989,27 @@ cmd_list() {
 
   multi=$(market_names | wc -l)
 
+  # Second column is the one that matters before you type `bo add`: a `!` is a
+  # unit that will run something, not just link a file somewhere.
+  local mark any_runs=0
   printf '%-30s %-9s %-13s %-7s %s\n' UNIT KIND CATEGORY VERSION SUMMARY
   while read -r ref; do
     if is_linked "$ref"; then state=$(green '●'); else state=$(dim '○'); fi
-    printf '%s %-28s %-9s %-13s %-7s %s\n' \
-      "$state" "$([[ $multi -gt 1 ]] && printf '%s' "$ref" || ref_unit "$ref")" \
+    if unit_executes "$ref"; then
+      mark=$(yellow '!')
+      any_runs=1
+    else
+      mark=' '
+    fi
+    printf '%s%s %-27s %-9s %-13s %-7s %s\n' \
+      "$state" "$mark" "$([[ $multi -gt 1 ]] && printf '%s' "$ref" || ref_unit "$ref")" \
       "$(meta "$ref" kind)" "$(meta "$ref" category)" \
       "$(meta "$ref" version)" "$(meta "$ref" summary)"
   done < <(all_refs)
+
+  ((any_runs)) &&
+    say "$(yellow '!') $(dim 'runs code on this machine. bo info <unit> says exactly what, and bo add asks first.')"
+  return 0
 }
 
 cmd_search() {
@@ -771,6 +1053,14 @@ cmd_info() {
     printf '  %-11s %s\n' hash "$(reg "$ref" hash | cut -c1-16)"
     printf '  %-11s %s\n' files "$(reg "$ref" files)"
   fi
+
+  # The part `omarchy plugin add` would never do, spelled out before you add it.
+  local what detail first=1
+  while IFS=$'\t' read -r what detail; do
+    [[ -z $what ]] && continue
+    ((first)) && printf '\n  %s\n' "$(yellow 'runs code')" && first=0
+    printf '    %-5s %s\n' "$what" "$detail"
+  done < <(unit_runs "$ref")
 
   printf '\n  %-11s %s\n' state "$(is_linked "$ref" && green on || dim off)"
   printf '  %-11s %s\n' path "$(ref_dir "$ref")"
@@ -837,10 +1127,15 @@ cmd_doctor() {
 # ---------------------------------------------------------------- add / remove
 
 cmd_add() {
-  local arg
+  parse_flags "$@"
+  set -- ${ARGS[@]+"${ARGS[@]}"}
+
+  local arg rc=0
   if (($# > 0)); then
-    for arg in "$@"; do link_unit "$(resolve_ref "$arg")"; done
-    return
+    # A declined prompt is not success, so a script chaining onto `bo add` sees
+    # the difference between "on" and "you were asked and said no".
+    for arg in "$@"; do link_unit "$(resolve_ref "$arg")" || rc=1; done
+    return $rc
   fi
 
   command -v gum >/dev/null || die "gum is not installed; pass unit names instead"
@@ -865,6 +1160,9 @@ cmd_add() {
 }
 
 cmd_remove() {
+  parse_flags "$@"
+  set -- ${ARGS[@]+"${ARGS[@]}"}
+
   local arg
   if (($# > 0)); then
     for arg in "$@"; do unlink_unit "$(resolve_ref "$arg")"; done
@@ -1097,13 +1395,27 @@ update_market() {
     return 0
   fi
 
-  say "$(bold "$name")"
+  local commits
+  commits=$(git -C "$root" rev-list --count "$before..$remote" 2>/dev/null)
+  say "$(bold "$name") $(dim "${before:0:12} -> ${remote:0:12}, $commits commit(s)")"
+
   changes=$(registry_diff "$root" "$name" "$before" "$remote")
   if [[ $changes == "__NOCHANGES__" ]]; then
-    say "  $(dim 'no unit changed; the update touches only docs or tooling')"
+    say "  $(dim 'no unit changed. Only docs or tooling moved:')"
+    git -C "$root" log --no-merges --format='%s' "$before..$remote" 2>/dev/null |
+      head -10 | while read -r subject; do say "    $(dim "$subject")"; done
   else
     printf '%s\n' "$changes"
   fi
+  say "  $(dim "every line of it: git -C $root diff HEAD origin/$branch")"
+
+  # Omarchy asks before it fast-forwards a plugin and so does this. A unit is
+  # what somebody turned on, so the summary above is per unit rather than a raw
+  # commit diff, and this is the last point at which none of it has happened.
+  confirm "Update $name?" || {
+    say "  $(dim "skipped $name")"
+    return 0
+  }
 
   if ! git -C "$root" merge --ff-only "origin/$branch" --quiet 2>/dev/null; then
     warn "$name: cannot fast-forward, you have local commits. Rebase or stash them."
@@ -1114,52 +1426,78 @@ update_market() {
 }
 
 # Compare a marketplace's registry at two refs and print one line per changed
-# unit. This is what makes an update legible before it is applied.
+# unit. This is what makes an update legible before it is applied, and it is
+# deliberately not a commit diff: a unit is the thing somebody turned on.
 registry_diff() {
   python3 - "$1" "$2" "$3" "$4" "$LINKED_FILE" <<'PY'
 import json, subprocess, sys
 
 root, market, old_ref, new_ref, linked_path = sys.argv[1:6]
 
+def git(*args):
+    out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+    return out.stdout if out.returncode == 0 else ""
+
 def registry_at(ref):
-    out = subprocess.run(
-        ["git", "-C", root, "show", f"{ref}:registry.json"],
-        capture_output=True, text=True,
-    )
-    if out.returncode != 0:
-        return {}
     try:
-        return json.loads(out.stdout)["units"]
+        return json.loads(git("show", f"{ref}:registry.json"))["units"]
     except Exception:
         return {}
 
 old, new = registry_at(old_ref), registry_at(new_ref)
 linked = {line.strip() for line in open(linked_path) if line.strip()}
 
+def executes(entry):
+    # The same question `bo info` answers, asked of the version being pulled in.
+    # A unit that gains a bin/ script or an apply.sh is a different proposition
+    # from one that fixed a comment, and the row says so before you agree.
+    if entry.get("kind") in ("plugin", "setting"):
+        return True
+    listing = git("ls-tree", "-r", "--name-only", new_ref, "--", f"{entry.get('path', '')}/bin")
+    return bool(listing.strip())
+
 rows = []
 for name in sorted(set(old) | set(new)):
     a, b = old.get(name), new.get(name)
-    on = "on " if f"{market}/{name}" in linked else "   "
+    on = f"{market}/{name}" in linked
     if a and not b:
-        rows.append(("removed", name, on, f"was {a['version']}"))
+        rows.append((not on, name, "removed", on, False, False, f"was {a['version']}"))
     elif b and not a:
-        rows.append(("new", name, on, f"{b['version']}  {b['summary']}"))
+        rows.append((not on, name, "new", on, executes(b), True, f"{b['version']}  {b['summary']}"))
     elif a["hash"] != b["hash"]:
-        detail = (f"{a['version']} -> {b['version']}" if a["version"] != b["version"]
-                  else f"{b['version']} (content changed, version did not)")
-        rows.append(("changed", name, on, detail))
+        bump = a["version"] != b["version"]
+        detail = (f"{a['version']} -> {b['version']}" if bump
+                  else f"{b['version']} unchanged, but its files are not")
+        rows.append((not on, name, "changed", on, executes(b), bump, detail))
 
 if not rows:
     print("__NOCHANGES__")
     sys.exit(0)
 
+# Units you have on come first: they are the only ones this changes today.
+rows.sort()
+
 colour = {"new": "32", "changed": "36", "removed": "31"}
-for kind, name, on, detail in rows:
-    print(f"  \033[{colour[kind]}m{kind:<8}\033[0m \033[2m{on}\033[0m{name:<20} {detail}")
+for _, name, kind, on, runs, loud, detail in rows:
+    dot = "\033[32m●\033[0m" if on else "\033[2m○\033[0m"
+    mark = "\033[33m!\033[0m" if runs else " "
+    label = f"\033[1m{name:<20}\033[0m" if on else f"{name:<20}"
+    body = detail if loud else f"\033[2m{detail}\033[0m"
+    print(f"  \033[{colour[kind]}m{kind:<8}\033[0m {dot}{mark} {label} {body}")
+
+changed_on = sum(1 for row in rows if row[3])
+runs_on = sum(1 for row in rows if row[3] and row[4])
+tail = f"{len(rows)} unit(s) change, {changed_on} of them on"
+if runs_on:
+    tail += f", {runs_on} of those runs code"
+print(f"  \033[2m{tail}.\033[0m")
 PY
 }
 
 cmd_market_update() {
+  parse_flags "$@"
+  set -- ${ARGS[@]+"${ARGS[@]}"}
+
   local root
   if (($# > 0)); then
     root=$(market_root "$1") || die "no marketplace named '$1'"
@@ -1232,6 +1570,7 @@ cmd_relink() {
 }
 
 cmd_update() {
+  parse_flags "$@"
   cmd_market_update
   say ""
   cmd_relink
@@ -2592,6 +2931,7 @@ bo - Omarchy customizations, from any marketplace
 
   bo add [unit...]        turn units on (no argument opens a picker)
   bo remove [unit...]     turn units off (no argument opens a picker)
+  bo remove --purge ...   also delete a widget's bar position and settings
 
   bo new unit <name>      start a unit here, filled in and ready to add
   bo new extension <name> start a unit whose job is one launcher keyword
@@ -2610,6 +2950,17 @@ bo - Omarchy customizations, from any marketplace
 
 Run `bo` with no arguments for the interactive version of all of this.
 
+Nothing that runs code or pulls a change in happens without being asked first.
+`--yes` (or `--trust`) answers yes to every question, for scripts. Without a
+terminal and without `--yes`, bo does nothing rather than guess.
+
+A `!` in `bo list` is a unit that runs something: a script on your PATH, an
+`apply.sh`, or plugin code inside omarchy-shell. `bo info <unit>` says which.
+
+`bo remove` takes back what bo put there and keeps what you arranged by hand, so
+a widget's place in the bar and its settings survive to make `bo add` put it
+back. `--purge` takes those too, after asking.
+
 `bo update` also refreshes the `bo` link itself, and `bo list` says once a day
 when the marketplace it came from has moved on.
 
@@ -2626,7 +2977,7 @@ status) check_self_stale; cmd_status ;;
 add | install) shift; cmd_add "$@" ;;
 remove | rm | uninstall) shift; cmd_remove "$@" ;;
 new | create) shift; cmd_new "$@" ;;
-update | upgrade) cmd_update ;;
+update | upgrade) shift; cmd_update "$@" ;;
 outdated) cmd_outdated ;;
 relink) cmd_relink ;;
 market | marketplace) shift; cmd_market "$@" ;;

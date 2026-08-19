@@ -313,7 +313,10 @@ Item {
     root.chipColumn = widest > 0 ? Math.ceil(widest) + Style.space(16) : 0
   }
 
-  onRowsChanged: root.measureChips()
+  onRowsChanged: {
+    root.measureChips()
+    root.dropPreviewIfGone()
+  }
 
   readonly property string activeView: {
     if (root.answerMode) return "answer"
@@ -336,7 +339,8 @@ Item {
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
     "gitrepo", "gitbranches", "gitstashes", "agent",
-    "ghrepo", "ghpr", "loading"]
+    "ghrepo", "ghpr", "docker", "notes", "processes", "emoji", "themes",
+    "windows", "hosts", "radios", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -392,7 +396,53 @@ Item {
 
   // Tell the shell, do not just hide. It tracks open panels in its own set, and
   // a close that skips this leaves the entry stale, so the next toggle inverts.
+  // ------------------------------------------------------------ live preview
+
+  // Some answers are only judgeable by applying them. A theme is the case that
+  // matters: a list of names tells you nothing about what any of them looks
+  // like, and picking one to find out means picking again to get back.
+  //
+  // So a row may carry `previewExec`, run as the selection lands on it, and
+  // `revertExec`, run if you leave without choosing. Enter commits by clearing
+  // the revert. Escape is what it always was, and undoes the preview on its way
+  // out, which is why this hooks dismiss rather than adding a key.
+  property string previewRevert: ""
+
+  function previewSelection() {
+    var row = root.rows[root.selectedIndex]
+    if (!row || !row.previewExec) return
+
+    // The first preview remembers how to get back. Later ones must not: the
+    // state to return to is the one you arrived in, not the one you last
+    // previewed.
+    if (root.previewRevert === "" && row.revertExec) {
+      root.previewRevert = String(row.revertExec)
+    }
+    previewDelay.exec = String(row.previewExec)
+    previewDelay.restart()
+  }
+
+  function commitPreview() { root.previewRevert = "" ; previewDelay.stop() }
+
+  function revertPreview() {
+    previewDelay.stop()
+    if (root.previewRevert === "") return
+    Util.execDetached(root.previewRevert)
+    root.previewRevert = ""
+  }
+
+  Timer {
+    id: previewDelay
+    property string exec: ""
+    // Short, because the preview is now a 44ms retint rather than an 800ms
+    // theme change. Long enough that holding Down does not fire on every row it
+    // passes; short enough that stopping on one shows it immediately.
+    interval: 90
+    onTriggered: if (previewDelay.exec !== "") Util.execDetached(previewDelay.exec)
+  }
+
   function dismiss() {
+    revertPreview()
     close()
     if (root.shell && typeof root.shell.hide === "function") {
       root.shell.hide((root.manifest && root.manifest.id) || "bo.omacast")
@@ -666,6 +716,11 @@ Item {
   // The form row for one extension. Built here rather than by the extension,
   // because writing the config file is the launcher's job and a command line
   // that could do it would also be a command line that could do anything else.
+  // What a script gets in its environment. The provider asks per query, so a
+  // setting saved in the form takes effect on the next keystroke rather than on
+  // the next restart.
+  function settingsFor(id) { return Settings.settingsFor(root.config, id) }
+
   function settingsForm(ext) {
     var saved = Settings.settingsFor(root.config, ext.id)
     var fields = []
@@ -1304,6 +1359,7 @@ Item {
       return
     }
 
+    root.commitPreview()
     root.remember(row)
     root.rememberQuery(root.queryText)
 
@@ -1456,6 +1512,18 @@ Item {
     if (root.activeView === "dashboard") {
       return Math.max(1, Math.floor((root.cardWidth - Style.space(24)) / Style.space(190)))
     }
+    // The docker view computes its own column count from the same arithmetic.
+    // If these two ever disagree by a pixel, Down skips a tile.
+    if (root.activeView === "docker") {
+      return Math.max(1, Math.floor((root.cardWidth - Style.space(12)) / Style.space(280)))
+    }
+    // A grid view knows its own column count. Asking it is the only way this
+    // cannot drift from the arithmetic the view itself used to lay the cells
+    // out, which shows up as an arrow key skipping a cell.
+    if (root.activeView === "emoji" || root.activeView === "themes") {
+      return (resultsArea.item && resultsArea.item.columns)
+        ? Math.max(1, resultsArea.item.columns) : 1
+    }
     return 1
   }
 
@@ -1549,6 +1617,21 @@ Item {
     root.cursorMoved = true
     root.selectedKey = row.key
     root.rebuild()
+  }
+
+  onSelectedIndexChanged: root.previewSelection()
+
+  // Leaving the preview is leaving the preview, whichever way you left. Escape
+  // has four stages and only the last one closes the launcher, so hooking
+  // dismiss alone meant clearing the box kept the theme you were only looking
+  // at. Anything that takes the previewing rows off screen puts the original
+  // back.
+  function dropPreviewIfGone() {
+    if (root.previewRevert === "") return
+    for (var i = 0; i < root.rows.length; i++) {
+      if (root.rows[i] && root.rows[i].previewExec) return
+    }
+    root.revertPreview()
   }
 
   function move(delta) {
@@ -2000,7 +2083,9 @@ Item {
             } else if (event.key === Qt.Key_Backtab) {
               root.move(-1)
               event.accepted = true
-            } else if ((root.activeView === "slider" || root.activeView === "timegrid")
+            } else if ((root.activeView === "slider" || root.activeView === "timegrid"
+                        || root.activeView === "emoji" || root.activeView === "themes"
+                        || root.activeView === "windows")
                        && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
               // Left and right belong to the text cursor everywhere else, and
               // are taken back only while the thing on screen is a row of
@@ -2009,11 +2094,13 @@ Item {
                 resultsArea.item.nudge(event.key === Qt.Key_Right ? 1 : -1)
               }
               event.accepted = true
-            } else if ((root.activeView === "grid" || root.activeView === "dashboard" || root.activeView === "calendar")
+            } else if ((root.activeView === "grid" || root.activeView === "dashboard"
+                        || root.activeView === "calendar" || root.activeView === "docker")
                        && event.key === Qt.Key_Right) {
               root.move(1)
               event.accepted = true
-            } else if ((root.activeView === "grid" || root.activeView === "dashboard" || root.activeView === "calendar")
+            } else if ((root.activeView === "grid" || root.activeView === "dashboard"
+                        || root.activeView === "calendar" || root.activeView === "docker")
                        && event.key === Qt.Key_Left) {
               root.move(-1)
               event.accepted = true
@@ -2154,6 +2241,14 @@ Item {
           case "agent": return agentView
           case "ghrepo": return ghRepoView
           case "ghpr": return ghPrView
+          case "docker": return dockerView
+          case "notes": return notesView
+          case "processes": return processesView
+          case "emoji": return emojiView
+          case "themes": return themesView
+          case "windows": return windowsView
+          case "hosts": return hostsView
+          case "radios": return radiosView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2180,6 +2275,14 @@ Item {
       Component { id: agentView;     ResultAgent     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: ghRepoView;    ResultGhRepo    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: ghPrView;      ResultGhPr      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: dockerView;    ResultDocker    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: notesView;     ResultNotes     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: processesView; ResultProcesses { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: emojiView;     ResultEmoji     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: themesView;    ResultThemes    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: windowsView;   ResultWindows   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: hostsView;     ResultHosts     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: radiosView;    ResultRadios    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }

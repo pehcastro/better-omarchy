@@ -12,6 +12,16 @@ a launcher is something you type into, so the path becomes context on one row:
 
 A row that opens a submenu is kept as well as its children. Sometimes the thing
 you want is the submenu.
+
+The path, the icon and whether a route acts or opens all go across as their own
+fields, because the `menutree` view draws them rather than reading them out of
+a sentence. Joining the path into "Style  ·  Theme" here and splitting it there
+would make a separator string into a wire format.
+
+A bare `omarchy:` is not a search, it is browsing, and the answer to browsing is
+the menu's own root in the menu's own order. Answering it with ten top-level
+rows plus whatever four second-level routes sorted alphabetically first was a
+list assembled by the ranking rules for a query nobody typed.
 """
 
 import json
@@ -57,22 +67,32 @@ def load(path):
 # Bar panels. These are Omarchy settings by any reasonable definition and the
 # menu file does not contain them, because the menu is not how you reach them.
 # Leaving them out meant `omarchy:wifi` answered with a QR code generator.
+#
+# `run` is the command, not a menu route. Every other row here is reached with
+# `omarchy menu summon <id>`, and these ids are ours: there is no `panel.network`
+# node for the menu to find, so summoning one opened the menu at its root and
+# `omarchy:wifi` quietly did nothing useful.
 PANELS = {
     "panel.network": {"icon": "\udb81\uddf3", "label": "Wi-Fi",
                       "aliases": ["wifi", "wireless", "network", "internet"],
-                      "action": "omarchy-shell shell summon omarchy.network"},
+                      "action": "omarchy-shell shell summon omarchy.network",
+                      "run": "omarchy-shell shell summon omarchy.network"},
     "panel.bluetooth": {"icon": "\udb80\udcaf", "label": "Bluetooth",
                         "aliases": ["bluetooth", "pair", "headphones"],
-                        "action": "omarchy-shell shell summon omarchy.bluetooth"},
+                        "action": "omarchy-shell shell summon omarchy.bluetooth",
+                        "run": "omarchy-shell shell summon omarchy.bluetooth"},
     "panel.audio": {"icon": "\udb81\udd7e", "label": "Audio",
                     "aliases": ["audio", "sound", "volume", "output"],
-                    "action": "omarchy-shell shell summon omarchy.audio"},
+                    "action": "omarchy-shell shell summon omarchy.audio",
+                    "run": "omarchy-shell shell summon omarchy.audio"},
     "panel.display": {"icon": "\udb80\udf79", "label": "Display",
                       "aliases": ["display", "monitor", "scale", "resolution"],
-                      "action": "omarchy-shell shell summon omarchy.display"},
+                      "action": "omarchy-shell shell summon omarchy.display",
+                      "run": "omarchy-shell shell summon omarchy.display"},
     "panel.battery": {"icon": "\udb80\udc79", "label": "Battery",
                       "aliases": ["battery", "power"],
-                      "action": "omarchy-shell shell summon omarchy.battery"},
+                      "action": "omarchy-shell shell summon omarchy.battery",
+                      "run": "omarchy-shell shell summon omarchy.battery"},
 }
 
 
@@ -181,26 +201,40 @@ def main():
             "when": entry.get("when") or "",
             "icon": entry.get("icon") or "",
             "description": entry.get("description") or "",
+            # How much is behind this route. Only worth saying on a tile, where
+            # "Style" and "About" are the same size and one of them holds
+            # eighteen settings.
+            "children": sum(1 for other in tree if other.startswith(node_id + ".")),
+            "exec": entry.get("run") or ("omarchy menu summon " + node_id),
         })
 
-    # Then a shorter path, because a top-level route is almost always what
-    # someone typing two letters meant.
-    rows.sort(key=lambda r: (r["missed"], r["rank"],
-                             len(r["node_id"].split(".")), r["label"].lower()))
+    browsing = not query
+
+    if browsing:
+        # The root, in the order the menu file writes it. Not sorted: the menu's
+        # order is the one the user has already learned from opening the menu,
+        # and alphabetising it here would make the same ten things sit somewhere
+        # else depending on which surface they came from.
+        rows = [r for r in rows if "." not in r["node_id"]]
+    else:
+        # Then a shorter path, because a top-level route is almost always what
+        # someone typing two letters meant.
+        rows.sort(key=lambda r: (r["missed"], r["rank"],
+                                 len(r["node_id"].split(".")), r["label"].lower()))
 
     shown = 0
     for row in rows:
-        if shown >= 14:
+        if shown >= 16:
             break
         if not passes(row["when"]):
             continue
         shown += 1
 
+        # Still written out, because a row that ends up in the plain list view
+        # for any reason should not lose its context. The view ignores it.
         subtitle = "  ·  ".join(row["trail"]) if row["trail"] else "Omarchy"
         if row["kind"] == "menu":
             subtitle += "  ·  opens a submenu"
-
-        exec_line = "omarchy menu summon " + row["node_id"]
 
         print(json.dumps({
             "id": "omarchy-" + row["node_id"],
@@ -209,11 +243,19 @@ def main():
             "detail": row["description"],
             "accessory": row["node_id"],
             "glyph": row["icon"],
-            "exec": exec_line,
+            "exec": row["exec"],
             "score": 95000 - shown * 100,
-            "view": "list",
+            "view": "menutree",
+            # Browsing and searching are two different pictures of the same
+            # tree, and only this script knows which one was asked for.
+            "mode": "browse" if browsing else "search",
+            "trail": row["trail"],
+            "kind": row["kind"],
+            "node": row["node_id"],
+            "depth": len(row["node_id"].split(".")),
+            "children": row["children"],
             "actions": [
-                {"title": "Open", "shortcut": "↵", "exec": exec_line},
+                {"title": "Open", "shortcut": "↵", "exec": row["exec"]},
                 {"title": "Copy the Route",
                  "exec": "printf %s " + json.dumps(row["node_id"]) + " | wl-copy"},
             ],

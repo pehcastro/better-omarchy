@@ -16,5 +16,5 @@
   "debounceMs": 80,
   "maxRows": 40,
   "tier": "prefix",
-  "view": "list"
+  "view": "themes"
 }

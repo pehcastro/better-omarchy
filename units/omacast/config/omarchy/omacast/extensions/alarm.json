@@ -8,12 +8,13 @@
     "reminder"
   ],
   "subtitle": "Reminder",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-alarm {query}",
   "when": "command -v omarchy",
   "minChars": 0,
-  "debounceMs": 80,
-  "maxRows": 12,
+  "debounceMs": 150,
+  "maxRows": 8,
   "tier": "prefix",
-  "view": "hero"
+  "view": "hero",
+  "refreshMs": 15000
 }

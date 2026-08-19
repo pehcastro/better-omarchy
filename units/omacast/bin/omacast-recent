@@ -7,6 +7,17 @@
 # The list is ~/.local/share/recently-used.xbel, the freedesktop recent files
 # file every GTK app writes to. Nothing here maintains a second list, so a file
 # opened from Nautilus or a save dialog is already in the answer.
+#
+# The rows feed the `files` view, the same one `file:` uses, so they carry a
+# type, a size, a folder and a thumbnail URL for pictures. `age` here is how
+# long since you opened it, not the file's mtime: this keyword is about your
+# history, and a file you opened this morning that was written last year is
+# recent in the only sense the word has here.
+#
+# Two facts about cost. The timestamps are converted in one `date -f -` call
+# rather than one call per row, and the sizes in one `stat`, because this runs
+# on every keystroke after `recent:` and fifty processes per keystroke is what a
+# spinner that never stops is made of.
 
 set -uo pipefail
 
@@ -17,6 +28,8 @@ XBEL="$HOME/.local/share/recently-used.xbel"
 
 needle="${query,,}"
 now=$(date +%s)
+
+MAX_ROWS=25
 
 # XBEL hrefs are XML-escaped and then percent-encoded, in that order. Undoing
 # them the other way round turns a literal "%26" in a filename into an
@@ -51,42 +64,90 @@ ago() {
   printf '%s %s ago' "$n" "$unit"
 }
 
-rank=90000
-emitted=0
+short_age() {
+  local d=$1
+  ((d < 0)) && d=0
+  if ((d < 60)); then
+    printf 'now'
+  elif ((d < 3600)); then
+    printf '%dm' $((d / 60))
+  elif ((d < 86400)); then
+    printf '%dh' $((d / 3600))
+  elif ((d < 2592000)); then
+    printf '%dd' $((d / 86400))
+  elif ((d < 31536000)); then
+    printf '%dmo' $((d / 2592000))
+  else
+    printf '%dy' $((d / 31536000))
+  fi
+}
+
+# Shared with omacast-search-files, deliberately not factored out: two small
+# scripts with a case statement each cost nothing, and a shared library that
+# both source is a third file to install and a failure mode when it is missing.
+kind_of() {
+  case "${1,,}" in
+  png | jpg | jpeg | gif | webp | avif | bmp | svg | tiff | tif | heic | ico) printf 'image' ;;
+  mp4 | mkv | webm | mov | avi | m4v | wmv | flv) printf 'video' ;;
+  mp3 | flac | ogg | wav | m4a | opus | aac | wma) printf 'audio' ;;
+  pdf | epub | djvu | doc | docx | odt | rtf | txt | md | org | tex) printf 'doc' ;;
+  csv | tsv | xlsx | xls | ods) printf 'sheet' ;;
+  zip | tar | gz | xz | zst | 7z | rar | bz2 | tgz) printf 'archive' ;;
+  sh | bash | zsh | fish | py | js | mjs | ts | tsx | jsx | rs | go | c | h | cpp | hpp | java | rb | lua | qml | vim | pl | php | swift | kt) printf 'code' ;;
+  json | yaml | yml | toml | ini | conf | xml | html | css | scss | sql) printf 'data' ;;
+  *) printf 'file' ;;
+  esac
+}
+
+human_size() {
+  local v=${1:-0} i=0 rem=0
+  local units=(B K M G T P)
+  while ((v >= 1024 && i < 5)); do
+    rem=$(((v % 1024) * 10 / 1024))
+    v=$((v / 1024))
+    i=$((i + 1))
+  done
+  if ((i > 0 && v < 10)); then
+    printf '%d.%d%s' "$v" "$rem" "${units[i]}"
+  else
+    printf '%d%s' "$v" "${units[i]}"
+  fi
+}
 
 # The timestamps are ISO 8601 in UTC with a fixed shape, so a plain reverse
-# sort is already newest first and `date -d` is only paid for the rows that
-# survive to the answer.
+# sort is already newest first and only the rows that survive to the answer are
+# ever converted to epoch seconds.
+stamps=()
+paths=()
+isdir=()
+
 while IFS=$'\t' read -r modified path; do
-  [[ -f $path || -d $path ]] || continue
-
-  base=${path##*/}
-  dir=${path%/*}
-  [[ -z $dir ]] && dir="/"
-
+  # Filtered before anything is appended. The three arrays here are read by a
+  # shared index later, so a row that is rejected after a partial append leaves
+  # them one apart and every later row gets the wrong file's date.
   if [[ -n $needle ]]; then
     [[ ${path,,} == *"$needle"* ]] || continue
   fi
 
-  stamp=$(date -d "$modified" +%s 2>/dev/null) || stamp=$now
-  display=${dir/#$HOME/\~}
+  if [[ -d $path ]]; then
+    isdir+=(1)
+  elif [[ -f $path ]]; then
+    isdir+=(0)
+  else
+    continue
+  fi
 
-  jq -cn --arg id "$path" --arg t "$base" --arg s "$display" \
-    --arg a "$(ago $((now - stamp)))" \
-    --arg e "xdg-open $(printf '%q' "$path")" \
-    --arg p "$path" --argjson sc "$rank" \
-    '{
-       id: $id, title: $t, subtitle: $s, accessory: $a, exec: $e, score: $sc,
-       actions: [
-         { title: "Open", shortcut: "↵", exec: $e },
-         { title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy") },
-         { title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh)) }
-       ]
-     }'
+  # Anything date could refuse becomes the epoch rather than being dropped:
+  # `date -f -` prints nothing at all for a line it cannot parse, so one odd
+  # timestamp would shift every later row onto the wrong file's date.
+  if [[ $modified =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+    stamps+=("$modified")
+  else
+    stamps+=("1970-01-01T00:00:00Z")
+  fi
+  paths+=("$path")
 
-  rank=$((rank - 100))
-  emitted=$((emitted + 1))
-  ((emitted >= 25)) && break
+  ((${#paths[@]} >= MAX_ROWS)) && break
 done < <(
   grep -oP '<bookmark\s[^>]*>' "$XBEL" 2>/dev/null |
     while IFS= read -r tag; do
@@ -102,5 +163,72 @@ done < <(
       printf '%s\t%s\n' "$modified" "$(urldecode "$(unescape_xml "${href#file://}")")"
     done | sort -r
 )
+
+((${#paths[@]})) || exit 0
+
+# One date for every timestamp. A short answer means date choked on something
+# the regex above let through, and the rows fall back to "now" rather than to a
+# silently misaligned set of dates.
+mapfile -t epochs < <(printf '%s\n' "${stamps[@]}" | date -f - +%s 2>/dev/null)
+((${#epochs[@]} == ${#paths[@]})) || epochs=()
+
+# One stat for every path, keyed by name so a file that vanished between the
+# XBEL read and here is simply missing rather than shifting the column.
+declare -A SIZE
+while IFS=$'\t' read -r name bytes; do
+  SIZE["$name"]=$bytes
+done < <(stat -c $'%n\t%s' -- "${paths[@]}" 2>/dev/null)
+
+rank=90000
+rows=()
+
+for i in "${!paths[@]}"; do
+  path="${paths[i]}"
+  base=${path##*/}
+  dir=${path%/*}
+  [[ -z $dir ]] && dir="/"
+  display=${dir/#$HOME/\~}
+
+  stamp=${epochs[i]:-$now}
+  [[ $stamp =~ ^[0-9]+$ ]] || stamp=$now
+  delta=$((now - stamp))
+
+  if ((isdir[i])); then
+    ext=""
+    kind="folder"
+    size=""
+  else
+    ext=""
+    if [[ $base == ?*.* ]]; then
+      ext="${base##*.}"
+      ((${#ext} > 5)) && ext=""
+    fi
+    kind=$(kind_of "$ext")
+    size=$(human_size "${SIZE[$path]:-0}")
+  fi
+
+  art=""
+  [[ $kind == image ]] && art="file://$path"
+
+  rows+=("$path"$'\t'"$base"$'\t'"$display"$'\t'"${ext^^}"$'\t'"$kind"$'\t'"$size"$'\t'"$(short_age "$delta")"$'\t'"$(printf '%q' "$path")"$'\t'"$art"$'\t'"$(printf '%q' "$dir")"$'\t'"$rank"$'\t'"$(ago "$delta")")
+
+  rank=$((rank - 100))
+done
+
+printf '%s\n' "${rows[@]}" |
+  jq -cR 'split("\t") |
+    {
+      id: .[0], title: .[1], dir: .[2], ext: .[3], kind: .[4],
+      size: .[5], age: .[6], art: .[8],
+      subtitle: .[2], accessory: .[11],
+      exec: ("xdg-open " + .[7]),
+      score: (.[10] | tonumber),
+      actions: [
+        { title: "Open", shortcut: "↵", exec: ("xdg-open " + .[7]) },
+        { title: "Copy Path", exec: ("printf %s " + .[7] + " | wl-copy") },
+        { title: "Open Folder", exec: ("xdg-open " + .[9]) },
+        { title: "Reveal in Files", exec: ("nautilus --select " + .[7]) }
+      ]
+    }'
 
 exit 0

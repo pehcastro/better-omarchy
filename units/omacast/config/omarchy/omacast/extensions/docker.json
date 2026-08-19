@@ -7,7 +7,7 @@
     "containers"
   ],
   "subtitle": "Container",
-  "glyph": "",
+  "glyph": "",
   "search": "omacast-docker {query}",
   "when": "docker info --format '{{.ServerVersion}}' >/dev/null 2>&1",
   "minChars": 0,
@@ -15,5 +15,7 @@
   "timeoutMs": 6000,
   "maxRows": 12,
   "tier": "substring",
-  "view": "list"
+  "view": "docker",
+  "cacheMs": 0,
+  "refreshMs": 2000
 }
