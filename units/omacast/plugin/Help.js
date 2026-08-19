@@ -13,7 +13,10 @@ var BUILTIN = [
   { keyword: "calc", title: "Calculator", aliases: ["math"] },
   { keyword: "run", title: "Commands", aliases: ["command", "commands"] },
   { keyword: "apps", title: "Applications", aliases: ["app", "launch"] },
-  { keyword: "web", title: "Web Search", aliases: ["search", "google", "ddg"] }
+  { keyword: "web", title: "Web Search", aliases: ["search", "google", "ddg"] },
+  // This list itself. Somebody who found it once should not have to remember
+  // which of the three ways in they used.
+  { keyword: "h", title: "Keywords", aliases: ["help", "?", ":"] }
 ]
 
 // What to call a scope in the header chip. Aliases answer too, so `google:`

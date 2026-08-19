@@ -89,7 +89,16 @@ Item {
   // `?` on its own is help. `?dogs` stays a web search, because the sigil is
   // worth more as the shorthand people already use than as a help key, and a
   // `?` with nothing after it has nothing to search for anyway.
-  readonly property bool helpMode: root.queryText.trim() === "?"
+  // Three ways in, because people reach for different ones. `?` is the sigil,
+  // `h:` reads like every other keyword, and a lone `:` is what you type when
+  // you know the launcher takes `word:` and cannot remember which words.
+  //
+  // A lone colon only. `x:` is a filter and `:x` is text, so the moment there
+  // is anything either side of it this stops being a question about keywords.
+  readonly property bool helpMode: {
+    var t = root.queryText.trim()
+    return t === "?" || t === ":" || t === "h:" || t === "help:"
+  }
 
   // An empty box offers what you ran last, so reaching yesterday's query is one
   // key rather than remembering how you phrased it.
@@ -121,6 +130,7 @@ Item {
   readonly property var knownKeywords: {
     var out = ["calc", "math", "run", "command", "commands", "web", "search",
                "google", "ddg", "apps", "app", "launch", "settings", "action",
+               "h", "help",
                // Extra filters the built-ins read alongside their own keyword.
                "format", "in", "type"]
 
