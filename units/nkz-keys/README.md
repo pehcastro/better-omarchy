@@ -11,6 +11,7 @@ like; probably not what you want turned on.
 | `Super+E` | open the file manager |
 | `Super+B` | open the browser |
 | `Super+R` | open the app menu |
+| `Super+`` ` | back to the workspace you came from, and again to return |
 | `Ctrl+B` | copy the path of the selected file, in the file manager only |
 | `Ctrl+Shift+B` | copy just its name |
 
@@ -57,9 +58,10 @@ add` links whatever `.lua` it finds, so the example alone links nothing.
 The scale is re-applied on `monitor.added`, not just at load. Waking from sleep,
 closing and opening the lid, and plugging a display all re-add the output, and
 whatever scale Hyprland picks at that moment otherwise wins: the screen ends up
-at 2x and stays there until the next reload. `Super+/` also changes the scale,
-which is easy to hit by accident, and this puts it back on the next monitor
-event rather than leaving you squinting.
+at 2x and stays there until the next reload. This unit also unbinds `Super+/` and
+`Super+Alt+/`, Omarchy's scaling keys: both are one key from `Super+Shift+/` and
+hitting one leaves the screen at 2x with nothing on screen saying why. Scaling
+belongs in the Display panel, where it is a deliberate choice.
 
 ## Making your own
 

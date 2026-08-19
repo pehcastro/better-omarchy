@@ -56,3 +56,10 @@ end)
 -- Not Super+Tab: that walks forward through every workspace in order, which is
 -- a different question. This one only ever knows about two.
 o.bind("SUPER + grave", "Previous workspace", hl.dsp.focus({ workspace = "previous" }))
+
+-- Omarchy puts monitor scaling on Super+/ and Super+Alt+/. Both are one key
+-- away from Super+Shift+/, and hitting one leaves the screen at 2x with nothing
+-- on screen saying why. Scaling belongs in the Display panel, where it is a
+-- deliberate choice rather than a slip.
+hl.unbind("SUPER + SLASH")
+hl.unbind("SUPER + ALT + SLASH")
