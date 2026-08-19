@@ -1,0 +1,16 @@
+{
+  "id": "omarchy",
+  "title": "Omarchy",
+  "keyword": "omarchy",
+  "aliases": ["oma", "menu", "settings-menu", "o"],
+  "search": "omacast-omarchy {query}",
+  "when": "command -v omarchy",
+  "glyph": "󰆌",
+  "subtitle": "Every Omarchy setting",
+  "minChars": 0,
+  "debounceMs": 90,
+  "timeoutMs": 5000,
+  "maxRows": 14,
+  "tier": "substring",
+  "view": "list"
+}

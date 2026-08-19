@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Every Omarchy setting, searchable, from Omarchy's own menu definition.
+
+`omarchy:` used to be a hand-copied list of routes inside the launcher, which is
+a list that goes stale the first time Omarchy adds a setting. This reads the
+same file the menu itself reads, so a route that exists in the menu exists here,
+and one that does not cannot.
+
+The tree is flattened. The menu is something you walk, four keystrokes deep, and
+a launcher is something you type into, so the path becomes context on one row:
+"Theme" under "Style" reads as `Theme · Style`, and typing either word finds it.
+
+A row that opens a submenu is kept as well as its children. Sometimes the thing
+you want is the submenu.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+DEFAULT = "/usr/share/omarchy/default/omarchy/omarchy-menu.jsonc"
+USER = os.path.expanduser("~/.config/omarchy/extensions/omarchy-menu.jsonc")
+
+
+def strip_jsonc(raw):
+    """Comments and trailing commas, the same two things the shell strips.
+
+    Deliberately the same crude rules rather than a real JSONC parser: matching
+    the menu's own leniency matters more than being correct about a file the
+    menu would also reject.
+    """
+    raw = re.sub(r"^\s*//[^\n]*(\n|$)", "", raw, flags=re.M)
+    raw = re.sub(r",(\s*[}\]])", r"\1", raw)
+    return raw
+
+
+def load(path):
+    try:
+        with open(path) as handle:
+            raw = strip_jsonc(handle.read())
+    except OSError:
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    items = parsed.get("items")
+    return items if isinstance(items, dict) else parsed
+
+
+# Bar panels. These are Omarchy settings by any reasonable definition and the
+# menu file does not contain them, because the menu is not how you reach them.
+# Leaving them out meant `omarchy:wifi` answered with a QR code generator.
+PANELS = {
+    "panel.network": {"icon": "\udb81\uddf3", "label": "Wi-Fi",
+                      "aliases": ["wifi", "wireless", "network", "internet"],
+                      "action": "omarchy-shell shell summon omarchy.network"},
+    "panel.bluetooth": {"icon": "\udb80\udcaf", "label": "Bluetooth",
+                        "aliases": ["bluetooth", "pair", "headphones"],
+                        "action": "omarchy-shell shell summon omarchy.bluetooth"},
+    "panel.audio": {"icon": "\udb81\udd7e", "label": "Audio",
+                    "aliases": ["audio", "sound", "volume", "output"],
+                    "action": "omarchy-shell shell summon omarchy.audio"},
+    "panel.display": {"icon": "\udb80\udf79", "label": "Display",
+                      "aliases": ["display", "monitor", "scale", "resolution"],
+                      "action": "omarchy-shell shell summon omarchy.display"},
+    "panel.battery": {"icon": "\udb80\udc79", "label": "Battery",
+                      "aliases": ["battery", "power"],
+                      "action": "omarchy-shell shell summon omarchy.battery"},
+}
+
+
+def items():
+    """The default menu, with the user's extension layered on top.
+
+    Same precedence as the shell: a user entry with an existing id replaces it,
+    which is how somebody removes a route they do not want.
+    """
+    merged = {}
+    merged.update(PANELS)
+    for path in (DEFAULT, USER):
+        for key, value in load(path).items():
+            if isinstance(value, dict):
+                merged[key] = value
+    return merged
+
+
+def passes(when):
+    """A row the menu would hide, hidden here too.
+
+    `when` is a shell condition and the menu runs it. Running it per row would
+    mean a subprocess per route on every keystroke, so this only runs the ones
+    that survive the text match, and there are never many.
+    """
+    if not when:
+        return True
+    try:
+        return subprocess.run(["bash", "-lc", when], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=2).returncode == 0
+    except Exception:
+        return False
+
+
+def label_of(entry, node_id):
+    return entry.get("label") or node_id.split(".")[-1].replace("-", " ").title()
+
+
+def main():
+    query = " ".join(sys.argv[1:]).strip().lower()
+    tree = items()
+    if not tree:
+        return 0
+
+    rows = []
+    for node_id, entry in tree.items():
+        if node_id == "root":
+            continue
+
+        label = label_of(entry, node_id)
+        parts = node_id.split(".")
+        # The path, as words, so "Change Theme" is findable by typing "style".
+        trail = [label_of(tree.get(".".join(parts[:i + 1]), {}), ".".join(parts[:i + 1]))
+                 for i in range(len(parts) - 1)]
+
+        aliases = [str(a).lower() for a in (entry.get("aliases") or [])]
+        label_low = label.lower()
+        trail_low = " ".join(trail).lower()
+        haystack = " ".join([label_low, node_id.lower(), trail_low] + aliases)
+
+        # Where the words matched decides the order. Ranking on depth alone put
+        # "Extra Themes" above "Theme" for `theme`, because both sit two levels
+        # down and E sorts before T, which is not what anyone typing four
+        # letters meant. Every word must appear somewhere, in any order, so
+        # "theme change" still finds "Change Theme".
+        rank = 0
+        missed = 0
+        if query:
+            words = query.split()
+            # Words that match nothing anywhere are dropped rather than fatal:
+            # "change theme" is how people ask for the theme setting, and the
+            # menu calls it "Theme", so requiring both words found nothing at
+            # all. At least one word still has to land.
+            asked = len(words)
+            words = [w for w in words if w in haystack]
+            if not words:
+                continue
+            # How much of what was asked actually landed, ahead of where it
+            # landed: "set volume" matching only "set" on Setup should lose to
+            # Audio, which matches "volume" and is what the words together mean.
+            missed = asked - len(words)
+
+            effective = " ".join(words)
+            if label_low == query or label_low == effective:
+                rank = 0
+            elif label_low.startswith(query) or label_low.startswith(effective):
+                rank = 1
+            elif any(a == query or a == effective or a.startswith(query) or a.startswith(effective) for a in aliases):
+                rank = 2
+            elif query in label_low:
+                rank = 3
+            elif all(w in label_low for w in words):
+                rank = 4
+            else:
+                rank = 5
+
+        kind = "action" if entry.get("action") else ("link" if entry.get("target") else "menu")
+
+        rows.append({
+            "node_id": node_id,
+            "label": label,
+            "trail": trail,
+            "kind": kind,
+            "rank": rank,
+            "missed": missed if query else 0,
+            "when": entry.get("when") or "",
+            "icon": entry.get("icon") or "",
+            "description": entry.get("description") or "",
+        })
+
+    # Then a shorter path, because a top-level route is almost always what
+    # someone typing two letters meant.
+    rows.sort(key=lambda r: (r["missed"], r["rank"],
+                             len(r["node_id"].split(".")), r["label"].lower()))
+
+    shown = 0
+    for row in rows:
+        if shown >= 14:
+            break
+        if not passes(row["when"]):
+            continue
+        shown += 1
+
+        subtitle = "  ·  ".join(row["trail"]) if row["trail"] else "Omarchy"
+        if row["kind"] == "menu":
+            subtitle += "  ·  opens a submenu"
+
+        exec_line = "omarchy menu summon " + row["node_id"]
+
+        print(json.dumps({
+            "id": "omarchy-" + row["node_id"],
+            "title": row["label"],
+            "subtitle": subtitle,
+            "detail": row["description"],
+            "accessory": row["node_id"],
+            "glyph": row["icon"],
+            "exec": exec_line,
+            "score": 95000 - shown * 100,
+            "view": "list",
+            "actions": [
+                {"title": "Open", "shortcut": "↵", "exec": exec_line},
+                {"title": "Copy the Route",
+                 "exec": "printf %s " + json.dumps(row["node_id"]) + " | wl-copy"},
+            ],
+        }))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
