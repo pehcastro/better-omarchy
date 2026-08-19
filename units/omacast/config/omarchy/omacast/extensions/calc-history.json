@@ -1,0 +1,18 @@
+{
+  "id": "calchist",
+  "title": "Calculator History",
+  "keyword": "calc",
+  "aliases": [
+    "math"
+  ],
+  "subtitle": "Calculator History",
+  "glyph": "",
+  "search": "omacast-calc-history {query}",
+  "when": "test -s \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/omacast-calc-history.json\"",
+  "minChars": 0,
+  "debounceMs": 80,
+  "timeoutMs": 3000,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

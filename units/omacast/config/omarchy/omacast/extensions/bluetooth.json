@@ -1,0 +1,18 @@
+{
+  "id": "bt",
+  "title": "Bluetooth",
+  "keyword": "bt",
+  "aliases": [
+    "bluetooth"
+  ],
+  "subtitle": "Bluetooth",
+  "glyph": "",
+  "search": "omacast-bluetooth {query}",
+  "when": "command -v bluetoothctl >/dev/null",
+  "minChars": 0,
+  "debounceMs": 100,
+  "timeoutMs": 6000,
+  "maxRows": 16,
+  "tier": "prefix",
+  "view": "list"
+}

@@ -1,0 +1,118 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `pass:` keyword: your password store, or your
+# 1Password vaults, whichever is on the machine.
+#
+#   pass:            every entry
+#   pass:github      the ones whose name matches
+#
+# A row is the name of an entry and nothing else. No secret is ever a title, a
+# subtitle, a detail or an argument: the value is read inside `omacast-pass copy`
+# and goes straight down a pipe into wl-copy, so it never appears in a row, in
+# stdout, or in a /proc cmdline that every process on the box can read.
+#
+# The clipboard is cleared after CLEAR_SECONDS, the way `pass -c` does it, and
+# only if what is on it is still the secret that was put there. Nothing is
+# cached: the list is re-read each time, because an entry list is cheap and a
+# stale copy of one is a lie about what you have.
+#
+# `pass` wins when both are installed. It answers without a network and without
+# an unlock prompt, which is the difference between a keyword that feels instant
+# and one that hangs the launcher.
+
+set -uo pipefail
+
+CLEAR_SECONDS=45
+STORE="${PASSWORD_STORE_DIR:-$HOME/.password-store}"
+
+have_pass() { command -v pass >/dev/null 2>&1 && [[ -d $STORE ]]; }
+have_op() { command -v op >/dev/null 2>&1 && [[ -n $(op account list 2>/dev/null) ]]; }
+
+# ---- copy
+#
+# Called from a row's exec, never from the search path. Prints nothing on
+# success: a secret that reaches stdout is a secret in the shell's log.
+if [[ ${1:-} == "copy" ]]; then
+  tool="${2:-}"
+  entry="${3:-}"
+  # The name to say out loud. It is not the reference: 1Password's reference
+  # ends in the field, and a notification reading "Copied password" names
+  # nothing.
+  label="${4:-${entry##*/}}"
+  [[ -n $entry ]] || exit 0
+
+  secret=""
+  case "$tool" in
+  pass) secret=$(pass show "$entry" 2>/dev/null | head -n1) ;;
+  op) secret=$(op read "op://$entry" --no-newline 2>/dev/null) ;;
+  esac
+
+  if [[ -z $secret ]]; then
+    omarchy-notification-send -u normal "No secret" "$label" 2>/dev/null
+    exit 0
+  fi
+
+  printf '%s' "$secret" | wl-copy
+
+  # Clearing unconditionally would wipe whatever you copied in the meantime, so
+  # the clipboard is only emptied while it still holds this secret. The waiter
+  # reads it from a pipe rather than from argv: /proc/PID/cmdline is readable by
+  # every user on the machine and would hold the secret for the whole wait.
+  printf '%s' "$secret" | setsid --fork bash -c '
+    secret=$(cat)
+    sleep "$1"
+    [[ $(wl-paste --no-newline 2>/dev/null) == "$secret" ]] && wl-copy --clear
+  ' _ "$CLEAR_SECONDS" >/dev/null 2>&1
+
+  omarchy-notification-send "Copied $label" "Clipboard clears in ${CLEAR_SECONDS}s" 2>/dev/null
+  exit 0
+fi
+
+# ---- read
+
+query="${1:-}"
+needle="${query,,}"
+score=90000
+
+# `id` is the reference the copy path needs, which is not always the name you
+# would write down: 1Password's is a vault path with the field appended.
+row() {
+  local tool="$1" id="$2" title="$3" subtitle="$4" name="$5"
+  [[ -z $needle || ${title,,} == *"$needle"* || ${subtitle,,} == *"$needle"* ]] || return 0
+
+  jq -cn --arg id "$id" --arg t "$title" --arg s "$subtitle" \
+    --arg e "omacast-pass copy $(printf '%q' "$tool") $(printf '%q' "$id") $(printf '%q' "$title")" \
+    --arg name "$name" --argjson sc "$score" \
+    '{
+       id: $id, title: $t, subtitle: $s, glyph: "󰌾", exec: $e, score: $sc,
+       actions: [
+         { title: "Copy Password", shortcut: "↵", exec: $e },
+         { title: "Copy Entry Name", exec: ("printf %s " + ($name | @sh) + " | wl-copy") }
+       ]
+     }'
+  score=$((score - 100))
+}
+
+if have_pass; then
+  # Names come from the tree on disk rather than from `pass ls`, whose output is
+  # drawn with box characters meant for a terminal.
+  while IFS= read -r file; do
+    entry="${file#"$STORE"/}"
+    entry="${entry%.gpg}"
+    [[ -n $entry ]] || continue
+    row pass "$entry" "${entry##*/}" "${entry%/*}" "$entry"
+  done < <(find "$STORE" -type f -name '*.gpg' 2>/dev/null | sort)
+  exit 0
+fi
+
+if have_op; then
+  # `op read op://vault/item/password` is the one call that never needs the item
+  # id resolved a second time, so the row carries vault/item and the copy path
+  # appends the field.
+  while IFS=$'\t' read -r vault title; do
+    [[ -n $title ]] || continue
+    row op "$vault/$title/password" "$title" "$vault" "$title"
+  done < <(op item list --format json 2>/dev/null |
+    jq -r '.[]? | [(.vault.name // ""), (.title // "")] | @tsv' 2>/dev/null)
+fi
+
+exit 0

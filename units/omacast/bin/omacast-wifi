@@ -1,0 +1,166 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `wifi:` keyword: what is in range, what you have
+# saved, and which one you are on.
+#
+#   wifi:            every network in range, the active one first
+#   wifi:cafe        the ones whose name matches
+#
+# Three kinds of row, because there are three different things Enter can mean:
+#
+#   active   disconnect
+#   saved    bring the saved connection up, no password to collect
+#   new      hand it to Omarchy's network panel, which owns the passphrase prompt
+#
+# The third one is the compromise. A launcher row cannot ask for a password:
+# there is no form view yet, so nothing here can take one. Rather than shelling
+# out to a terminal for something Omarchy already draws properly, the row opens
+# the network panel, which has the prompt, the retry on a wrong password and the
+# enterprise fields. Connecting in a terminal is kept as the second action for a
+# session with no bar. When a form view exists this becomes one row with a field
+# in it, and the panel goes back to being the fallback.
+#
+# --rescan no on purpose: a rescan takes seconds and empties the list while it
+# runs, which per keystroke is unusable. NetworkManager keeps scanning on its
+# own, so the list is current within about half a minute either way, and `Rescan`
+# is an action for when it is not.
+
+set -uo pipefail
+
+query="${1:-}"
+needle="${query,,}"
+
+command -v nmcli >/dev/null 2>&1 || exit 0
+
+# Saved 802-11-wireless profiles, by name. A saved network connects with no
+# secret to collect, which is the difference that decides what Enter does.
+declare -A saved=()
+while IFS= read -r line; do
+  # TYPE first so the profile name, which may hold a colon, is the remainder.
+  type="${line%%:*}"
+  name="${line#*:}"
+  name="${name//\\:/:}"
+  [[ $type == "802-11-wireless" && -n $name ]] && saved["$name"]=1
+done < <(nmcli -t -f TYPE,NAME connection show 2>/dev/null)
+
+score=90000
+seen=$'\n'
+
+emit() {
+  local id="$1" title="$2" subtitle="$3" detail="$4" accessory="$5"
+  local primary="$6" exec="$7" extra="$8" rank="$9"
+
+  jq -cn --arg id "$id" --arg t "$title" --arg s "$subtitle" --arg d "$detail" \
+    --arg a "$accessory" --arg p "$primary" --arg e "$exec" \
+    --argjson extra "$extra" --argjson sc "$rank" \
+    '{ id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
+       group: "Wi-Fi", glyph: "", exec: $e, score: $sc,
+       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra) }'
+}
+
+panel="omarchy-shell -q shell summon omarchy.network"
+
+# The interface is resolved when the action runs rather than now: the row may
+# still be on screen after a roam, and reading the password off the wrong device
+# fails in a way that looks like the password is gone.
+copy_password='iface=$(nmcli -t -f DEVICE,TYPE,STATE device'
+copy_password+=' | awk -F: -v w=wifi -v c=connected "\$2 == w && \$3 == c { print \$1; exit }");'
+copy_password+=' omarchy-network-password "$iface" | tr -d "\n" | wl-copy'
+
+# SSID is asked for last so it is the remainder of the line: nmcli escapes a
+# colon inside a field as "\:", and splitting an SSID out of the middle means
+# unpicking that by hand. Nothing before it can contain a colon.
+while IFS= read -r line; do
+  [[ -n $line ]] || continue
+
+  in_use="${line%%:*}"
+  rest="${line#*:}"
+  signal="${rest%%:*}"
+  rest="${rest#*:}"
+  security="${rest%%:*}"
+  ssid="${rest#*:}"
+  ssid="${ssid//\\:/:}"
+
+  [[ -n $ssid ]] || continue
+
+  # One network with three access points is three rows out of nmcli. Keep the
+  # first, which is the strongest: the list arrives sorted by signal.
+  [[ $seen == *$'\n'"$ssid"$'\n'* ]] && continue
+  seen+="$ssid"$'\n'
+
+  [[ -z $needle || ${ssid,,} == *"$needle"* ]] || continue
+
+  quoted=$(printf '%q' "$ssid")
+  if [[ -z $security ]]; then lock="Open"; else lock="$security"; fi
+
+  if [[ $in_use == "*" ]]; then
+    down="out=\$(nmcli connection down id $quoted 2>&1)"
+    down+=" && omarchy-notification-send \"Disconnected from $ssid\""
+    down+=" || omarchy-notification-send -u normal \"Disconnect failed\" \"\$out\""
+    emit "$ssid" "$ssid" "Connected" "$lock" "${signal}%" "Disconnect" "$down" \
+      "$(jq -cn --arg pw "$copy_password" --arg panel "$panel" '[
+           { title: "Copy Password", exec: $pw },
+           { title: "Show QR Code", exec: "omarchy-shell -q shell summon omarchy.wifiqr" },
+           { title: "Speed Test", exec: "omarchy-network-speedtest" },
+           { title: "Open Network Panel", exec: $panel }
+         ]')" "$((score + 9000))"
+
+  elif [[ -n ${saved[$ssid]:-} ]]; then
+    up="out=\$(nmcli connection up id $quoted 2>&1)"
+    up+=" && omarchy-notification-send \"Connected to $ssid\""
+    up+=" || omarchy-notification-send -u normal \"Could not connect to $ssid\" \"\$out\""
+    emit "$ssid" "$ssid" "Saved" "$lock" "${signal}%" "Connect" "$up" \
+      "$(jq -cn --arg q "$quoted" --arg panel "$panel" '[
+           { title: "Forget Network", exec: ("nmcli connection delete id " + $q) },
+           { title: "Open Network Panel", exec: $panel }
+         ]')" "$((score + 4000))"
+
+  elif [[ $lock == "Open" ]]; then
+    # Nothing to prompt for, so this one connects from the row.
+    join="out=\$(nmcli device wifi connect $quoted 2>&1)"
+    join+=" && omarchy-notification-send \"Connected to $ssid\""
+    join+=" || omarchy-notification-send -u normal \"Could not connect to $ssid\" \"\$out\""
+    emit "$ssid" "$ssid" "Open network" "$lock" "${signal}%" "Connect" "$join" \
+      "$(jq -cn --arg panel "$panel" '[
+           { title: "Open Network Panel", exec: $panel }
+         ]')" "$score"
+
+  else
+    emit "$ssid" "$ssid" "Needs a password" "$lock" "${signal}%" "Open Network Panel" "$panel" \
+      "$(jq -cn --arg q "$quoted" --arg s "$ssid" '[
+           { title: "Connect in a Terminal",
+             exec: ("omarchy-launch-tui --app-id=org.omarchy.wifi nmcli --ask device wifi connect " + $q) },
+           { title: "Copy Name", exec: ("printf %s " + ($s | @sh) + " | wl-copy") }
+         ]')" "$score"
+  fi
+
+  score=$((score - 100))
+done < <(nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list --rescan no 2>/dev/null)
+
+# ---- the radio itself, and a way to make the list newer
+radio=$(nmcli -t -f WIFI radio 2>/dev/null)
+# NetworkManager not running answers neither, and a row claiming Wi-Fi is off
+# would be a guess dressed as a reading.
+if [[ $radio == "enabled" || $radio == "disabled" ]] &&
+  [[ -z $needle || "wifi radio scan rescan on off" == *"$needle"* ]]; then
+  if [[ $radio == "enabled" ]]; then
+    jq -cn --argjson sc 70000 \
+      '{ id: "radio", title: "Wi-Fi is on", subtitle: "Radio", accessory: "On",
+         group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi off", score: $sc,
+         actions: [
+           { title: "Turn Wi-Fi Off", shortcut: "↵", exec: "nmcli radio wifi off" },
+           { title: "Rescan", exec: "nmcli device wifi rescan" },
+           { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
+         ] }'
+  else
+    # Nothing else can be true while the radio is off, so it leads.
+    jq -cn --argjson sc 99000 \
+      '{ id: "radio", title: "Wi-Fi is off", subtitle: "Radio", accessory: "Off",
+         group: "Wi-Fi", glyph: "", exec: "nmcli radio wifi on", score: $sc,
+         actions: [
+           { title: "Turn Wi-Fi On", shortcut: "↵", exec: "nmcli radio wifi on" },
+           { title: "Restart Wi-Fi", exec: "omarchy-restart-wifi" }
+         ] }'
+  fi
+fi
+
+exit 0

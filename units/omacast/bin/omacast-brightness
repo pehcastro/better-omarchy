@@ -1,0 +1,52 @@
+#!/bin/bash
+# Emits a slider row for OmaCast's `bri:` keyword: screen brightness on the
+# focused display.
+#
+#   bri:             the slider
+#
+# The row carries value, min, max, step and setExec, where setExec holds the
+# literal token {value} for the view to replace with the number you land on.
+#
+# Everything goes through omarchy-brightness-display, which already knows the
+# three ways a display is dimmed: brightnessctl for an internal panel, DDC over
+# the monitor's own control channel for an external one, and the Apple protocol
+# for a Studio Display. Called with no argument it prints the current percentage;
+# called with "40%" it sets it and draws the OSD. So this script reads and writes
+# through the same command and owns none of that.
+#
+# The floor is 1, not 0. Zero on a backlight is a black screen with no way to
+# find the slider again.
+
+set -uo pipefail
+
+query="${1:-}"
+needle="${query,,}"
+
+command -v omarchy-brightness-display >/dev/null 2>&1 || exit 0
+
+if [[ -n $needle ]]; then
+  [[ "brightness screen display dim backlight" == *"$needle"* ]] || exit 0
+fi
+
+# A desktop with a monitor that answers no control channel has no reading at
+# all, which is not an error and not a row saying so.
+level=$(omarchy-brightness-display 2>/dev/null)
+[[ $level =~ ^[0-9]+$ ]] || exit 0
+
+monitor=$(omarchy-hyprland-monitor-focused 2>/dev/null)
+
+jq -cn --arg s "${monitor:-Display}" --argjson v "$level" --arg a "${level}%" \
+  '{ id: "brightness", title: "Screen Brightness", subtitle: $s, accessory: $a,
+     group: "Brightness", view: "slider",
+     value: $v, min: 1, max: 100, step: 5,
+     setExec: "omarchy-brightness-display {value}%",
+     exec: "omarchy-brightness-display 100%",
+     score: 90000,
+     actions: [
+       { title: "Set to 100%", shortcut: "↵", exec: "omarchy-brightness-display 100%" },
+       { title: "Set to 50%", exec: "omarchy-brightness-display 50%" },
+       { title: "Set to 10%", exec: "omarchy-brightness-display 10%" },
+       { title: "Turn Display Off", exec: "omarchy-brightness-display off" }
+     ] }'
+
+exit 0

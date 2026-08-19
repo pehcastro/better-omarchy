@@ -1,0 +1,21 @@
+{
+  "id": "vol",
+  "title": "Volume",
+  "keyword": "vol",
+  "aliases": [
+    "volume",
+    "audio",
+    "sound",
+    "mute"
+  ],
+  "subtitle": "Volume",
+  "glyph": "",
+  "search": "omacast-volume {query}",
+  "when": "command -v pactl >/dev/null",
+  "minChars": 0,
+  "debounceMs": 60,
+  "timeoutMs": 3000,
+  "maxRows": 2,
+  "tier": "prefix",
+  "view": "slider"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "pass",
+  "title": "Passwords",
+  "keyword": "pass",
+  "aliases": [
+    "secret",
+    "password",
+    "1p"
+  ],
+  "subtitle": "Password Store",
+  "glyph": "󰌾",
+  "search": "omacast-pass {query}",
+  "when": "command -v pass >/dev/null || { command -v op >/dev/null && test -n \"$(op account list 2>/dev/null)\"; }",
+  "minChars": 0,
+  "debounceMs": 120,
+  "timeoutMs": 8000,
+  "maxRows": 20,
+  "tier": "prefix",
+  "view": "list"
+}

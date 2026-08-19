@@ -1,0 +1,144 @@
+#!/bin/bash
+# Emits slider rows for OmaCast's `vol:` keyword: output volume, input volume
+# and mute, dragged rather than nudged five percent at a time.
+#
+#   vol:             both sliders
+#   vol:mic          just the input one
+#
+# A slider row carries value, min, max, step and setExec. setExec holds the
+# literal token {value}, which the view replaces with the number you land on
+# before running it. Enter on a row toggles that device's mute, which is the one
+# thing a slider cannot express.
+#
+#   omacast-volume set output 40
+#   omacast-volume set input 100
+#
+# Output goes through omarchy-audio-output-sink, so a speaker tuning or an
+# EasyEffects sink in front of the hardware does not swallow the change: setting
+# the DSP sink's volume alters the level going *into* the processing, and the
+# number moves while the speakers do not. Omarchy has no helper that sets an
+# absolute level -- omarchy-audio-output-volume only steps and toggles -- so the
+# set path is pactl here, with the same OSD call the keys make.
+
+set -uo pipefail
+
+# ---- read the current values
+
+output_sink() { omarchy-audio-output-sink 2>/dev/null; }
+
+output_volume() {
+  pactl get-sink-volume "$1" 2>/dev/null |
+    awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i ~ /%$/) { sub("%", "", $i); print $i; exit } }'
+}
+
+output_muted() { [[ $(pactl get-sink-mute "$1" 2>/dev/null) == *yes ]]; }
+
+# wpctl rather than pactl for the source, because that is what
+# omarchy-audio-input-mute drives and both have to agree about which mic is the
+# default one.
+input_volume() {
+  wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null |
+    awk '{ printf "%d", $2 * 100; exit }'
+}
+
+input_muted() { wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -q MUTED; }
+
+# ---- set
+
+if [[ ${1:-} == "set" ]]; then
+  target="${2:-}"
+  value="${3:-}"
+
+  # The view sends a number, but a hand-written exec might not. Anything that is
+  # not 0-100 is dropped rather than passed to pactl, which would happily read
+  # "50%%" as something else.
+  [[ $value =~ ^[0-9]+$ ]] || exit 0
+  ((value > 100)) && value=100
+
+  case "$target" in
+  output)
+    sink=$(output_sink)
+    [[ -n $sink ]] || exit 0
+    pactl set-sink-mute "$sink" 0
+    pactl set-sink-volume "$sink" "${value}%"
+    icon="volume-high"
+    ((value == 0)) && icon="volume-muted"
+    omarchy-osd -i "$icon" -p "$value" 2>/dev/null
+    ;;
+  input)
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0 >/dev/null 2>&1
+    wpctl set-volume @DEFAULT_AUDIO_SOURCE@ "${value}%"
+    icon="microphone"
+    ((value == 0)) && icon="microphone-muted"
+    omarchy-osd -i "$icon" -p "$value" 2>/dev/null
+    ;;
+  esac
+  exit 0
+fi
+
+# ---- rows
+
+query="${1:-}"
+needle="${query,,}"
+
+matches() {
+  [[ -z $needle ]] && return 0
+  [[ ${1,,} == *"$needle"* ]]
+}
+
+command -v pactl >/dev/null 2>&1 || exit 0
+
+slider() {
+  jq -cn --arg id "$1" --arg t "$2" --arg s "$3" --arg a "$4" \
+    --argjson v "$5" --arg set "$6" --arg e "$7" --argjson sc "$8" \
+    --argjson acts "$9" \
+    '{ id: $id, title: $t, subtitle: $s, accessory: $a, group: "Volume",
+       view: "slider", value: $v, min: 0, max: 100, step: 5,
+       setExec: $set, exec: $e, score: $sc,
+       actions: $acts }'
+}
+
+sink=$(output_sink)
+if [[ -n $sink ]] && matches "volume output speaker sound mute"; then
+  level=$(output_volume "$sink")
+  level="${level:-0}"
+  if output_muted "$sink"; then
+    accessory="Muted"
+  else
+    accessory="${level}%"
+  fi
+
+  slider output "Output Volume" "${sink##*.}" "$accessory" "$level" \
+    "omacast-volume set output {value}" \
+    "omarchy-audio-output-volume mute-toggle" 90000 \
+    "$(jq -cn '[
+         { title: "Toggle Mute", shortcut: "↵", exec: "omarchy-audio-output-volume mute-toggle" },
+         { title: "Set to 100%", exec: "omacast-volume set output 100" },
+         { title: "Set to 50%", exec: "omacast-volume set output 50" },
+         { title: "Set to 0%", exec: "omacast-volume set output 0" },
+         { title: "Switch Output Device", exec: "omarchy-audio-output-switch" }
+       ]')"
+fi
+
+if command -v wpctl >/dev/null 2>&1 && matches "volume input microphone mic mute"; then
+  level=$(input_volume)
+  level="${level:-0}"
+  if input_muted; then
+    accessory="Muted"
+  else
+    accessory="${level}%"
+  fi
+
+  slider input "Input Volume" "Microphone" "$accessory" "$level" \
+    "omacast-volume set input {value}" \
+    "omarchy-audio-input-mute" 89000 \
+    "$(jq -cn '[
+         { title: "Toggle Mute", shortcut: "↵", exec: "omarchy-audio-input-mute" },
+         { title: "Set to 100%", exec: "omacast-volume set input 100" },
+         { title: "Set to 50%", exec: "omacast-volume set input 50" },
+         { title: "Set to 0%", exec: "omacast-volume set input 0" },
+         { title: "Switch Input Device", exec: "omarchy-audio-source-switch" }
+       ]')"
+fi
+
+exit 0

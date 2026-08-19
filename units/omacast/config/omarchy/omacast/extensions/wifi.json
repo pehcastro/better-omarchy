@@ -1,0 +1,19 @@
+{
+  "id": "wifi",
+  "title": "Wi-Fi",
+  "keyword": "wifi",
+  "aliases": [
+    "wlan",
+    "network"
+  ],
+  "subtitle": "Wi-Fi",
+  "glyph": "",
+  "search": "omacast-wifi {query}",
+  "when": "command -v nmcli >/dev/null",
+  "minChars": 0,
+  "debounceMs": 100,
+  "timeoutMs": 6000,
+  "maxRows": 20,
+  "tier": "prefix",
+  "view": "list"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "bri",
+  "title": "Brightness",
+  "keyword": "bri",
+  "aliases": [
+    "brightness",
+    "screen"
+  ],
+  "subtitle": "Brightness",
+  "glyph": "",
+  "search": "omacast-brightness {query}",
+  "when": "command -v omarchy-brightness-display >/dev/null",
+  "minChars": 0,
+  "debounceMs": 60,
+  "timeoutMs": 3000,
+  "maxRows": 1,
+  "tier": "prefix",
+  "view": "slider"
+}

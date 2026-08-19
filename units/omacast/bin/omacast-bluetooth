@@ -1,0 +1,105 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `bt:` keyword: the devices you have paired, and
+# whether each one is connected right now.
+#
+#   bt:              every paired device, connected first
+#   bt:buds          the ones whose name or address matches
+#
+# Acting on a device goes through `omarchy-bluetooth-device`, not through
+# bluetoothctl directly, because connecting has to survive the rfkill soft block
+# Omarchy uses as the real on/off state: a bare `bluetoothctl connect` fails
+# outright while the block is set. Reading is bluetoothctl, since nothing in
+# Omarchy prints the paired list.
+#
+# The adapter's own on/off is a row too. It is the answer when `bt:` looks
+# empty, and an empty list with Bluetooth switched off is the usual reason.
+
+set -uo pipefail
+
+query="${1:-}"
+needle="${query,,}"
+
+command -v bluetoothctl >/dev/null 2>&1 || exit 0
+
+matches() {
+  [[ -z $needle ]] && return 0
+  local hay="${1,,} ${2:-}"
+  [[ ${hay,,} == *"$needle"* ]]
+}
+
+powered=1
+timeout 2s bluetoothctl show 2>/dev/null | grep -q "Powered: yes" || powered=0
+
+# Two list calls rather than one `info` per device: `info` is a round trip each,
+# and a headset plus a mouse plus a keyboard is already slower than the debounce.
+connected=$(timeout 3s bluetoothctl devices Connected 2>/dev/null)
+
+score=90000
+
+while read -r _ address name; do
+  [[ $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || continue
+  name="${name:-$address}"
+  matches "$name" "$address" || continue
+
+  # A connected device leads: it is the one you are about to hang up on.
+  if [[ $connected == *"$address"* ]]; then
+    state="Connected"
+    primary="Disconnect"
+    exec="omarchy-bluetooth-device disconnect $address"
+    other="Connect"
+    other_exec="omarchy-bluetooth-device connect $address"
+    rank=$((score + 5000))
+  else
+    state="Paired"
+    primary="Connect"
+    exec="omarchy-bluetooth-device connect $address"
+    other="Disconnect"
+    other_exec="omarchy-bluetooth-device disconnect $address"
+    rank=$score
+  fi
+
+  jq -cn --arg id "$address" --arg t "$name" --arg s "$state" --arg d "$address" \
+    --arg a "$state" --arg p "$primary" --arg e "$exec" --arg addr "$address" \
+    --arg o "$other" --arg oe "$other_exec" --argjson sc "$rank" \
+    '{
+       id: $id, title: $t, subtitle: $s, detail: $d, accessory: $a,
+       group: "Bluetooth", glyph: "", exec: $e, score: $sc,
+       actions: [
+         { title: $p, shortcut: "↵", exec: $e },
+         { title: $o, exec: $oe },
+         { title: "Forget Device", exec: ("omarchy-bluetooth-device forget " + $addr) },
+         { title: "Copy Address", exec: ("printf %s " + ($addr | @sh) + " | wl-copy") },
+         { title: "Open Bluetooth Panel", exec: "omarchy-shell -q shell summon omarchy.bluetooth" }
+       ]
+     }'
+
+  score=$((score - 100))
+done < <(timeout 3s bluetoothctl devices Paired 2>/dev/null |
+  { grep '^Device ' || true; } |
+  sort -t' ' -k3)
+
+# ---- the adapter itself
+if matches "bluetooth power adapter on off pair"; then
+  if ((powered)); then
+    jq -cn --argjson sc 80000 \
+      '{ id: "power", title: "Bluetooth is on", subtitle: "Adapter",
+         accessory: "On", group: "Bluetooth", glyph: "",
+         exec: "omarchy-bluetooth-power off", score: $sc,
+         actions: [
+           { title: "Turn Bluetooth Off", shortcut: "↵", exec: "omarchy-bluetooth-power off" },
+           { title: "Pair a New Device", exec: "omarchy-shell -q shell summon omarchy.bluetooth" },
+           { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
+         ] }'
+  else
+    jq -cn --argjson sc 99000 \
+      '{ id: "power", title: "Bluetooth is off", subtitle: "Adapter",
+         accessory: "Off", group: "Bluetooth", glyph: "",
+         exec: "omarchy-bluetooth-power on", score: $sc,
+         actions: [
+           { title: "Turn Bluetooth On", shortcut: "↵", exec: "omarchy-bluetooth-power on" },
+           { title: "Restart Bluetooth", exec: "omarchy-restart-bluetooth" }
+         ] }'
+  fi
+fi
+
+exit 0

@@ -1,0 +1,105 @@
+#!/bin/bash
+# The record of what the calculator has already answered, for OmaCast's `calc:`
+# keyword.
+#
+#   calc:            every answer you have kept, newest first
+#   calc:usd         the ones whose expression or answer matches
+#   calc:2+2         the built-in calculator answers on top; the history below
+#                    shows the last time you asked
+#
+# The inline calculator is a QML provider, so it is the only thing that knows an
+# expression was answered rather than abandoned mid-keystroke. Nothing here can
+# observe that. So the history is written by whatever runs when you accept an
+# answer:
+#
+#   omacast-calc-history record <expression> <answer>
+#
+# which appends the pair and copies the answer, exactly as the plain
+# `printf %s <answer> | wl-copy` it replaces did. Until Launcher.qml calls it the
+# file stays empty, and an empty file is silence rather than a row saying so.
+
+set -uo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
+HISTORY="$STATE/omacast-calc-history.json"
+KEEP=100
+
+# ---- record
+#
+# One expression keeps one row: asking the same thing twice is one memory that
+# moved, not two. The rewrite goes through a temp file under a lock, so two
+# answers accepted in the same second cannot truncate each other.
+if [[ ${1:-} == "record" ]]; then
+  expression="${2:-}"
+  answer="${3:-}"
+
+  if [[ -n $expression && -n $answer ]]; then
+    mkdir -p "$STATE"
+    exec {lock}>"$HISTORY.lock"
+    flock -w 2 "$lock" || exit 0
+
+    [[ -s $HISTORY ]] || printf '[]\n' >"$HISTORY"
+    tmp=$(mktemp "$HISTORY.XXXXXX") || exit 0
+    if jq -c --arg e "$expression" --arg a "$answer" --argjson n "$KEEP" \
+      --argjson at "$(date +%s)" \
+      '(if type == "array" then . else [] end)
+       | map(select(.expression != $e))
+       | [{expression: $e, answer: $a, at: $at}] + .
+       | .[0:$n]' "$HISTORY" >"$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$HISTORY"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+
+  # The copy happens whether or not the write did. Losing a history entry is a
+  # nuisance; losing the answer you pressed Enter for is the whole action.
+  [[ -n $answer ]] && printf '%s' "$answer" | wl-copy
+  exit 0
+fi
+
+# ---- read
+
+query="${1:-}"
+[[ -s $HISTORY ]] || exit 0
+
+now=$(date +%s)
+
+jq -c --arg q "${query,,}" --argjson now "$now" --arg file "$HISTORY" '
+  if type != "array" then empty else
+    [ .[]?
+      | select((.expression // "") != "" and (.answer // "") != "")
+      | select($q == ""
+               or ((.expression | ascii_downcase) | contains($q))
+               or ((.answer | ascii_downcase) | contains($q)))
+    ]
+    | to_entries[]
+    | .key as $i
+    | .value as $v
+    | ($now - ($v.at // $now)) as $age
+    | (if $age < 60 then "now"
+       elif $age < 3600 then (($age / 60 | floor | tostring) + "m")
+       elif $age < 86400 then (($age / 3600 | floor | tostring) + "h")
+       elif $age < 2592000 then (($age / 86400 | floor | tostring) + "d")
+       else (($age / 2592000 | floor | tostring) + "mo") end) as $when
+    | ("printf %s " + ($v.answer | @sh) + " | wl-copy") as $copy
+    | {
+        id: $v.expression,
+        title: $v.answer,
+        subtitle: $v.expression,
+        accessory: $when,
+        group: "Calculator History",
+        exec: $copy,
+        score: (90000 - ($i * 100)),
+        actions: [
+          { title: "Copy Result", shortcut: "↵", exec: $copy },
+          { title: "Copy Expression", exec: ("printf %s " + ($v.expression | @sh) + " | wl-copy") },
+          # `query` steers the launcher instead of running something, so this
+          # reopens the sum in the calculator rather than closing on a copy.
+          { title: "Ask Again", query: ("=" + $v.expression) },
+          { title: "Clear History", exec: ("rm -f " + ($file | @sh)) }
+        ]
+      }
+  end' "$HISTORY" 2>/dev/null
+
+exit 0
