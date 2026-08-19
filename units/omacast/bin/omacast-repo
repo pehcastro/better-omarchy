@@ -324,10 +324,44 @@ done
 
 ((${#ranked[@]})) || exit 0
 
+# Per-repo state, cached against the index. `git status` and `git log -1` are
+# two forks per row and twelve rows was 250ms on every keystroke, which is why
+# the spinner never stopped. A repo's state cannot change without .git/index or
+# a ref moving, so the cache key is the newest mtime in .git and a hit costs one
+# stat instead of two processes.
+state_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/repo-state"
+mkdir -p "$state_cache" 2>/dev/null
+
+repo_stamp() {
+  local gitdir="$1" newest=0 f t
+  for f in "$gitdir/index" "$gitdir/HEAD" "$gitdir/refs" "$gitdir/packed-refs"; do
+    [[ -e $f ]] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null) || continue
+    ((t > newest)) && newest=$t
+  done
+  printf '%s' "$newest"
+}
+
 while IFS=$'\t' read -r score touched repo gitdir; do
   [[ -n $repo ]] || continue
 
   branch="" upstream="" ab="" dirty=0
+
+  cache_key="$state_cache/$(printf '%s' "$repo" | md5sum | cut -c1-16)"
+  stamp=$(repo_stamp "$gitdir")
+  cached=""
+  [[ -s $cache_key ]] && cached=$(<"$cache_key")
+
+  if [[ ${cached%%$'\t'*} == "$stamp" && -n $cached ]]; then
+    IFS=$'\t' read -r _ branch upstream ab dirty committed <<<"$cached"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$stamp" "$branch" "$upstream" "$ab" "$dirty" "$committed" > "$cache_key"
+    repo_state_cached=1
+  else
+    repo_state_cached=0
+  fi
+
+  if ((repo_state_cached == 0)); then
   # porcelain v2 with --branch is one call for branch, upstream, ahead/behind
   # and dirtiness. --no-optional-locks so a launcher reading in the background
   # never writes to somebody's index.
@@ -341,20 +375,34 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     esac
   done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch --untracked-files=no 2>/dev/null)
 
-  [[ -n $branch ]] || branch=$(head_branch "$gitdir") || branch="?"
-  [[ $branch == "(detached)" ]] && branch="detached"
+    [[ -n $branch ]] || branch=$(head_branch "$gitdir") || branch="?"
+    [[ $branch == "(detached)" ]] && branch="detached"
 
-  committed=$(git -C "$repo" --no-optional-locks log -1 --format=%ct 2>/dev/null)
+    committed=$(git -C "$repo" --no-optional-locks log -1 --format=%ct 2>/dev/null)
+    [[ -n ${committed:-} ]] || committed=$touched
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$stamp" "$branch" "$upstream" "$ab" "$dirty" "$committed" > "$cache_key"
+  fi
+
+  [[ -n $branch ]] || branch="?"
   [[ -n ${committed:-} ]] || committed=$touched
 
-  state="$branch"
-  ((dirty)) && state="$state ●"
+  # Assembled for the old list view, and kept apart for the new one: a layout
+  # cannot give the branch and the ahead count different weights if they arrive
+  # already glued into one string.
+  ahead_txt="" behind_txt=""
   if [[ -n $ab ]]; then
     ahead="${ab%% *}"
     behind="${ab##* }"
-    ((${ahead#+} > 0)) && state="$state ↑${ahead#+}"
-    ((${behind#-} > 0)) && state="$state ↓${behind#-}"
+    ((${ahead#+} > 0)) && ahead_txt="${ahead#+}"
+    ((${behind#-} > 0)) && behind_txt="${behind#-}"
   fi
+
+  state="$branch"
+  ((dirty)) && state="$state ●"
+  [[ -n $ahead_txt ]] && state="$state ↑$ahead_txt"
+  [[ -n $behind_txt ]] && state="$state ↓$behind_txt"
 
   display="${repo/#$HOME/\~}"
   quoted=$(printf '%q' "$repo")
@@ -376,6 +424,8 @@ while IFS=$'\t' read -r score touched repo gitdir; do
     --arg open "$EDITOR_PREFIX $quoted" \
     --arg term "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
     --arg log "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted log --oneline --graph --decorate -40" \
+    --arg branch "$branch" --arg ahead "${ahead_txt:-}" --arg behind "${behind_txt:-}" \
+    --argjson dirty "$dirty" --arg slug2 "${slug:-}" \
     --arg copypath "printf %s $quoted | wl-copy" \
     --arg clone "${remote:-}" \
     --arg web "$web" \

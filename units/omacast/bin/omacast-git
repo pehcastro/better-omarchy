@@ -66,6 +66,18 @@ emit() {
   score=$((score - 100))
 }
 
+# The panel
+# ------------------------------------------------------------------
+#
+# A bare `git:` is not a search, it is "show me this repo", and answering it
+# with a list of unrelated rows makes the reader assemble the picture. So the
+# first row carries the whole picture and its own view draws it: the repo and
+# its branch, what is uncommitted, what happened lately, and what is open
+# against it.
+#
+# Typing anything after `git:` goes back to rows, because then it is a search
+# again and a panel cannot be filtered.
+
 # Status and branch, in one call
 # ------------------------------------------------------------------
 
@@ -92,6 +104,50 @@ done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch 2>/de
 
 [[ -n $branch ]] || exit 0
 [[ $branch == "(detached)" ]] && branch="detached"
+
+remote_url=$(git -C "$repo" --no-optional-locks remote get-url origin 2>/dev/null)
+
+# A bare query gets the panel: everything about this repo in one row, drawn by
+# a view that knows what a repo is. Anything typed after `git:` is a search, and
+# a panel cannot be filtered, so the rows below take over.
+if [[ -z $needle ]]; then
+  ahead_n=0 behind_n=0
+  if [[ -n $ab ]]; then
+    a="${ab%% *}"; b="${ab##* }"
+    ahead_n="${a#+}"; behind_n="${b#-}"
+  fi
+
+  commits_json=$(git -C "$repo" --no-optional-locks log -6 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null |
+    jq -Rn --argjson now "$now" '
+      [inputs | split("\t") | select(length >= 4)
+       | { hash: .[0], subject: .[1], author: .[2], age: ($now - (.[3] | tonumber)) }]')
+  [[ -n ${commits_json:-} ]] || commits_json="[]"
+
+  jq -cn \
+    --arg name "$name" --arg path "$display" --arg branch "$branch" \
+    --arg upstream "${upstream:-}" --arg quoted "$quoted" \
+    --argjson ahead "${ahead_n:-0}" --argjson behind "${behind_n:-0}" \
+    --argjson staged "$staged" --argjson changed "$changed" --argjson conflicted "$conflicted" \
+    --argjson commits "$commits_json" \
+    --arg remote "${remote_url:-}" \
+    '{ id: "git-panel", view: "gitrepo", score: 99000,
+       title: $name, subtitle: $branch, detail: $path,
+       repo: { name: $name, path: $path, branch: $branch, upstream: $upstream,
+               ahead: $ahead, behind: $behind,
+               staged: $staged, changed: $changed, conflicted: $conflicted,
+               remote: $remote },
+       commits: $commits,
+       exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff"),
+       actions: [
+         { title: "Show Diff", shortcut: "↵",
+           exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff") },
+         { title: "Open Terminal Here",
+           exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $quoted) },
+         { title: "Full Log",
+           exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " log --oneline --graph --decorate -60") }
+       ] }'
+  exit 0
+fi
 
 parts=()
 ((staged)) && parts+=("$staged staged")
@@ -190,75 +246,9 @@ if [[ -n ${remote:-} ]]; then
        ]')"
 fi
 
-# What GitHub knows about this repo
-# ------------------------------------------------------------------
-#
-# A repo is not only what is on disk. Whether anything is waiting for review,
-# and what people have opened against it, is part of "the state of this repo"
-# and is the reason you would otherwise open a browser.
-#
-# Read from a cache and never fetched inline. `git:` answers local questions in
-# a tenth of a second and a gh call takes one to three seconds: putting one in
-# front of the other would make the fast half wait for the slow half on every
-# keystroke. A background refresh fills the cache, and the rows appear on the
-# next query rather than making this one late.
-
-slug_of() {
-  local url="$1"
-  [[ $url == *github.com* ]] || return 1
-  url="${url#*github.com}"
-  url="${url#:}"
-  url="${url#/}"
-  url="${url%.git}"
-  [[ $url == */* ]] || return 1
-  printf '%s' "$url"
-}
-
-gh_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/git"
-slug=$(slug_of "${remote:-}") || slug=""
-
-if [[ -n $slug ]] && command -v gh >/dev/null; then
-  mkdir -p "$gh_cache_dir"
-  cache_file="$gh_cache_dir/$(printf '%s' "$slug" | tr '/' '_').json"
-
-  # Older than five minutes means somebody may have opened something since.
-  # Refreshed in the background so this run answers from whatever is there now,
-  # including nothing on the very first query.
-  if [[ ! -s $cache_file ]] || [[ -n $(find "$cache_file" -mmin +5 2>/dev/null) ]]; then
-    (
-      timeout 15 gh api "repos/$slug/pulls?state=open&per_page=5" \
-        --jq '[.[] | { kind: "pr", number: .number, title: .title,
-                       author: .user.login, url: .html_url,
-                       draft: .draft, updated: .updated_at }]' 2>/dev/null > "$cache_file.pr" &&
-      timeout 15 gh api "repos/$slug/issues?state=open&per_page=5" \
-        --jq '[.[] | select(.pull_request == null)
-                   | { kind: "issue", number: .number, title: .title,
-                       author: .user.login, url: .html_url, updated: .updated_at }]' 2>/dev/null > "$cache_file.issue" &&
-      jq -s 'add' "$cache_file.pr" "$cache_file.issue" > "$cache_file.tmp" 2>/dev/null &&
-      mv "$cache_file.tmp" "$cache_file"
-      rm -f "$cache_file.pr" "$cache_file.issue" "$cache_file.tmp"
-    ) >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-  fi
-
-  if [[ -s $cache_file ]]; then
-    while IFS=$'\t' read -r kind number title author url updated; do
-      [[ -n $number ]] || continue
-
-      group="Open Pull Requests"
-      [[ $kind == issue ]] && group="Open Issues"
-
-      emit "$kind:$number" "$title" "#$number  $author" "$slug" \
-        "$(short_age $((now - $(date -d "$updated" +%s 2>/dev/null || echo "$now"))))" \
-        "$group" "Open in Browser" \
-        "omarchy-launch-browser $(printf '%q' "$url")" \
-        "$(jq -cn --arg u "$url" --arg n "$number" '[
-             { title: "Copy URL", exec: ("printf %s " + ($u | @sh) + " | wl-copy") },
-             { title: "Copy Number", exec: ("printf %s " + (("#" + $n) | @sh) + " | wl-copy") }
-           ]')"
-    done < <(jq -r '.[] | [.kind, .number, .title, .author, .url, .updated] | @tsv' \
-               "$cache_file" 2>/dev/null)
-  fi
-fi
+# GitHub is not this keyword's business. `repo:` and `git:` are the local
+# machine; `gh:` and `github:` are the remote. Open pull requests lived here for
+# an hour and blurred that line: one keyword that answers from disk and from
+# somebody else's API is two keywords wearing one name.
 
 exit 0

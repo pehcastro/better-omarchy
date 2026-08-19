@@ -52,6 +52,20 @@ Item {
   // Providers that have been asked and have not answered yet. A slow shell-out
   // otherwise looks identical to one that found nothing.
   property var waiting: ({})
+  // Busy for long enough that saying so is information rather than noise.
+  property bool slowBusy: false
+
+  onBusyChanged: {
+    if (root.busy) slowTimer.restart()
+    else { slowTimer.stop(); root.slowBusy = false }
+  }
+
+  Timer {
+    id: slowTimer
+    interval: 400
+    onTriggered: root.slowBusy = root.busy
+  }
+
   readonly property bool busy: {
     for (var key in root.waiting) {
       if (root.waiting[key]) return true
@@ -298,7 +312,7 @@ Item {
     // here is a wrong answer rather than a missing one, and a card that
     // collapses now and jumps open when the rows land is worse than one that
     // holds its shape.
-    if (root.rows.length === 0 && root.busy && root.queryText.trim() !== "") return "loading"
+    if (root.rows.length === 0 && root.slowBusy && root.queryText.trim() !== "") return "loading"
 
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
@@ -311,7 +325,7 @@ Item {
   // a plain list and looked like the script was wrong.
   readonly property var knownViews: ["list", "hero", "cards", "split", "grid",
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
-    "loading"]
+    "gitrepo", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -1837,7 +1851,11 @@ Item {
           height: width
           radius: width / 2
           color: Color.accent
-          visible: root.busy && root.rows.length > 0
+          // Only once the wait is long enough to be worth mentioning. `repo:`
+          // answers in about 250ms, so a dot tied straight to `busy` blinked on
+          // every keystroke and reported nothing: a spinner that is always on
+          // is decoration.
+          visible: root.slowBusy && root.rows.length > 0
 
           SequentialAnimation on opacity {
             running: root.busy
@@ -2063,6 +2081,7 @@ Item {
           case "calendar": return calendarView
           case "timegrid": return timeGridView
           case "zones": return zonesView
+          case "gitrepo": return gitRepoView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2083,6 +2102,7 @@ Item {
       Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: timeGridView;  ResultTimeGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: zonesView;     ResultZones     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: gitRepoView;   ResultGitRepo   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
