@@ -55,6 +55,17 @@ $EDITOR monitors.lua
 `hyprctl monitors all` lists what you have and every mode each one takes. `bo
 add` links whatever `.lua` it finds, so the example alone links nothing.
 
+Pick a scale wherever you like. The Display panel in the bar writes it, this
+file reads it back, and a reload keeps it.
+
+Omarchy's own precedence has the config file win: clamshell prefers the scale it
+parses out of `monitors.lua` and only falls back to its saved state, so a scale
+picked in the panel was lost at the next reload. This file reads that state and
+treats it as the answer when it is there, and records the live scale on
+`monitor.layout_changed` so a panel change is remembered. Delete
+`~/.local/state/omarchy/toggles/hypr/internal-monitor-scale` to go back to the
+default in this file.
+
 `bo` links this file twice: into `modules.d` like any other unit Lua, and to
 `~/.config/hypr/monitors.lua`. That second path is not decoration.
 `omarchy-hyprland-monitor-clamshell` runs on every wake, parses that exact file
