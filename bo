@@ -2108,7 +2108,7 @@ tui_units() {
   picked=$(printf '%s\n' "${lines[@]}" |
     gum filter --no-limit --height 16 --prompt "  " \
       --placeholder "type to filter, tab to mark, enter to act on them" \
-      --header "$(printf '  %-26s %-9s %-13s %s' UNIT KIND CATEGORY SUMMARY)") || return 0
+      --header "$(printf '  %-26s %-9s %-13s %s   (esc to go back)' UNIT KIND CATEGORY SUMMARY)") || return 0
 
   [[ -z $picked ]] && return 0
 
@@ -2123,22 +2123,24 @@ tui_units() {
   ((${#refs[@]} > 0)) || return 0
 
   local action
-  action=$(printf 'Turn on\nTurn off\nRead about it\nShow details\n' |
-    gum choose --header "${#refs[@]} selected") || return 0
+  action=$(printf 'Turn on\nTurn off\nShow details\nBack\n' |
+    gum choose --header "${#refs[@]} selected   (esc to go back)") || return 0
 
   case "$action" in
-  "Turn on") for chosen in "${refs[@]}"; do link_unit "$chosen"; done ;;
-  "Turn off") for chosen in "${refs[@]}"; do unlink_unit "$chosen"; done ;;
-  "Show details") for chosen in "${refs[@]}"; do cmd_info "$chosen"; say ""; done ;;
-  "Read about it")
+  "Turn on")
+    for chosen in "${refs[@]}"; do link_unit "$chosen"; done
+    tui_pause
+    ;;
+  "Turn off")
+    for chosen in "${refs[@]}"; do unlink_unit "$chosen"; done
+    tui_pause
+    ;;
+  "Show details")
     for chosen in "${refs[@]}"; do
-      local readme="$(ref_dir "$chosen")/README.md"
-      if [[ -f $readme ]]; then
-        gum pager <"$readme"
-      else
-        warn "$chosen has no README"
-      fi
+      cmd_info "$chosen"
+      say ""
     done
+    tui_pause
     ;;
   esac
 }
@@ -2149,19 +2151,27 @@ tui_markets() {
   cmd_market_list
   say ""
 
-  action=$(printf 'Add a marketplace\nUpdate all\nRemove one\nBack\n' | gum choose) || return 0
+  action=$(printf 'Add a marketplace\nUpdate all\nRemove one\nBack\n' |
+    gum choose --header "esc to go back") || return 0
 
   case "$action" in
   "Add a marketplace")
     local url
     url=$(gum input --placeholder "https://github.com/someone/their-units" \
       --prompt "git url  ") || return 0
-    [[ -n $url ]] && cmd_market_add "$url"
+    [[ -n $url ]] || return 0
+    cmd_market_add "$url"
+    tui_pause
     ;;
-  "Update all") cmd_market_update ;;
+  "Update all")
+    cmd_market_update
+    tui_pause
+    ;;
   "Remove one")
     name=$(market_names | gum choose --header "Remove which marketplace?") || return 0
-    [[ -n $name ]] && cmd_market_remove "$name"
+    [[ -n $name ]] || return 0
+    cmd_market_remove "$name"
+    tui_pause
     ;;
   esac
 }
@@ -2169,14 +2179,27 @@ tui_markets() {
 tui_checks() {
   local action
   action=$(printf 'Status and key conflicts\nDependencies\nTest every extension\nValidate plugins\nBack\n' |
-    gum choose) || return 0
+    gum choose --header "esc to go back") || return 0
 
   case "$action" in
   "Status and key conflicts") cmd_status ;;
   "Dependencies") cmd_doctor ;;
   "Test every extension") cmd_test ;;
   "Validate plugins") cmd_validate ;;
+  *) return 0 ;;
   esac
+
+  tui_pause
+}
+
+# Wait for a key, any key. Not `gum input`, which exits non-zero on Escape and
+# would take the whole menu down with it: the one thing Escape must never do
+# from inside a screen is quit.
+tui_pause() {
+  say ""
+  printf '%s' "$(gum style --foreground 240 '  any key to go back')"
+  read -rsn1 </dev/tty
+  printf '\r%*s\r' 30 ""
 }
 
 cmd_tui() {
@@ -2194,19 +2217,23 @@ cmd_tui() {
 
     local choice
     choice=$(printf 'Units\nMarketplaces\nUpdate everything\nChecks\nVersion\nQuit\n' |
-      gum choose --height 8) || return 0
+      gum choose --height 8 --header "esc to quit") || return 0
 
     case "$choice" in
     Units) tui_units ;;
     Marketplaces) tui_markets ;;
-    "Update everything") cmd_update ;;
+    "Update everything")
+      cmd_update
+      tui_pause
+      ;;
     Checks) tui_checks ;;
-    Version) cmd_version ;;
+    Version)
+      cmd_version
+      tui_pause
+      ;;
     Quit | "") return 0 ;;
     esac
 
-    say ""
-    gum input --placeholder "enter to go back" --prompt "" >/dev/null 2>&1 || return 0
   done
 }
 
