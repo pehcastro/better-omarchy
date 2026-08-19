@@ -1,7 +1,7 @@
 # nkz-keys
 
 One person's Hyprland setup. Useful as an example of what a personal unit looks
-like; probably not what you want turned on.
+like; probably not what you want turned on, but feel free to try it out.
 
 ## Keys
 

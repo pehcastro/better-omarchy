@@ -287,7 +287,7 @@ def ready_row(agent, instruction, cwd, token):
         subtitle=policy_line(agent),
         agentName=agent["title"],
         cwd=tilde(cwd),
-        exec="omacast-agent run " + token + " " + instruction,
+        exec="omacast-agent run " + token,
         keepOpen=True,
         actions=[
             {"title": "Run in a terminal, where you answer the prompts",
@@ -320,19 +320,21 @@ class Run:
         self.buf = b""
         self.proc = None
         self.pending = {}
+        self.noise = []
 
     # ----- starting and stopping
 
     def command(self):
         a = self.agent
         if a["id"] == "claude":
-            cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose",
-                   "--append-system-prompt", BRIEF]
-            for t in ALLOWED:
-                cmd += ["--allowedTools", t]
-            for t in DENIED:
-                cmd += ["--disallowedTools", t]
-            return cmd + [self.instruction]
+            # The instruction goes down stdin, not on the command line. Both
+            # tool-list options are variadic, so anything after them is eaten as
+            # another tool name and claude exits 1 saying it got no input; and
+            # keeping the sentence out of argv keeps it out of `ps` as well.
+            return ["claude", "-p", "--output-format", "stream-json", "--verbose",
+                    "--append-system-prompt", BRIEF,
+                    "--allowedTools", ",".join(ALLOWED),
+                    "--disallowedTools", ",".join(DENIED)]
         if a["id"] == "codex":
             return ["codex", "exec", "--sandbox", "read-only",
                     "--skip-git-repo-check", "--color", "never",
@@ -343,17 +345,24 @@ class Run:
         return [a["bin"], self.instruction]
 
     def start(self):
-        devnull = os.open(os.devnull, os.O_RDONLY)
+        self.proc = subprocess.Popen(
+            self.command(), cwd=self.cwd, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            # Its own process group, which is the whole of the cancellation
+            # story: an agent forks compilers and greps, and killing the one pid
+            # it told us about leaves those running.
+            start_new_session=True)
+        # Closed straight away, so a CLI that reads stdin gets an instruction
+        # and an EOF rather than waiting for a terminal that is not there.
         try:
-            self.proc = subprocess.Popen(
-                self.command(), cwd=self.cwd, stdin=devnull,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                # Its own process group, which is the whole of the cancellation
-                # story: an agent forks compilers and greps, and killing the
-                # one pid it told us about leaves those running.
-                start_new_session=True)
-        finally:
-            os.close(devnull)
+            if self.agent["id"] == "claude":
+                self.proc.stdin.write(self.instruction.encode("utf-8"))
+        except OSError:
+            pass
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
         os.set_blocking(self.proc.stdout.fileno(), False)
 
     def kill(self, why):
@@ -410,7 +419,8 @@ class Run:
             else:
                 self.state = "failed"
                 if not self.error:
-                    self.error = "%s exited %s" % (self.agent["title"], code)
+                    self.error = " ".join(self.noise) if self.noise \
+                        else "%s exited %s" % (self.agent["title"], code)
             changed = True
         return changed
 
@@ -436,6 +446,11 @@ class Run:
         try:
             ev = json.loads(line)
         except ValueError:
+            # stderr is folded into the same pipe, so a line that is not an
+            # event is the CLI complaining. Kept, because a run that fails with
+            # an empty card and no reason is the worst thing this can do.
+            self.noise.append(short(ANSI.sub("", line), 200))
+            del self.noise[:-4]
             return
         if not isinstance(ev, dict):
             return
@@ -562,6 +577,12 @@ class Daemon:
         self.clients = {}          # conn -> {"buf":bytes,"epoch":int,"query":str}
         self.last_touch = time.time()
         self.listener = None
+        # An agent's stream is dozens of events a second, and every push makes
+        # the launcher rebuild its rows. Coalesced to four a second, which is
+        # already faster than anybody reads, with the end of a run always going
+        # out at once.
+        self.dirty = False
+        self.last_push = 0.0
 
     def listen(self):
         os.makedirs(STATE, exist_ok=True)
@@ -593,14 +614,12 @@ class Daemon:
                 if r is self.listener:
                     self.accept()
                 elif streaming and r is self.run.proc.stdout:
-                    if self.run.drain():
-                        self.push()
+                    self.dirty = self.run.drain() or self.dirty
                 else:
                     self.read(r)
 
             if self.run and self.run.state == "running":
-                if self.run.drain():
-                    self.push()
+                self.dirty = self.run.drain() or self.dirty
                 # Nobody is watching. The launcher asks this extension again
                 # every refresh tick while its rows are on screen, so silence
                 # here means the rows are gone: Escape, a new query, or the
@@ -608,7 +627,13 @@ class Daemon:
                 # what this is doing, so it stops.
                 if time.time() - self.run.seen > GRACE:
                     self.run.kill("stopped: nothing was watching it")
-                    self.push()
+                    self.dirty = True
+
+            if self.dirty and (time.time() - self.last_push >= 0.25
+                               or not (self.run and self.run.state == "running")):
+                self.dirty = False
+                self.last_push = time.time()
+                self.push()
 
             if not self.clients and not (self.run and self.run.state == "running") \
                     and time.time() - self.last_touch > IDLE_EXIT:
@@ -685,10 +710,14 @@ class Daemon:
         # This question is also the heartbeat, but only for the run it is
         # actually about: typing something else is walking away from the old
         # one, and must not keep it alive.
-        rows = self.rows(query)
+        # Only a question the launcher actually asked counts as somebody
+        # watching. Refreshing this from `rows()` instead looked identical and
+        # was not: pushing an answer calls `rows()` too, so a run streaming
+        # output kept its own watchdog alive and Escape stopped nothing.
+        rows = self.rows(query, watching=True)
         self.send(conn, {"epoch": epoch, "query": query, "rows": rows})
 
-    def rows(self, query):
+    def rows(self, query, watching=False):
         named, instruction = split_query(query)
         agent = pick_agent(named)
 
@@ -701,7 +730,8 @@ class Daemon:
         token = token_for(agent["id"], instruction, cwd)
 
         if self.run and self.run.token == token:
-            self.run.seen = time.time()
+            if watching:
+                self.run.seen = time.time()
             return [self.run.row()]
 
         remember_preview(token, {"agent": agent["id"], "instruction": instruction,
@@ -997,6 +1027,10 @@ def main(argv):
     if verb == "search":
         return cmd_search(" ".join(argv[2:]))
     if verb == "serve":
+        # So a SIGTERM runs the cleanup below rather than skipping it: a daemon
+        # killed without unlinking its socket leaves a path that accepts nothing,
+        # and the launcher then waits out a connect on every keystroke.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         d = Daemon()
         d.listen()
         try:

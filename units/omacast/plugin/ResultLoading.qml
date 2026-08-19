@@ -76,12 +76,11 @@ Item {
     }
   }
 
-  // One animation for the whole set rather than one per bar, so it reads as the
-  // card waiting rather than as six things flashing independently.
-  SequentialAnimation on opacity {
-    running: true
-    loops: Animation.Infinite
-    NumberAnimation { to: 0.45; duration: 620; easing.type: Easing.InOutSine }
-    NumberAnimation { to: 1.0; duration: 620; easing.type: Easing.InOutSine }
-  }
+  // Deliberately still.
+  //
+  // It pulsed, which looked alive and cost more than it was worth: a screen
+  // that never stops changing cannot be watched for stillness, and the recorder
+  // that waits for an answer to settle sat through the full timeout on every
+  // query that showed this. A skeleton says "not yet" by being a skeleton. It
+  // does not need to breathe.
 }

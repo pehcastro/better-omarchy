@@ -9,6 +9,11 @@
 var DEFAULTS = {
   version: 1,
 
+  // The last few things you typed, shown on an empty box. Off, because half of
+  // them are partial words from a query you abandoned and none of them is what
+  // you opened the launcher to do. `true` turns it on.
+  recents: false,
+
   // Which engine Enter uses on a web row. The rest become actions on Ctrl+K, so
   // the second choice is one keystroke away rather than a config edit.
   defaultEngine: "google",

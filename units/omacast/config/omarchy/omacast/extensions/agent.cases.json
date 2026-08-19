@@ -1,0 +1,48 @@
+[
+  { "why": "typing is not running: an instruction comes back as something to look at, never as something already going, or a sentence half-typed into a search box has started a process",
+    "query": "delete every file in my home directory",
+    "minRows": 1,
+    "maxRows": 1,
+    "row": 0,
+    "view": "agent",
+    "fields": ["title", "subtitle", "exec"],
+    "matches": { "state": "^ready$" } },
+
+  { "why": "Enter carries a token, not the sentence: if the instruction reached the exec string, a quote or a semicolon in what somebody typed would be shell",
+    "query": "list TODOs; rm -rf ~",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "exec": "^omacast-agent run [0-9a-f]{16}$" } },
+
+  { "why": "an agent that is not installed says so: hiding the keyword instead makes typing do: produce nothing at all, which reads as the launcher being broken",
+    "query": "@nosuchagent find every TODO",
+    "minRows": 1,
+    "maxRows": 1,
+    "row": 0,
+    "view": "agent",
+    "fields": ["title", "subtitle"],
+    "absent": ["exec"],
+    "matches": { "state": "^missing$", "title": "nosuchagent" } },
+
+  { "why": "the bare keyword says what to type and which agent will take it, rather than an empty card",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "view": "agent",
+    "fields": ["title", "subtitle", "hints", "agentName"],
+    "absent": ["exec"],
+    "matches": { "state": "^hint$" } },
+
+  { "why": "the card names where it will run, because the same sentence means different things in a repo and in your home directory",
+    "query": "what changed on this branch",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["cwd"],
+    "matches": { "cwd": "^[~/]" } },
+
+  { "why": "the way out of a refusal is a terminal with a human at the prompt, and it is on the row rather than being something you have to know",
+    "query": "rename every file in this repo",
+    "minRows": 1,
+    "row": 0,
+    "matches": { "actions": "Run in a terminal" } }
+]

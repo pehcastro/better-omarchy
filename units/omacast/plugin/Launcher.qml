@@ -116,7 +116,13 @@ Item {
 
   // An empty box offers what you ran last, so reaching yesterday's query is one
   // key rather than remembering how you phrased it.
-  readonly property bool recentMode: root.queryText.trim() === ""
+  // Off unless asked for. An empty box greeting you with the last few things you
+  // typed sounds helpful and is not: half of them are partial words from a
+  // query you abandoned, and none of them is what you opened the launcher to
+  // do. Turn it on with `"recents": true` in omacast.json.
+  readonly property bool recentsEnabled: root.config.recents === true
+
+  readonly property bool recentMode: root.recentsEnabled && root.queryText.trim() === ""
 
   // Which layout the current results want. A provider declares it, so `=2+2`
   // renders one big answer and `music:` renders cards, without the launcher
@@ -1446,6 +1452,9 @@ Item {
   // repeat, and returns the list unchanged when there is nothing to add, so the
   // save only fires when something really moved.
   function rememberQuery(text) {
+    // Nothing to remember when nothing reads it.
+    if (!root.recentsEnabled) return
+
     // A `/` action is an instruction, not a question, and `/clear` recording
     // itself means the history is never actually empty afterwards.
     if (text.replace(/^\s+/, "").charAt(0) === "/") return
@@ -2050,7 +2059,12 @@ Item {
             if (root.notice !== "") return root.notice
             if (root.pendingAction) return String(root.pendingAction.confirm)
               + "   \u21B5 again to confirm"
-            if (root.busy) return "Searching\u2026"
+
+            // Nothing here while something is still answering. There were two
+            // loading states for one situation: this text below 400ms and the
+            // skeleton above it, so a fast query flashed the word "Searching"
+            // and a slow one drew bars, for the same thing.
+            if (root.busy) return ""
             if (root.scopeLabel === "") return "Nothing matches that"
 
             // A bare keyword has nothing to quote back. `docker:` on a machine

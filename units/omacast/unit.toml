@@ -6,5 +6,5 @@ tags     = ["launcher", "overlay", "quickshell"]
 author   = "pehcastro"
 kind     = "plugin"
 id       = "bo.omacast"
-needs    = ["qalc", "jq", "curl", "fd", "busctl", "mpv"]
+needs    = ["qalc", "jq", "curl", "fd", "busctl", "mpv", "python3"]
 keys     = ["SUPER+K", "SUPER+H"]

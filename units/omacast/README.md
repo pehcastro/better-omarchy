@@ -62,6 +62,7 @@ tells it what you want.
 | `wifi:` | networks in range, with signal, and the saved ones connected in one key |
 | `vol:` | output and input volume, as sliders |
 | `bri:` | screen brightness, as a slider |
+| `do:split the terminal into four` | a local agent does it, with the steps as they happen |
 | `?` | every keyword the launcher knows, built from what is loaded |
 | nothing at all | the last twenty queries that led somewhere |
 | anything with no match | search the web |
@@ -91,6 +92,45 @@ A pin lifts a row the way frecency does and by more, and neither ever crosses a
 tier: a name that starts with what you typed still beats a pinned substring.
 Pins and recent queries live in `~/.local/state/omarchy/omacast-state.json`,
 beside the frecency file rather than in your settings, which stay yours to edit.
+
+## Doing something: `do:`
+
+`Ctrl+Enter` asks a model a question. `do:` hands a local agent CLI an
+instruction and shows the work.
+
+    do: open a new workspace and split the terminal into four
+    do: find every TODO in this repo and list them
+    do:@codex explain what changed on this branch
+
+While it runs the card is a short ledger, one line per tool call, naming the
+thing rather than the tool: `Read Launcher.qml`, `Search TODO`, `workspace 9`.
+The newest line carries a live dot; the prose grows underneath and follows its
+own tail. When it finishes the ledger collapses to a count and the answer is
+what is left.
+
+Where the line is, because a launcher that can do anything with no confirmation
+step is a mistake that only shows up once:
+
+- **Typing runs nothing.** An instruction comes back as a card describing what
+  would happen: which agent, which directory, which policy. `Enter` starts it.
+- **`Enter` carries a token, not your sentence.** The row's command names a hash
+  of what was previewed, so nothing you typed reaches a shell, and nothing can
+  run that was not on screen first.
+- **A run reads, it does not write.** The agent CLI runs in its default
+  non-interactive permission mode, which refuses anything that writes and says
+  so; the only shell command it is pre-approved for is `omacast-agent desk`,
+  whose verbs are a closed list. `hyprctl` is denied outright, because
+  `hyprctl dispatch exec` is a shell by another name. There is no setting that
+  turns this off: write access is not something a search box gets to grant.
+- **`Ctrl+K` is the way out.** It hands the same instruction to an interactive
+  agent in a terminal, where the permission prompts exist and you answer them.
+- **`Escape` stops it.** The launcher re-asks this extension while its rows are
+  on screen, so those questions are a heartbeat; when they stop the daemon kills
+  the whole process group. Closing the launcher stops a run for the same reason,
+  which is why long unattended work belongs in the terminal.
+
+It needs one of `claude`, `codex` or `gemini` on `PATH`. With none of them there
+the keyword still answers, saying so, rather than going quiet and looking broken.
 
 ## Asking a model
 
