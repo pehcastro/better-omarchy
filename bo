@@ -878,6 +878,16 @@ update_market() {
     return 0
   fi
 
+  # Ahead of origin, which is the normal state in a checkout somebody develops
+  # in. Without this the differing hashes read as an update, and it prints a
+  # changelog backwards and claims to have applied it.
+  if git -C "$root" merge-base --is-ancestor "$remote" "$before" 2>/dev/null; then
+    local ahead
+    ahead=$(git -C "$root" rev-list --count "$remote..$before" 2>/dev/null)
+    say "$(dim "$name: $ahead commit(s) ahead of origin, nothing to pull")"
+    return 0
+  fi
+
   say "$(bold "$name")"
   changes=$(registry_diff "$root" "$name" "$before" "$remote")
   if [[ $changes == "__NOCHANGES__" ]]; then
@@ -1016,6 +1026,65 @@ cmd_update() {
   cmd_market_update
   say ""
   cmd_relink
+  say ""
+  refresh_self_link
+}
+
+# `bo` lives inside a marketplace checkout, so updating that marketplace already
+# updated the script. The link into PATH can still be missing or stale: somebody
+# who ran the repo's `./bo` before installing has no link at all, and somebody
+# who moved their checkout has one pointing at nothing.
+refresh_self_link() {
+  local link="$BIN_DIR/bo"
+  local target="$SELF_ROOT/bo"
+
+  [[ -f $target ]] || return 0
+
+  if [[ -L $link && $(readlink -f "$link") == "$(readlink -f "$target")" ]]; then
+    say "$(dim "bo is linked and current")"
+    return 0
+  fi
+
+  if [[ -e $link && ! -L $link ]]; then
+    warn "$link is a real file, not a link. Leaving it alone."
+    return 0
+  fi
+
+  mkdir -p "$BIN_DIR"
+  ln -sf "$target" "$link"
+  say "$(green relinked) bo -> $target"
+}
+
+# One line, once a day, when the marketplace bo came from has moved on. It never
+# blocks and never fetches inline: a launcher command that pauses on the network
+# is a command people stop running.
+check_self_stale() {
+  git -C "$SELF_ROOT" rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+  local stamp="$STATE_DIR/last-update-check"
+  local now age
+  now=$(date +%s)
+
+  if [[ -f $stamp ]]; then
+    age=$(( now - $(cat "$stamp" 2>/dev/null || echo 0) ))
+    ((age < 86400)) && return 0
+  fi
+
+  # Compare against what the last fetch already told us, rather than fetching
+  # here. `bo update` does the fetching; this only reports what is known.
+  local branch behind
+  branch=$(git -C "$SELF_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
+  behind=$(git -C "$SELF_ROOT" rev-list --count "HEAD..origin/$branch" 2>/dev/null) || return 0
+
+  printf '%s' "$now" >"$stamp"
+
+  ((behind > 0)) &&
+    warn "$behind commit(s) behind origin/$branch. Run: bo update"
+
+  # A background fetch, so the next command has something fresh to compare
+  # against without this one waiting for the network.
+  (git -C "$SELF_ROOT" fetch --quiet origin "$branch" >/dev/null 2>&1 &) 2>/dev/null
+  return 0
 }
 
 # ---------------------------------------------------------------- author tools
@@ -1825,16 +1894,19 @@ bo - Omarchy customizations, from any marketplace
   bo sync                 copy the live shell.json into this checkout
   bo version              what this is and where it lives
 
+`bo update` also refreshes the `bo` link itself, and `bo list` says once a day
+when the marketplace it came from has moved on.
+
 A unit is named `marketplace/unit`, and the marketplace half can be left off
 when only one marketplace offers that name.
 TXT
 }
 
 case "${1:-}" in
-list | ls) cmd_list ;;
+list | ls) check_self_stale; cmd_list ;;
 search | find) shift; cmd_search "$@" ;;
 info | show) shift; cmd_info "$@" ;;
-status) cmd_status ;;
+status) check_self_stale; cmd_status ;;
 add | install) shift; cmd_add "$@" ;;
 remove | rm | uninstall) shift; cmd_remove "$@" ;;
 new | create) shift; cmd_new "$@" ;;
