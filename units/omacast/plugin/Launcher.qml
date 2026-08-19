@@ -1782,6 +1782,20 @@ Item {
       onClicked: root.dismiss()
     }
 
+    // Outside the card, not inside it. The card clips, so that views cannot
+    // spill over its rounded border, and this hangs below the card on purpose:
+    // as a child it was clipped away entirely and Ctrl+K looked like a key that
+    // did nothing.
+    ActionPanel {
+      id: actionPanel
+      launcher: root
+      visible: root.actionPanelOpen && root.rows.length > 0
+      x: card.x + card.width - width - Style.space(12)
+      y: card.y + card.height + Style.space(6)
+      maxHeight: panel.height - (card.y + card.height + Style.space(6)) - Style.space(12)
+      z: 10
+    }
+
     BorderSurface {
       id: card
       width: root.cardWidth
@@ -2175,18 +2189,6 @@ Item {
         }
       }
 
-      ActionPanel {
-        id: actionPanel
-        launcher: root
-        visible: root.actionPanelOpen && root.rows.length > 0
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(12)
-        // Below the card, not above it: anchored upward it runs off the top of
-        // the screen as soon as the results are short.
-        anchors.top: footer.bottom
-        anchors.topMargin: Style.space(6)
-        maxHeight: panel.height - (card.y + card.height + Style.space(6)) - Style.space(12)
-      }
     }
   }
 }
