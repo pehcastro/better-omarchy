@@ -132,12 +132,27 @@ with open(path, "w") as handle:
 # Every marketplace root, one per line. A checkout carrying this script counts
 # even when it is not under MARKETS_DIR.
 market_roots() {
-  local dir
-  [[ -f "$SELF_ROOT/registry.json" ]] && printf '%s\n' "$SELF_ROOT"
+  local dir seen=""
+
+  # Two checkouts can claim one name, which happens the moment somebody clones a
+  # marketplace they already develop in. market_root answers with the first, so
+  # letting the second through would list every unit twice with half of them
+  # unreachable by ref. First one wins, and the one bo runs from is first.
+  if [[ -f "$SELF_ROOT/registry.json" ]]; then
+    printf '%s\n' "$SELF_ROOT"
+    seen=$(market_name "$SELF_ROOT")$'\n'
+  fi
+
   for dir in "$MARKETS_DIR"/*/; do
     [[ -f "$dir/registry.json" ]] || continue
     dir="${dir%/}"
     [[ $(readlink -f "$dir") == "$(readlink -f "$SELF_ROOT")" ]] && continue
+
+    local name
+    name=$(market_name "$dir")
+    printf '%s\n' "$seen" | grep -qxF "$name" && continue
+    seen+="$name"$'\n'
+
     printf '%s\n' "$dir"
   done
 }
@@ -237,18 +252,10 @@ ref_exists() {
 
 # Every ref across every marketplace.
 all_refs() {
-  local root name dir seen=""
+  local root name dir
   while read -r root; do
     name=$(market_name "$root")
 
-    # Two checkouts can claim one name, which happens the moment somebody clones
-    # a marketplace they already develop in. market_root answers with the first,
-    # so the second's units are unreachable by ref: listing them anyway would
-    # show every unit twice and half of them would not install.
-    if printf '%s\n' "$seen" | grep -qxF "$name"; then
-      continue
-    fi
-    seen+="$name"$'\n' 
     for dir in "$root"/units/*/ "$root"/.bo/units/*/; do
       [[ -f "$dir/unit.toml" ]] || continue
       printf '%s/%s\n' "$name" "$(basename "$dir")"
