@@ -204,9 +204,10 @@ Panel {
     for (var id = 1; id <= 10; id++) {
       var ws = root.workspaceById(id)
       var occupied = ws !== null && ws.toplevels.values.length > 0
-      var named = root.entryFor(id).label !== ""
-
-      if (!root.hideEmpty || occupied || named || id === active
+      // A name does not earn a place. The name describes what you are doing
+      // there, so an empty workspace with a name is a label on nothing, and
+      // leaving it in the row is what filled the bar with things to skip past.
+      if (!root.hideEmpty || occupied || id === active
           || root.lingering(id)) ids.push(id)
     }
 
@@ -346,7 +347,13 @@ Panel {
   // window to open another one is a normal thing to do and the name should
   // survive it. Five seconds is long enough for that and short enough that the
   // workspace is gone before you wonder why it is still there.
-  readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", true)
+  // Off by default, and it should stay that way. Hiding an empty workspace from
+  // the bar costs the user nothing: the name is still there when they go back.
+  // Deleting the name is not reversible, and somebody who names a workspace
+  // "invoices" and opens it once a month would lose it the first time they
+  // restarted the shell. Anyone who wants their names to be disposable can say
+  // so; nobody should have to discover it.
+  readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", false)
   readonly property int releaseAfterMs: root.setting("releaseAfterMs", 5000)
 
   // id -> 0 while it still has windows, or the moment it emptied. A workspace
@@ -380,8 +387,9 @@ Panel {
       // looking at it, and then its name has no work left to do.
       if (occupied || id === active) { seen[key] = 0; continue }
 
-      // Never touched this session. A name set last week on a workspace not
-      // opened yet is a plan for later, not litter.
+      // Never touched since the shell started. Turning this feature on should
+      // clean up after the session you are in, not reach back and delete names
+      // set before it.
       if (seen[key] === undefined) continue
 
       // First tick since it went quiet. Start the clock rather than reading a
