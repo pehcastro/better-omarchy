@@ -157,6 +157,9 @@ Item {
   }
 
   function start() {
+    // Whatever armed the debounce has now been asked, so the timer must not
+    // fire again over the top of it.
+    debounce.stop()
     if (prov.pendingEpoch < 0) return
     prov.inflightEpoch = prov.pendingEpoch
     prov.pendingEpoch = -1
@@ -164,7 +167,13 @@ Item {
     prov.inflightCommand = prov.pendingCommand
     prov.inflightKey = prov.pendingKey
 
-    if (prov.ask(prov.inflightEpoch, prov.pendingArg, prov.pendingFilters)) return
+    // Taken now, because a keystroke that arrives between the query and this
+    // call has already overwritten them, and a socket extension would have been
+    // sent one query's argument against another query's epoch.
+    var arg = prov.pendingArg
+    var filters = prov.pendingFilters
+
+    if (prov.ask(prov.inflightEpoch, arg, filters)) return
 
     // A socket-only extension whose daemon is not listening. Answer nothing
     // rather than leaving the spinner up until the next keystroke.
@@ -353,6 +362,14 @@ Item {
   Timer {
     id: debounce
     onTriggered: {
+      // Nothing newer to ask. This timer is armed by every keystroke, but the
+      // run it was armed for may already have been started from onExited, and
+      // killing it here answered the query with zero bytes and nothing to
+      // restart from. It looked random because it only bit when a script
+      // finished fast enough to be restarted inside the debounce window, which
+      // is exactly what the fast ones do.
+      if (prov.pendingEpoch < 0) return
+
       // running = false sends SIGTERM; onExited restarts with the newer query.
       // Assigning command while running does not restart on its own.
       if (process.running) process.running = false

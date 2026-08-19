@@ -84,5 +84,15 @@
     "why": "branch and stash rows here were names with nothing on them, so a word that only a stash could match now answers nothing: branch: and stash: own them, with views that show the divergence and the contents",
     "query": "omacast-fixture stash",
     "maxRows": 0
+  },
+  {
+    "why": "a clean repo has no diff, so Enter showed a terminal that closed before it could be read: on a clean repo the first action is the log",
+    "query": "gum",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "actions": "'title': 'Show Log'",
+      "exec": "log --stat"
+    }
   }
 ]

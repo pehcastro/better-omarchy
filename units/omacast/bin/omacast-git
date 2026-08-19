@@ -169,10 +169,18 @@ if [[ -z $needle ]]; then
                staged: $staged, changed: $changed, conflicted: $conflicted,
                stashes: $stashes, remote: $remote },
        commits: $commits,
-       exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff"),
+       # A clean repo has no diff, and `git diff` on a clean repo opens a
+       # terminal that closes before you have read it. Pressing Enter has to do
+       # something, so on a clean repo it shows the log instead of nothing.
+       exec: (if ($staged + $changed + $conflicted) > 0
+              then "omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff"
+              else "omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " log --stat -20" end),
        actions: [
-         { title: "Show Diff", shortcut: "↵",
-           exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff") },
+         (if ($staged + $changed + $conflicted) > 0
+          then { title: "Show Diff", shortcut: "↵",
+                 exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff") }
+          else { title: "Show Log", shortcut: "↵",
+                 exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " log --stat -20") } end),
          # The depth, reachable by pressing a key rather than by knowing a
          # syntax. Both land on a keyword you can also type, so finding it once
          # here teaches the shorter way in.
@@ -196,8 +204,15 @@ summary=$(
 
 # The row says what changed, so Enter shows what changed. Opening a terminal was
 # the primary here, which answers a question nobody asked by typing `git:`.
-emit "status" "$summary" "$display" "$name" "" "Status" "Show Diff" \
-  "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted diff" \
+if ((staged + changed + conflicted)); then
+  primary_title="Show Diff"
+  primary_exec="omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted diff"
+else
+  primary_title="Show Log"
+  primary_exec="omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted log --stat -20"
+fi
+emit "status" "$summary" "$display" "$name" "" "Status" "$primary_title" \
+  "$primary_exec" \
   "$(jq -cn --arg q "$quoted" '[
        { title: "Open Terminal Here", exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $q) },
        { title: "Full Status", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " status") }

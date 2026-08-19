@@ -134,7 +134,57 @@ if ((${#lines[@]} == 0)); then
   mapfile -t lines < <(collect)
   ((${#lines[@]} > 0)) && printf '%s\n' "${lines[@]}" >"$cache_file" 2>/dev/null
 fi
-((${#lines[@]} > 1)) || exit 0
+# `stash:` on its own resolves to the repo you touched last, and that repo
+# usually has nothing stashed. An empty box is the wrong answer to "where did I
+# stash that", because the question is about the repos you are not in. So the
+# bare keyword falls back to every local repo that is holding something.
+stash_picker() {
+  local paths path dir count newest line rows=()
+  mapfile -t paths < <(omacast-repo --paths 2>/dev/null)
+  ((${#paths[@]})) || return 1
+  for path in "${paths[@]}"; do
+    [[ -n $path ]] || continue
+    if [[ -f $path/.git ]]; then
+      read -r line <"$path/.git" 2>/dev/null || continue
+      dir="${line#gitdir: }"
+      [[ $dir == /* ]] || dir="$path/$dir"
+    else
+      dir="$path/.git"
+    fi
+    [[ -d $dir ]] || continue
+    git --git-dir="$dir" rev-parse --verify -q refs/stash >/dev/null 2>&1 || continue
+    count=$(git --git-dir="$dir" stash list 2>/dev/null | wc -l)
+    ((count > 0)) || continue
+    newest=$(git --git-dir="$dir" log -1 --format=%ct refs/stash 2>/dev/null) || newest=0
+    rows+=("$newest	${path##*/}	${path/#$HOME/\~}	$count")
+  done
+  ((${#rows[@]})) || return 1
+
+  printf '%s\n' "${rows[@]}" | sort -rn | jq -Rn --argjson now "$now" '
+    def age(s):
+      if s < 3600 then ((s / 60) | floor | tostring) + "m"
+      elif s < 86400 then ((s / 3600) | floor | tostring) + "h"
+      elif s < 2592000 then ((s / 86400) | floor | tostring) + "d"
+      else ((s / 2592000) | floor | tostring) + "mo" end;
+    [inputs | select(length > 0) | split("\t") as $f | {
+      id: ("stash-repo-" + $f[1]),
+      view: "list",
+      group: "Stashed Work",
+      title: $f[1],
+      subtitle: ($f[3] + (if ($f[3] | tonumber) == 1 then " stash" else " stashes" end)
+                 + " · newest " + age($now - ($f[0] | tonumber))),
+      detail: $f[2],
+      icon: "󰆓",
+      score: (99000 - input_line_number),
+      actions: [{ title: "Show These Stashes", query: ("stash:" + $f[1]) }]
+    }]'
+  return 0
+}
+
+if ((${#lines[@]} <= 1)); then
+  [[ -z $query ]] && stash_picker && exit 0
+  exit 0
+fi
 
 rows=()
 for line in "${lines[@]:1}"; do
