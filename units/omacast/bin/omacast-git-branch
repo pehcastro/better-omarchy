@@ -1,0 +1,270 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `branch:` keyword: every local branch of one
+# repo, with enough about each to pick one.
+#
+#   branch:              the repo you are in
+#   branch:omarchy       the repo called omarchy, wherever it is
+#   branch:omarchy fix   only its branches whose name or subject says fix
+#
+# A list of branch names is not worth building. The question is never "what are
+# they called", it is "which one was I on, which one has work I have not pushed,
+# and which one has fallen behind the trunk". So every row carries the three
+# facts that answer it and the view draws them: the checkout marker, ahead and
+# behind against the upstream, ahead and behind against the trunk, and when it
+# last moved.
+#
+# Enter switches. That is the whole point of the keyword, and it is also the one
+# thing here that can cost somebody an afternoon, so:
+#
+#   - the switch is a plain `git switch`, never a force. Git refuses when it
+#     would overwrite uncommitted work, and the refusal is reported rather than
+#     swallowed. That refusal is the confirmation; a dialog invented on top of
+#     it would only be a second one.
+#   - when the tree is dirty the view says so across the top, before you have
+#     picked anything, and every row grows a second action, "Stash and Switch",
+#     which is named rather than implied and leaves the work in `stash:`.
+#
+# Cost: three git calls, cached against the newest mtime in .git, so a keystroke
+# that only changes the filter is bash and one jq.
+
+set -uo pipefail
+
+query="${1:-}"
+query="${query#"${query%%[![:space:]]*}"}"
+query="${query%"${query##*[![:space:]]}"}"
+
+command -v git >/dev/null 2>&1 || exit 0
+
+# Which repo, and what is left over as a filter. One call, no git, shared with
+# `git:` and `stash:` so all three read a query the same way.
+IFS=$'\t' read -r repo needle < <(omacast-repo --resolve "$query" 2>/dev/null)
+[[ -n ${repo:-} && -e $repo/.git ]] || exit 0
+needle="${needle,,}"
+
+quoted=$(printf '%q' "$repo")
+name="${repo##*/}"
+display="${repo/#$HOME/\~}"
+now=$(date +%s)
+
+git_dir() {
+  local line
+  if [[ -f $repo/.git ]]; then
+    read -r line <"$repo/.git" 2>/dev/null || return 1
+    line="${line#gitdir: }"
+    [[ $line == /* ]] || line="$repo/$line"
+    printf '%s' "$line"
+    return 0
+  fi
+  [[ -d $repo/.git ]] || return 1
+  printf '%s' "$repo/.git"
+}
+gitdir=$(git_dir) || exit 0
+
+# A branch cannot move, appear or be checked out without one of these changing,
+# so the whole answer is cached against the newest of them. Refs are written by
+# rename, which touches the directory; logs/HEAD moves on checkout and commit;
+# the index carries the dirty counts the header warns about.
+#
+# This script is in the list too, and that is not decoration. What is cached is
+# not git's output, it is this script's reading of it, so changing the reading
+# has to throw the old answer away. Without it, a case that was made to fail on
+# purpose went on failing after the change was put back, because the wrong
+# answer was still on disk under a key that had not moved.
+stamp() {
+  local newest=0 f t
+  for f in "$0" "$gitdir/index" "$gitdir/HEAD" "$gitdir/refs/heads" "$gitdir/refs" \
+    "$gitdir/packed-refs" "$gitdir/logs/HEAD"; do
+    [[ -e $f ]] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null) || continue
+    ((t > newest)) && newest=$t
+  done
+  printf '%s' "$newest"
+}
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/git-branches"
+mkdir -p "$cache_dir" 2>/dev/null
+cache_file="$cache_dir/$(printf '%s' "$repo" | md5sum | cut -c1-16)"
+want=$(stamp)
+
+# Line one is the stamp, line two is the header, the rest are branches.
+collect() {
+  local names=() n trunk="" head="" staged=0 changed=0 conflicted=0 line rest xy
+
+  mapfile -t names < <(git -C "$repo" --no-optional-locks for-each-ref \
+    --format='%(refname:short)' refs/heads 2>/dev/null)
+
+  # The trunk is what "behind" is measured against, and naming a ref that does
+  # not exist makes for-each-ref exit fatal rather than print a blank column, so
+  # it is chosen from the branches that are actually there.
+  for n in "${names[@]}"; do
+    [[ $n == "main" ]] && trunk="main" && break
+  done
+  if [[ -z $trunk ]]; then
+    for n in "${names[@]}"; do
+      [[ $n == "master" ]] && trunk="master" && break
+    done
+  fi
+  if [[ -z $trunk ]]; then
+    for n in "${names[@]}"; do
+      [[ $n == "trunk" || $n == "develop" ]] && trunk="$n" && break
+    done
+  fi
+
+  while IFS= read -r line; do
+    case $line in
+    "# branch.head "*) head="${line#\# branch.head }" ;;
+    "#"*) ;;
+    "u "*) conflicted=$((conflicted + 1)) ;;
+    "1 "* | "2 "*)
+      rest="${line#* }"
+      xy="${rest%% *}"
+      [[ ${xy:0:1} != "." ]] && staged=$((staged + 1))
+      [[ ${xy:1:1} != "." ]] && changed=$((changed + 1))
+      ;;
+    "? "*) changed=$((changed + 1)) ;;
+    esac
+  done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch 2>/dev/null)
+  [[ $head == "(detached)" ]] && head="detached"
+
+  printf '%s\n' "$want"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$head" "$staged" "$changed" "$conflicted" "$trunk"
+
+  local fmt='%(HEAD)\t%(refname:short)\t%(upstream:short)\t%(upstream:track,nobracket)'
+  [[ -n $trunk ]] && fmt+="\t%(ahead-behind:refs/heads/$trunk)" || fmt+='\t'
+  fmt+='\t%(committerdate:unix)\t%(authorname)\t%(contents:subject)'
+
+  git -C "$repo" --no-optional-locks for-each-ref --sort=-committerdate \
+    --format="$(printf '%b' "$fmt")" refs/heads 2>/dev/null
+}
+
+lines=()
+if [[ -s $cache_file ]]; then
+  mapfile -t lines <"$cache_file"
+  [[ ${lines[0]:-} == "$want" ]] || lines=()
+fi
+if ((${#lines[@]} == 0)); then
+  mapfile -t lines < <(collect)
+  ((${#lines[@]} > 1)) && printf '%s\n' "${lines[@]}" >"$cache_file" 2>/dev/null
+fi
+((${#lines[@]} > 1)) || exit 0
+
+IFS=$'\t' read -r head staged changed conflicted trunk <<<"${lines[1]}"
+dirty=$((staged + changed + conflicted))
+
+# The rows, in the order somebody reads them: where you are now, then whatever
+# moved most recently. A branch list that buries the checkout marker eight rows
+# down has made you search for the one fact you already knew.
+rows=()
+for line in "${lines[@]:2}"; do
+  [[ -n $line ]] || continue
+  IFS=$'\t' read -r marker ref upstream track ab ts author subject <<<"$line"
+  [[ -n ${ref:-} ]] || continue
+  if [[ -n $needle ]]; then
+    hay="${ref,,} ${subject,,}"
+    [[ $hay == *"$needle"* ]] || continue
+  fi
+  if [[ $marker == "*" ]]; then
+    rows=("$line" "${rows[@]}")
+  else
+    rows+=("$line")
+  fi
+done
+((${#rows[@]})) || exit 0
+
+# One jq for the whole answer. The old `git:` ran one per row, which is a
+# process per branch for a list that is read in a glance.
+printf '%s\n' "${rows[@]}" | jq -Rn \
+  --arg repo "$repo" --arg quoted "$quoted" --arg name "$name" \
+  --arg path "$display" --arg head "$head" --arg trunk "$trunk" \
+  --argjson now "$now" --argjson staged "$staged" --argjson changed "$changed" \
+  --argjson conflicted "$conflicted" --argjson dirty "$dirty" '
+  def age(s):
+    if s < 3600 then ((s / 60) | floor | tostring) + "m"
+    elif s < 86400 then ((s / 3600) | floor | tostring) + "h"
+    elif s < 2592000 then ((s / 86400) | floor | tostring) + "d"
+    elif s < 31536000 then ((s / 2592000) | floor | tostring) + "mo"
+    else ((s / 31536000) | floor | tostring) + "y" end;
+
+  # `%(upstream:track)` is prose: "ahead 2, behind 1", or "gone", or empty. The
+  # two numbers in it are what the view draws, so they are pulled out here
+  # rather than shipped as a sentence a layout cannot weight.
+  def num(t; word):
+    if (t | test(word + " [0-9]+")) then
+      (t | capture(word + " (?<n>[0-9]+)") | .n | tonumber) else 0 end;
+
+  [inputs | split("\t")] as $rows
+  | $rows | to_entries | map(
+      .key as $i | .value as $r
+      | ($r[0] == "*") as $current
+      | $r[1] as $ref
+      | ($r[2] // "") as $upstream
+      | ($r[3] // "") as $track
+      | ($r[4] // "") as $ab
+      | (($r[5] // "0") | tonumber) as $ts
+      | ($r[7] // "") as $subject
+      | ($ref | @sh) as $sh
+      | (num($track; "ahead")) as $ahead
+      | (num($track; "behind")) as $behind
+      | ($track == "gone") as $gone
+      | (if ($ab | test("^[0-9]+ [0-9]+$")) then ($ab | split(" ") | map(tonumber)) else [0, 0] end) as $tab
+      | ("out=$(git -C " + $quoted + " switch " + $sh + " 2>&1)"
+         + " && omarchy-notification-send " + (("Now on " + $ref) | @sh)
+         + " || omarchy-notification-send -u normal \"git switch failed\" \"$out\"") as $switch
+      | {
+          id: ("branch:" + $ref),
+          view: "gitbranches",
+          score: (90000 - $i * 100),
+          group: "Branches",
+          title: $ref,
+          subtitle: $subject,
+          detail: (if $gone then "upstream gone"
+                   elif $upstream == "" then "no upstream" else $upstream end),
+          accessory: age($now - $ts),
+          name: $ref,
+          current: $current,
+          upstream: $upstream,
+          gone: $gone,
+          ahead: $ahead,
+          behind: $behind,
+          trunk: $trunk,
+          trunkAhead: $tab[0],
+          trunkBehind: $tab[1],
+          age: ($now - $ts),
+          author: ($r[6] // ""),
+          subject: $subject,
+          exec: (if $current then
+                   "omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff"
+                 else $switch end),
+          actions: (
+            (if $current then
+               [{ title: "Show Diff", shortcut: "↵",
+                  exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff") }]
+             else
+               [{ title: "Switch", shortcut: "↵", exec: $switch }]
+             end)
+            # Named, never implied. A switch that quietly stashed for you is a
+            # switch that lost your work somewhere you did not look.
+            + (if ($current | not) and $dirty > 0 then
+                 [{ title: "Stash and Switch",
+                    exec: ("out=$(git -C " + $quoted + " stash push -u -m "
+                           + (("before switching to " + $ref) | @sh)
+                           + " 2>&1 && git -C " + $quoted + " switch " + $sh + " 2>&1)"
+                           + " && omarchy-notification-send " + (("Stashed, now on " + $ref) | @sh)
+                           + " || omarchy-notification-send -u normal \"stash and switch failed\" \"$out\"") }]
+               else [] end)
+            # A graph belongs in a window that stays open, not in a launcher
+            # that is 600 pixels wide and lasts four seconds.
+            + [{ title: "Log This Branch",
+                 exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted
+                        + " log --oneline --graph --decorate -60 " + $sh) },
+               { title: "Copy Branch Name", exec: ("printf %s " + $sh + " | wl-copy") },
+               { title: "Stashes", query: ("stash:" + $name) }]
+          )
+        }
+      # The header the view draws across the top: which repo, and whether
+      # switching is going to be refused.
+      | if $i == 0 then . + { repo: {
+            name: $name, path: $path, branch: $head, trunk: $trunk,
+            staged: $staged, changed: $changed, conflicted: $conflicted,
+            count: ($rows | length) } } else . end
+    )'

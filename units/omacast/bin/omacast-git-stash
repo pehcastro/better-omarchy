@@ -1,0 +1,201 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `stash:` keyword: what is in this repo's
+# stashes, without applying one to find out.
+#
+#   stash:               the repo you are in
+#   stash:omarchy        the repo called omarchy, wherever it is
+#   stash:omarchy login  only the stashes whose message or files say login
+#
+# "Did I stash that" is the whole question, and a list of `stash@{0} WIP on
+# main` cannot answer it: every line says the same thing. So each row carries
+# the files the stash actually touches and how much of each, and the view draws
+# them under the message. You read it, and then you decide.
+#
+# Enter shows the patch in a terminal. Applying is the second action and keeps
+# the stash; popping is the third and removes it once it has landed. Dropping is
+# deliberately not here: it destroys work that nothing else has a copy of, and a
+# launcher four seconds deep is the wrong place to be offered that.
+#
+# Cost: one call for the list, one per stash for its files, cached against the
+# mtime of refs/stash, so the second keystroke is bash and one jq.
+
+set -uo pipefail
+
+query="${1:-}"
+query="${query#"${query%%[![:space:]]*}"}"
+query="${query%"${query##*[![:space:]]}"}"
+
+command -v git >/dev/null 2>&1 || exit 0
+
+IFS=$'\t' read -r repo needle < <(omacast-repo --resolve "$query" 2>/dev/null)
+[[ -n ${repo:-} && -e $repo/.git ]] || exit 0
+needle="${needle,,}"
+
+quoted=$(printf '%q' "$repo")
+name="${repo##*/}"
+display="${repo/#$HOME/\~}"
+now=$(date +%s)
+
+# More than this and the launcher is a scrollback. Twelve is already more
+# stashes than anybody keeps on purpose.
+MAX=12
+
+git_dir() {
+  local line
+  if [[ -f $repo/.git ]]; then
+    read -r line <"$repo/.git" 2>/dev/null || return 1
+    line="${line#gitdir: }"
+    [[ $line == /* ]] || line="$repo/$line"
+    printf '%s' "$line"
+    return 0
+  fi
+  [[ -d $repo/.git ]] || return 1
+  printf '%s' "$repo/.git"
+}
+gitdir=$(git_dir) || exit 0
+
+# A stash cannot be pushed, popped or dropped without the stash ref moving.
+# Nothing else in .git matters here, which is why this is a different stamp from
+# the one `branch:` uses: committing should not throw this answer away.
+#
+# This script is in the list too. What is cached is this script's reading of
+# git's output rather than the output, so changing the reading has to throw the
+# old answer away: a case broken on purpose went on failing after the change was
+# put back, because the wrong answer was still on disk under a key that had not
+# moved.
+stamp() {
+  local newest=0 f t
+  for f in "$0" "$gitdir/refs/stash" "$gitdir/logs/refs/stash" "$gitdir/packed-refs"; do
+    [[ -e $f ]] || continue
+    t=$(stat -c %Y "$f" 2>/dev/null) || continue
+    ((t > newest)) && newest=$t
+  done
+  printf '%s' "$newest"
+}
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/git-stashes"
+mkdir -p "$cache_dir" 2>/dev/null
+cache_file="$cache_dir/$(printf '%s' "$repo" | md5sum | cut -c1-16)"
+want=$(stamp)
+
+# One record per stash, on one line: ref, when, the branch it was taken on, the
+# message, then the files as path:added:deleted. Flat because that is what a
+# cache file can hold and what bash can filter without a parser.
+collect() {
+  local ref ts subject branch message files line added deleted path
+
+  printf '%s\n' "$want"
+
+  while IFS=$'\t' read -r ref ts subject; do
+    [[ -n $ref ]] || continue
+
+    # `%gs` is "WIP on main: 3fa1 subject" or "On main: message you typed". The
+    # branch is worth its own field: a stash from another branch is the one you
+    # are most likely to have forgotten, and the one you should think twice
+    # about applying here.
+    branch=""
+    message="$subject"
+    case $subject in
+    "WIP on "*": "* | "On "*": "*)
+      branch="${subject#WIP on }"
+      branch="${branch#On }"
+      message="${branch#*: }"
+      branch="${branch%%:*}"
+      ;;
+    esac
+
+    files=""
+    while IFS=$'\t' read -r added deleted path; do
+      [[ -n ${path:-} ]] || continue
+      [[ $added == "-" ]] && added=0
+      [[ $deleted == "-" ]] && deleted=0
+      files+="	$path:$added:$deleted"
+    done < <(git -C "$repo" --no-optional-locks stash show --numstat \
+      --include-untracked "$ref" 2>/dev/null)
+
+    printf '%s\t%s\t%s\t%s%s\n' "$ref" "$ts" "$branch" "$message" "$files"
+  done < <(git -C "$repo" --no-optional-locks stash list \
+    --format=$'%gd\t%ct\t%gs' 2>/dev/null | head -"$MAX")
+}
+
+lines=()
+if [[ -s $cache_file ]]; then
+  mapfile -t lines <"$cache_file"
+  [[ ${lines[0]:-} == "$want" ]] || lines=()
+fi
+if ((${#lines[@]} == 0)); then
+  mapfile -t lines < <(collect)
+  ((${#lines[@]} > 0)) && printf '%s\n' "${lines[@]}" >"$cache_file" 2>/dev/null
+fi
+((${#lines[@]} > 1)) || exit 0
+
+rows=()
+for line in "${lines[@]:1}"; do
+  [[ -n $line ]] || continue
+  [[ -z $needle || ${line,,} == *"$needle"* ]] && rows+=("$line")
+done
+((${#rows[@]})) || exit 0
+
+printf '%s\n' "${rows[@]}" | jq -Rn \
+  --arg quoted "$quoted" --arg name "$name" --arg path "$display" \
+  --argjson now "$now" '
+  def age(s):
+    if s < 3600 then ((s / 60) | floor | tostring) + "m"
+    elif s < 86400 then ((s / 3600) | floor | tostring) + "h"
+    elif s < 2592000 then ((s / 86400) | floor | tostring) + "d"
+    elif s < 31536000 then ((s / 2592000) | floor | tostring) + "mo"
+    else ((s / 31536000) | floor | tostring) + "y" end;
+
+  [inputs | split("\t")] as $rows
+  | $rows | to_entries | map(
+      .key as $i | .value as $r
+      | $r[0] as $ref
+      | (($r[1] // "0") | tonumber) as $ts
+      | ($r[2] // "") as $branch
+      | ($r[3] // "") as $message
+      | ($ref | @sh) as $sh
+      | ([$r[4:][] | select(length > 0)
+          | (. | split(":")) as $p
+          | { path: ($p[0:-2] | join(":")),
+              added: (($p[-2] // "0") | tonumber),
+              deleted: (($p[-1] // "0") | tonumber) }]) as $files
+      | {
+          id: ("stash:" + $ref),
+          view: "gitstashes",
+          score: (90000 - $i * 100),
+          group: "Stashes",
+          title: (if $message == "" then $ref else $message end),
+          subtitle: ($ref + (if $branch == "" then "" else "  on " + $branch end)),
+          detail: ($files | length | tostring)
+                  + (if ($files | length) == 1 then " file" else " files" end),
+          accessory: age($now - $ts),
+          ref: $ref,
+          branch: $branch,
+          message: $message,
+          age: ($now - $ts),
+          files: $files,
+          added: ($files | map(.added) | add // 0),
+          deleted: ($files | map(.deleted) | add // 0),
+          exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted
+                 + " stash show -p --include-untracked " + $sh),
+          actions: [
+            { title: "Show Stash", shortcut: "↵",
+              exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted
+                     + " stash show -p --include-untracked " + $sh) },
+            # Apply before pop, and both named for what they leave behind. A
+            # stash you applied is still there to apply again; a stash you
+            # popped is not.
+            { title: "Apply, and Keep the Stash",
+              exec: ("out=$(git -C " + $quoted + " stash apply " + $sh + " 2>&1)"
+                     + " && omarchy-notification-send " + (("Applied " + $ref) | @sh)
+                     + " || omarchy-notification-send -u normal \"git stash apply failed\" \"$out\"") },
+            { title: "Pop, and Remove It",
+              exec: ("out=$(git -C " + $quoted + " stash pop " + $sh + " 2>&1)"
+                     + " && omarchy-notification-send " + (("Popped " + $ref) | @sh)
+                     + " || omarchy-notification-send -u normal \"git stash pop failed\" \"$out\"") },
+            { title: "Branches", query: ("branch:" + $name) }
+          ]
+        }
+      | if $i == 0 then . + { repo: {
+            name: $name, path: $path, count: ($rows | length) } } else . end
+    )'

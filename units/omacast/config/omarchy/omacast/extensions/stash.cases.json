@@ -1,0 +1,58 @@
+[
+  {
+    "why": "a stash is drawn with what is in it: stash@{0}: WIP on main is the same line every time and answers nothing",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 0,
+    "view": "gitstashes",
+    "fields": ["files", "ref"]
+  },
+  {
+    "why": "the files are what did I stash that actually asks, with what each one gained and lost, so it can be read instead of applied",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 1,
+    "matches": { "files": "'path': 'sketch.txt'.*'added': 1" }
+  },
+  {
+    "why": "an untracked file is in the stash and has to be in the reading of it: git stash show hides those unless it is asked",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 1,
+    "matches": { "files": "sketch.txt" }
+  },
+  {
+    "why": "the branch a stash was taken on is the reason to think twice before applying it here",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 0,
+    "matches": { "branch": "^main$", "message": "^trying the other approach$" }
+  },
+  {
+    "why": "Enter reads the stash. Applying and popping are named for what they leave behind, and are chosen rather than reached by accident",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 0,
+    "matches": { "actions": "'title': 'Show Stash'.*'title': 'Apply, and Keep the Stash'.*'title': 'Pop, and Remove It'" }
+  },
+  {
+    "why": "dropping a stash destroys work nothing else has a copy of, and a launcher four seconds deep is the wrong place to be offered that",
+    "query": "omacast-fixture",
+    "minRows": 2,
+    "row": 0,
+    "matches": { "actions": "^(?!.*stash drop)" }
+  },
+  {
+    "why": "a word after the repo searches the messages and the file names both, because you remember one or the other",
+    "query": "omacast-fixture sketch.txt",
+    "minRows": 1,
+    "maxRows": 1,
+    "row": 0,
+    "matches": { "message": "half a refactor" }
+  },
+  {
+    "why": "a repo with no stashes says nothing rather than a row explaining that there is nothing",
+    "query": "gum",
+    "maxRows": 0
+  }
+]

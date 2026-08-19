@@ -20,6 +20,15 @@
     }
   },
   {
+    "why": "did I stash that is asked from the panel, and a count is the whole answer when it is zero",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "repo": "'stashes': [0-9]+"
+    }
+  },
+  {
     "why": "Enter shows the diff: opening a terminal answers a question nobody asked",
     "query": "",
     "minRows": 1,
@@ -29,12 +38,21 @@
     }
   },
   {
-    "why": "the panel offers three things, not eight",
+    "why": "branches and stashes are one keypress from the panel, so the depth is found rather than memorised",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "actions": "'query': 'branch:.*'query': 'stash:"
+    }
+  },
+  {
+    "why": "the panel offers four things, not eight",
     "query": "",
     "minRows": 1,
     "row": 0,
     "atMost": {
-      "actions": 3
+      "actions": 4
     }
   },
   {
@@ -53,11 +71,6 @@
     "maxRows": 0
   },
   {
-    "why": "a filter is a search, so it never returns the panel. Asserting a match instead depended on whichever repo happened to be pinned",
-    "query": "zzznosuchthing",
-    "maxRows": 0
-  },
-  {
     "why": "naming a repo answers about that repo: pinning was hidden state solving this in two steps and a file",
     "query": "gum",
     "minRows": 1,
@@ -66,5 +79,10 @@
     "matches": {
       "repo": "'name': 'gum'"
     }
+  },
+  {
+    "why": "branch and stash rows here were names with nothing on them, so a word that only a stash could match now answers nothing: branch: and stash: own them, with views that show the divergence and the contents",
+    "query": "omacast-fixture stash",
+    "maxRows": 0
   }
 ]

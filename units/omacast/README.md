@@ -42,9 +42,15 @@ tells it what you want.
 | `snip:sig` | a snippet of text you keep retyping |
 | `recent:` | the files you opened lately, in any app |
 | `repo:` or `repo:oma branch:main` | your git repos, with branch, dirty state and age |
-| `git:` | the repo you are in: status, branch, commits, branches, stashes |
-| `gh:` or `gh:omarchy` | your GitHub repos, then a search |
-| `pr:`, `issue:`, `ci:`, `gist:` | open PRs, what is assigned to you, workflow runs, gists |
+| `git:` or `git:omarchy` | one repo: branch, what is uncommitted, how many stashes, recent commits |
+| `branch:` or `branch:omarchy` | its branches, with the one you are on, what is unpushed and how stale each is. Enter switches |
+| `stash:` or `stash:omarchy login` | its stashes, with the files in each, so you can read one before applying it |
+| `gh:` or `gh:oma` | your GitHub repos, then a search of the rest of GitHub |
+| `gh:basecamp/omarchy` | one repository: is its default branch broken, what is waiting to be merged, what shipped |
+| `gh:owner/repo#7398` or a pasted GitHub URL | one pull request: every check by name, who reviewed it, how big it is |
+| `pr:` | your open pull requests and the ones waiting on your review, each with the mark that says whether it passed |
+| `issue:` | assigned to you, and mentioning you |
+| `ci:owner/repo` | workflow runs, failures first |
 | `ssh:prod` | a host from your ssh config, connected in a terminal |
 | `docker:` | containers, running first, with logs, a shell and start/stop |
 | `spotify:` | the player: cover, scrubber, transport |
@@ -62,7 +68,7 @@ tells it what you want.
 | `wifi:` | networks in range, with signal, and the saved ones connected in one key |
 | `vol:` | output and input volume, as sliders |
 | `bri:` | screen brightness, as a slider |
-| `do:split the terminal into four` | a local agent does it, with the steps as they happen |
+| `do:open a new workspace and split it into four terminals` | an agent does it, and you watch which step it is on |
 | `?` | every keyword the launcher knows, built from what is loaded |
 | nothing at all | the last twenty queries that led somewhere |
 | anything with no match | search the web |
@@ -95,42 +101,63 @@ beside the frecency file rather than in your settings, which stay yours to edit.
 
 ## Doing something: `do:`
 
-`Ctrl+Enter` asks a model a question. `do:` hands a local agent CLI an
-instruction and shows the work.
+`Ctrl+Enter` asks a model a question. `do:` hands a local agent an instruction
+and lets it act.
 
-    do: open a new workspace and split the terminal into four
+    do: open a new workspace and split it into four terminals
+    do: now put my editor in the top left one
     do: find every TODO in this repo and list them
-    do:@codex explain what changed on this branch
 
-While it runs the card is a short ledger, one line per tool call, naming the
-thing rather than the tool: `Read Launcher.qml`, `Search TODO`, `workspace 9`.
-The newest line carries a live dot; the prose grows underneath and follows its
-own tail. When it finishes the ledger collapses to a count and the answer is
-what is left.
+It is a chat. `Enter` sends and empties the box, what you sent stays on the card
+above the answer, and the next sentence continues the same session, so "that
+file" and "now make it four" mean something. `do: /new` starts over.
 
-Where the line is, because a launcher that can do anything with no confirmation
-step is a mistake that only shows up once:
+While it works you get three lines: what it is doing now, the last few things it
+did, and the answer growing under them. Each line names the thing rather than
+the tool -- `Go to an empty workspace`, `Open 4 x terminal`, `Read Launcher.qml`
+-- because "Bash" thirty times is a progress bar with extra steps. When it
+finishes those collapse to a count and a clock, and the answer is what is left.
 
-- **Typing runs nothing.** An instruction comes back as a card describing what
-  would happen: which agent, which directory, which policy. `Enter` starts it.
+Where the line is:
+
+- **It is allowed to act.** You typed the sentence into your own launcher, on
+  your own machine, and pressed Enter. That is the consent, and asking again for
+  every window is how a launcher becomes something you stop using. The shell,
+  writing files and editing them are all pre-approved.
+- **Confirmation is kept for what cannot be undone.** Deleting, `sudo`, package
+  management, credentials, and anything that leaves this machine (`git push`,
+  `gh`, `ssh`, `curl`) come back refused, named, with the reason. Type
+  `do: /policy` to read the whole list.
+- **`Ctrl+K` is the way through one.** It hands the same instruction to an
+  interactive agent in a terminal, where the permission prompts exist and you
+  answer them.
+- **Typing runs nothing.** An instruction comes back as something to look at:
+  which agent, which directory. `Enter` starts it.
 - **`Enter` carries a token, not your sentence.** The row's command names a hash
   of what was previewed, so nothing you typed reaches a shell, and nothing can
   run that was not on screen first.
-- **A run reads, it does not write.** The agent CLI runs in its default
-  non-interactive permission mode, which refuses anything that writes and says
-  so; the only shell command it is pre-approved for is `omacast-agent desk`,
-  whose verbs are a closed list. `hyprctl` is denied outright, because
-  `hyprctl dispatch exec` is a shell by another name. There is no setting that
-  turns this off: write access is not something a search box gets to grant.
-- **`Ctrl+K` is the way out.** It hands the same instruction to an interactive
-  agent in a terminal, where the permission prompts exist and you answer them.
-- **`Escape` stops it.** The launcher re-asks this extension while its rows are
-  on screen, so those questions are a heartbeat; when they stop the daemon kills
-  the whole process group. Closing the launcher stops a run for the same reason,
-  which is why long unattended work belongs in the terminal.
+- **`Escape` stops it**, and stopping kills the process group rather than the
+  one pid the agent told us about. Closing the launcher stops a run too, a
+  couple of seconds later, which is why long unattended work belongs in a
+  terminal.
 
-It needs one of `claude`, `codex` or `gemini` on `PATH`. With none of them there
-the keyword still answers, saying so, rather than going quiet and looking broken.
+The deny list is a speed bump on a model that means well, not a sandbox: `bash
+-c` is still a shell. What actually keeps this safe is that a person typed the
+sentence and pressed a key.
+
+It knows this desktop. Hyprland here is configured in Lua, where `hyprctl
+dispatch workspace 9` is not merely wrong but can return `ok` and do nothing;
+the agent is told the real form, and `omacast-agent desk` gives it the
+dispatchers already spelled right, waiting for windows to actually appear:
+
+```
+omacast-agent desk empty              # the lowest workspace with nothing on it
+omacast-agent desk tile 4 terminal    # four of them, splitting the largest each time
+omacast-agent desk help               # the rest
+```
+
+It needs `claude` or `codex` on `PATH`. With neither there the keyword still
+answers, saying so, rather than going quiet and looking broken.
 
 ## Asking a model
 
@@ -246,8 +273,10 @@ when writing your own.
 | `snip:` | `omacast-snippet` | silent until the snippets file exists |
 | `recent:` | `omacast-recent` | recently-used.xbel, minus what has since been deleted |
 | `repo:` | `omacast-repo` | one cached fd walk, git only for the rows actually shown |
-| `git:` | `omacast-git` | the focused terminal's repo, else a pin, else the one touched last |
-| `gh:` `pr:` `issue:` `ci:` `gist:` | `omacast-gh` | silent until `gh auth status` passes, cached per credential |
+| `git:` | `omacast-git` | the focused terminal's repo, else the one touched last |
+| `branch:` | `omacast-git-branch` | one for-each-ref, cached on the newest mtime in .git |
+| `stash:` | `omacast-git-stash` | one call per stash for its files, cached on refs/stash |
+| `gh:` `pr:` `issue:` `ci:` | `omacast-gh` | one request per answer, cached on disk per credential, warmed behind your back |
 | `ssh:` | `omacast-ssh` | ~/.ssh/config, Include followed, wildcard hosts skipped |
 | `docker:` | `omacast-docker` | gated on the daemon answering, not on the binary existing |
 | `spotify:` `music:` | `omacast-search-music` | MPRIS for the player, Deezer for search |

@@ -147,6 +147,13 @@ Fields the launcher names:
 `canNext` `canPrev` for `player`, `year` `month` `today` `weekStart` `marks` for
 `calendar`, and `value` `min` `max` `step` `setExec` for `slider`.
 
+A view that draws a header as well as rows reads that header off the first row.
+`gitbranches` and `gitstashes` both do it: every row carries its own branch or
+stash, and row zero also carries a `repo` object with the name, the path and,
+for branches, the uncommitted counts the header warns about. Putting it on every
+row would be the same object a dozen times; putting it in a second kind of row
+would mean a header that can be selected and pressed.
+
 Anything else you put on a row is carried through untouched, so a view can read
 a field this file has never heard of. The exceptions are the names the launcher
 owns for itself and will not let a script set: `key`, `providerId`, `tier`,
@@ -154,6 +161,16 @@ owns for itself and will not let a script set: `key`, `providerId`, `tier`,
 
 `score` orders your rows against each other. It never crosses tiers, so a big
 number cannot lift an extension above a calculator answer.
+
+### Rows that keep the launcher open
+
+Three fields decide what the two keys that always mean something do.
+
+| field | what Enter and Escape do with it |
+| --- | --- |
+| `keepOpen` | Enter runs `exec` and the launcher stays open. Without it Enter closes, which is right for anything that starts a program elsewhere and wrong for anything that only changes what this card will show next. |
+| `clearTo` | after that, the box is set to this text. `"do: "` makes Enter behave the way it does in a chat: the sentence is sent, the box empties, and what was sent is still on the card. |
+| `escExec` | Escape runs this before it does anything else. A row with something running says so here, so stopping reaches the process instead of waiting for the row to notice nobody is looking. |
 
 ### slider rows
 

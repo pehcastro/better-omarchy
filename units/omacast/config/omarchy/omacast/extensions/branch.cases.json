@@ -1,0 +1,92 @@
+[
+  {
+    "why": "branches are drawn, not listed: a column of names cannot say which one is checked out or how far each has moved",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 0,
+    "view": "gitbranches"
+  },
+  {
+    "why": "the branch you are on is first and marked, so you never search the list for the one row you already knew",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 0,
+    "matches": {
+      "current": "^True$",
+      "name": "^main$"
+    }
+  },
+  {
+    "why": "the header the view draws across the top rides on the first row: without it there is no repo name and no warning that a switch could be refused",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 0,
+    "fields": [
+      "repo"
+    ],
+    "matches": {
+      "repo": "'changed': [1-9]"
+    }
+  },
+  {
+    "why": "picking a branch switches to it. Copying its name is not what somebody typed branch: for",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 1,
+    "matches": {
+      "actions": "^\\[\\{'title': 'Switch', 'shortcut': '↵', 'exec': [\"']out=\\$\\(git -C .* switch "
+    }
+  },
+  {
+    "why": "a switch is never forced. git refuses to overwrite uncommitted work and the refusal is reported, which is the confirmation",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 1,
+    "matches": {
+      "actions": "git switch failed"
+    }
+  },
+  {
+    "why": "with work in the tree, stashing first is offered by name rather than done for you: a switch that quietly stashed is a switch that lost your work somewhere you did not look",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 1,
+    "matches": {
+      "actions": "'title': 'Stash and Switch'"
+    }
+  },
+  {
+    "why": "divergence is two numbers the view can weight, not the sentence git prints. %(upstream:track) reads 'ahead 2, behind 1' and no layout can draw that",
+    "query": "omacast-fixture",
+    "minRows": 3,
+    "row": 2,
+    "matches": {
+      "ahead": "^[0-9]+$",
+      "behind": "^[0-9]+$",
+      "trunkAhead": "^[0-9]+$",
+      "trunkBehind": "^[0-9]+$"
+    }
+  },
+  {
+    "why": "how far a branch is from the trunk is the reason to leave it alone, and it is measured against a trunk that exists rather than a guess at main",
+    "query": "omacast-fixture login",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "name": "login",
+      "trunk": "^main$",
+      "trunkAhead": "^2$",
+      "trunkBehind": "^1$"
+    }
+  },
+  {
+    "why": "a word after the repo filters the branches, so branch:omacast-fixture login is one row and not a list to read",
+    "query": "omacast-fixture login",
+    "maxRows": 1
+  },
+  {
+    "why": "a filter that matches no branch answers nothing rather than falling back to every branch",
+    "query": "omacast-fixture zzznosuchbranch",
+    "maxRows": 0
+  }
+]

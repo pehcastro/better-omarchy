@@ -1,13 +1,13 @@
 {
   "id": "repo",
-  "title": "Repositories",
+  "title": "Local Repos",
   "keyword": "repo",
   "aliases": [
     "repos",
     "project",
     "projects"
   ],
-  "subtitle": "Repo",
+  "subtitle": "Local Repo",
   "glyph": "\uf1d3",
   "search": "omacast-repo {query} {branch}",
   "when": "command -v git >/dev/null && command -v fd >/dev/null",

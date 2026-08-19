@@ -33,22 +33,15 @@ command -v git >/dev/null 2>&1 || exit 0
 # There was a "Pin for git:" action that wrote the answer to a state file. It
 # was hidden, it had to be found, and it solved in two steps and a file what
 # typing the name solves in four characters.
-repo=""
-if [[ -n $needle ]]; then
-  while IFS= read -r line; do
-    [[ -n $line ]] || continue
-    candidate=$(jq -r '.detail // empty' <<<"$line" 2>/dev/null)
-    candidate="${candidate/#\~/$HOME}"
-    [[ -n $candidate && -e $candidate/.git ]] && { repo="$candidate"; break; }
-  done < <(omacast-repo "$needle" 2>/dev/null)
-
-  # A name that matches a repo is a repo. A name that does not is a filter on
-  # the repo you are in, which is what it was before.
-  [[ -n $repo ]] && needle=""
-fi
-
-[[ -n $repo ]] || repo=$(omacast-repo --current 2>/dev/null)
-[[ -n $repo && -e $repo/.git ]] || exit 0
+#
+# This used to run the whole `repo:` listing and read the first row out of it,
+# which is a git status per candidate repo just to work out what a word meant:
+# `git:o` cost 227ms on every keystroke. `--resolve` is the same matching with
+# no git calls at all, and it is shared with `branch:` and `stash:` so all three
+# read a query the same way.
+IFS=$'\t' read -r repo needle < <(omacast-repo --resolve "$query" 2>/dev/null)
+[[ -n ${repo:-} && -e $repo/.git ]] || exit 0
+needle="${needle,,}"
 
 quoted=$(printf '%q' "$repo")
 name="${repo##*/}"
@@ -80,16 +73,23 @@ keep() {
 }
 
 score=90000
+# A tenth argument makes the primary a step rather than a command: the row goes
+# somewhere else in the launcher instead of starting a program. That is how the
+# branch row reaches `branch:`, and it is the same mechanism the panel uses.
 emit() {
   local id="$1" title="$2" detail="$3" subtitle="$4" accessory="$5" group="$6"
-  local primary="$7" exec="$8" extra="${9:-[]}"
-  keep "$title" "$detail" "$group" || return 0
+  local primary="$7" exec="$8" extra="${9:-[]}" goto="${10:-}"
+  # Nonzero when the filter dropped this row, so a caller can count what was
+  # actually printed rather than what it offered.
+  keep "$title" "$detail" "$group" || return 1
   jq -cn --arg id "$id" --arg t "$title" --arg d "$detail" --arg s "$subtitle" \
     --arg a "$accessory" --arg g "$group" --arg p "$primary" --arg e "$exec" \
+    --arg goto "$goto" \
     --argjson sc "$score" --argjson extra "$extra" \
     '{ id: $id, title: $t, detail: $d, subtitle: $s, accessory: $a,
-       group: $g, exec: $e, score: $sc,
-       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra) }'
+       group: $g, exec: (if $goto == "" then $e else "" end), score: $sc,
+       actions: ([if $goto == "" then { title: $p, shortcut: "↵", exec: $e }
+                  else { title: $p, shortcut: "↵", query: $goto } end] + $extra) }'
   score=$((score - 100))
 }
 
@@ -144,6 +144,10 @@ if [[ -z $needle ]]; then
     ahead_n="${a#+}"; behind_n="${b#-}"
   fi
 
+  # How many stashes, because "did I stash that" is asked from here and the
+  # answer is either a number you can ignore or the reason you type `stash:`.
+  stashes=$(git -C "$repo" --no-optional-locks stash list 2>/dev/null | wc -l)
+
   commits_json=$(git -C "$repo" --no-optional-locks log -6 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null |
     jq -Rn --argjson now "$now" '
       [inputs | split("\t") | select(length >= 4)
@@ -155,6 +159,7 @@ if [[ -z $needle ]]; then
     --arg upstream "${upstream:-}" --arg quoted "$quoted" \
     --argjson ahead "${ahead_n:-0}" --argjson behind "${behind_n:-0}" \
     --argjson staged "$staged" --argjson changed "$changed" --argjson conflicted "$conflicted" \
+    --argjson stashes "${stashes:-0}" \
     --argjson commits "$commits_json" \
     --arg remote "${remote_url:-}" \
     '{ id: "git-panel", view: "gitrepo", score: 99000,
@@ -162,16 +167,19 @@ if [[ -z $needle ]]; then
        repo: { name: $name, path: $path, branch: $branch, upstream: $upstream,
                ahead: $ahead, behind: $behind,
                staged: $staged, changed: $changed, conflicted: $conflicted,
-               remote: $remote },
+               stashes: $stashes, remote: $remote },
        commits: $commits,
        exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff"),
        actions: [
          { title: "Show Diff", shortcut: "↵",
            exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " diff") },
+         # The depth, reachable by pressing a key rather than by knowing a
+         # syntax. Both land on a keyword you can also type, so finding it once
+         # here teaches the shorter way in.
+         { title: "Branches", query: ("branch:" + $name) },
+         { title: "Stashes", query: ("stash:" + $name) },
          { title: "Open Terminal Here",
-           exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $quoted) },
-         { title: "Full Log",
-           exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $quoted + " log --oneline --graph --decorate -60") }
+           exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $quoted) }
        ] }'
   exit 0
 fi
@@ -203,17 +211,33 @@ if [[ -n $ab ]]; then
   ((${behind#-} > 0)) && track="$track ↓${behind#-}"
 fi
 
-emit "branch" "$branch" "$track" "$name" "" "Branch" "Copy Branch Name" \
-  "printf %s $(printf '%q' "$branch") | wl-copy" \
-  "$(jq -cn --arg q "$quoted" '[
+emit "branch" "$branch" "$track" "$name" "" "Branch" "Every Branch" \
+  "true" \
+  "$(jq -cn --arg q "$quoted" --arg n "$name" --arg b "$branch" '[
+       { title: "Copy Branch Name", exec: ("printf %s " + ($b | @sh) + " | wl-copy") },
        { title: "Fetch", exec: ("out=$(git -C " + $q + " fetch --all --prune 2>&1) && omarchy-notification-send \"Fetched\" \"$out\" || omarchy-notification-send -u normal \"git fetch failed\" \"$out\"") }
-     ]')"
+     ]')" \
+  "branch:$name"
 
 # Recent commits
 # ------------------------------------------------------------------
+#
+# Forty rather than eight. With a word typed after `git:` this is no longer a
+# recent-activity list, it is somebody asking when they did a thing, and eight
+# commits does not reach back far enough to answer that.
+#
+# Read forty, show sixteen. Every row printed here is two jq processes, and a
+# one-letter needle matches nearly every subject: forty rows is eighty forks for
+# a card that shows a dozen.
 
+shown=0
 while IFS=$'\t' read -r hash subject author ts; do
   [[ -n $hash ]] || continue
+  # Asked here as well as inside emit, because the action list below is built by
+  # a jq of its own and that fork is paid before emit ever sees the row.
+  keep "$subject" "$author" "Recent Commits" || continue
+  ((shown < 16)) || break
+  shown=$((shown + 1))
   # Reading the commit is why you looked at it. Copying the hash is what you do
   # after deciding, so it comes second.
   emit "commit:$hash" "$subject" "$author" "$hash" "$(short_age $((now - ts)))" \
@@ -222,58 +246,16 @@ while IFS=$'\t' read -r hash subject author ts; do
     "$(jq -cn --arg h "$hash" '[
          { title: "Copy Hash", exec: ("printf %s " + ($h | @sh) + " | wl-copy") }
        ]')"
-done < <(git -C "$repo" --no-optional-locks log -8 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null)
+done < <(git -C "$repo" --no-optional-locks log -40 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null)
 
-# Branches to switch to
-# ------------------------------------------------------------------
-
-while IFS=$'\t' read -r ref ts; do
-  [[ -n $ref && $ref != "$branch" ]] || continue
-  # A `git switch` that refuses because the tree is dirty would otherwise fail
-  # invisibly, so the outcome is reported as a notification either way.
-  esc_ref=$(printf '%q' "$ref")
-  switch="out=\$(git -C $quoted switch $esc_ref 2>&1)"
-  switch+=" && omarchy-notification-send \"Switched to $ref\""
-  switch+=" || omarchy-notification-send -u normal \"git switch failed\" \"\$out\""
-  emit "head:$ref" "$ref" "switch to this branch" "branch" "$(short_age $((now - ts)))" \
-    "Branches" "Switch" "$switch" \
-    "$(jq -cn --arg r "$ref" --arg q "$quoted" '[
-         { title: "Copy Branch Name", exec: ("printf %s " + ($r | @sh) + " | wl-copy") },
-         { title: "Log This Branch", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " log --oneline --graph --decorate -40 " + ($r | @sh)) }
-       ]')"
-done < <(git -C "$repo" --no-optional-locks for-each-ref --sort=-committerdate --count=10 \
-  --format=$'%(refname:short)\t%(committerdate:unix)' refs/heads 2>/dev/null)
-
-# Stashes
-# ------------------------------------------------------------------
-
-while IFS=$'\t' read -r ref subject ts; do
-  [[ -n $ref ]] || continue
-  emit "stash:$ref" "$subject" "$ref" "stash" "$(short_age $((now - ts)))" \
-    "Stashes" "Show Stash" \
-    "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted stash show -p $(printf '%q' "$ref")" \
-    "$(jq -cn --arg r "$ref" '[
-         { title: "Copy Stash Ref", exec: ("printf %s " + ($r | @sh) + " | wl-copy") }
-       ]')"
-done < <(git -C "$repo" --no-optional-locks stash list --format=$'%gd\t%gs\t%ct' 2>/dev/null)
-
-# Remote
-# ------------------------------------------------------------------
-
-remote=$(git -C "$repo" --no-optional-locks remote get-url origin 2>/dev/null)
-if [[ -n ${remote:-} ]]; then
-  web="$remote"
-  [[ $web == git@*:* ]] && web="https://${web#git@}" && web="${web/://}"
-  web="${web%.git}"
-
-  emit "remote" "$remote" "origin" "remote" "" "Remote" "Open on GitHub" \
-    "omarchy-launch-browser $(printf '%q' "$web")" \
-    "$(jq -cn --arg u "$remote" '[
-         { title: "Copy Remote URL", exec: ("printf %s " + ($u | @sh) + " | wl-copy") }
-       ]')"
-fi
-
-# GitHub is not this keyword's business. `repo:` and `git:` are the local
+# Branches and stashes used to be two more sections down here, as rows carrying
+# a name and nothing else: which one is checked out, how far each had drifted
+# and what was in a stash were all missing, so the only thing you could do with
+# one was read it. They are `branch:` and `stash:` now, each with a view that
+# shows those facts and actions that switch and apply. Leaving a weaker copy
+# here would only be the version people found first.
+#
+# GitHub is not this keyword's business either. `repo:` and `git:` are the local
 # machine; `gh:` and `github:` are the remote. Open pull requests lived here for
 # an hour and blurred that line: one keyword that answers from disk and from
 # somebody else's API is two keywords wearing one name.

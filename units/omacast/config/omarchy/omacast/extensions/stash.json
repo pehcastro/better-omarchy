@@ -1,0 +1,18 @@
+{
+  "id": "stash",
+  "title": "Stashes",
+  "keyword": "stash",
+  "aliases": [
+    "stashes"
+  ],
+  "subtitle": "Git",
+  "glyph": "",
+  "search": "omacast-git-stash {query}",
+  "when": "command -v git >/dev/null",
+  "minChars": 0,
+  "debounceMs": 60,
+  "timeoutMs": 5000,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "gitstashes"
+}

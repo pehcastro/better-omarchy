@@ -10,6 +10,7 @@
 #   omacast-repo --paths     every discovered repo path, one per line
 #   omacast-repo --current   the one repo `git:` and `pr:` should answer for
 #   omacast-repo --slug [p]  owner/name for that repo, for handing to `gh`
+#   omacast-repo --resolve q  "which repo, and what is left over", as path TAB text
 #
 # Cost is the whole design here. Discovery walks the project roots once with fd
 # and is cached, because a keystroke must not pay for a filesystem walk. Name
@@ -297,6 +298,85 @@ current_repo() {
 if [[ $mode == "--current" ]]; then
   current_repo || exit 0
   printf '\n'
+  exit 0
+fi
+
+# --resolve: which repo is this query about, and what is left over
+# ------------------------------------------------------------------
+#
+# `git:`, `branch:` and `stash:` all start with the same problem: the words
+# after the colon are either the name of a repo, or a filter on the repo you are
+# in, or a name followed by a filter. Each of them had its own answer, and
+# `git:` answered it by running the whole `repo:` listing and reading the first
+# row, which meant a git status per candidate repo: 227ms on `git:o`, on every
+# keystroke, to work out a name.
+#
+# So it is one mode, here, next to the discovery it depends on, and it costs no
+# forks at all: matching is string work over the cached list, and nothing about
+# a repo's state is read to decide what the query names.
+find_repo() {
+  local needle="${1,,}" best="" best_score=0 best_ts=0
+  [[ -n $needle ]] || return 1
+
+  local repo name score gitdir ts
+  for repo in "${repos[@]}"; do
+    name="${repo##*/}"
+    name="${name,,}"
+    if [[ $name == "$needle" ]]; then
+      score=50000
+    elif [[ $name == "$needle"* ]]; then
+      score=40000
+    elif [[ $name == *"$needle"* ]]; then
+      score=25000
+    elif [[ ${repo,,} == *"$needle"* ]]; then
+      score=10000
+    else
+      continue
+    fi
+
+    # Same tie-break as the listing: the one whose HEAD moved most recently.
+    # One stat, and only for a repo that already matched by name.
+    gitdir=$(git_dir "$repo") || continue
+    ts=$(stat -c %Y "$gitdir/logs/HEAD" 2>/dev/null) || ts=0
+
+    if ((score > best_score)) || ((score == best_score && ts > best_ts)); then
+      best="$repo"
+      best_score=$score
+      best_ts=$ts
+    fi
+  done
+
+  [[ -n $best ]] || return 1
+  printf '%s' "$best"
+}
+
+if [[ $mode == "--resolve" ]]; then
+  raw="${2:-}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+
+  load_repos || true
+
+  target="" leftover=""
+  if [[ -n $raw ]]; then
+    # The whole thing as a name first, so a repo called "better omarchy" is not
+    # read as the repo "better" filtered by "omarchy".
+    if target=$(find_repo "$raw"); then
+      leftover=""
+    elif [[ $raw == *[[:space:]]* ]] && target=$(find_repo "${raw%%[[:space:]]*}"); then
+      leftover="${raw#*[[:space:]]}"
+      leftover="${leftover#"${leftover%%[![:space:]]*}"}"
+    else
+      # A word that names no repo is a filter on the one you are in, which is
+      # what typing it looked like it meant.
+      target=""
+      leftover="$raw"
+    fi
+  fi
+
+  [[ -n $target ]] || target=$(current_repo) || exit 0
+  [[ -n $target && -e $target/.git ]] || exit 0
+  printf '%s\t%s\n' "$target" "$leftover"
   exit 0
 fi
 
