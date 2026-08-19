@@ -17,6 +17,7 @@ import "Frecency.js" as Frecency
 import "Help.js" as Help
 import "Recents.js" as Recents
 import "Pins.js" as Pins
+import "Accent.js" as Accent
 
 // OmaCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -118,7 +119,7 @@ Item {
   // the word is in here.
   readonly property var knownKeywords: {
     var out = ["calc", "math", "run", "command", "commands", "web", "search",
-               "google", "ddg", "apps", "app", "launch",
+               "google", "ddg", "apps", "app", "launch", "settings",
                // Extra filters the built-ins read alongside their own keyword.
                "format", "in", "type"]
 
@@ -141,6 +142,7 @@ Item {
 
     var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
     if (query.scope === "") return ""
+    if (query.scope === "settings") return "Settings"
 
     for (var i = 0; i < root.extensions.length; i++) {
       var ext = root.extensions[i]
@@ -155,11 +157,135 @@ Item {
     return Help.builtinTitle(query.scope) || query.scope
   }
 
+  // ------------------------------------------------------------ sources
+
+  // providerId -> what a person would call it, and the colour it asked for.
+  // Built from what is loaded rather than from a table, so an extension that
+  // arrived in an update names and colours itself with nothing written twice.
+  readonly property var sources: {
+    var out = {
+      apps: { title: "Applications", accent: "" },
+      commands: { title: "Commands", accent: "" },
+      quicklinks: { title: "Quicklinks", accent: "" },
+      calc: { title: "Calculator", accent: "" },
+      web: { title: "Web", accent: "" },
+      paste: { title: "Clipboard", accent: "" },
+      settings: { title: "Settings", accent: "" }
+    }
+    for (var i = 0; i < root.extensions.length; i++) {
+      var ext = root.extensions[i]
+      out[ext.id] = { title: ext.title, accent: String(ext.accent || "") }
+    }
+    return out
+  }
+
+  // A declared accent, walked to something legible on this card, cached per
+  // provider. Doing the contrast maths inside a delegate binding would repeat
+  // it for every row on every rebuild, and the answer only changes when the
+  // theme or the extension list does.
+  property var accentCache: ({})
+  onBackgroundChanged: root.accentCache = ({})
+  onSourcesChanged: root.accentCache = ({})
+
+  function accentFor(providerId) {
+    var cached = root.accentCache[providerId]
+    if (cached !== undefined) return cached
+
+    var spec = root.sources[providerId]
+    var declared = spec ? Accent.parse(spec.accent) : null
+    var safe = Accent.readable(declared,
+                               { r: root.background.r, g: root.background.g, b: root.background.b },
+                               { r: Color.accent.r, g: Color.accent.g, b: Color.accent.b })
+
+    var out = Qt.rgba(safe.r, safe.g, safe.b, 1)
+    var next = root.accentCache
+    next[providerId] = out
+    root.accentCache = next
+    return out
+  }
+
+  // Whether the answer came from more than one place. Naming the source on
+  // every row is only worth the ink when there is something to tell apart:
+  // saying "Applications" nine times down a list of nine apps is noise.
+  function tagSources(list) {
+    var seen = {}
+    var count = 0
+    for (var i = 0; i < list.length; i++) {
+      var id = String(list[i].providerId || "")
+      if (seen[id]) continue
+      seen[id] = true
+      count += 1
+    }
+
+    for (var j = 0; j < list.length; j++) {
+      var row = list[j]
+      var spec = root.sources[String(row.providerId || "")]
+      var name = spec ? spec.title : ""
+
+      // Left undefined rather than defaulted, so a view can tell "this source
+      // asked for green" from "this source asked for nothing" and only colour
+      // the first. Defaulting here would paint every glyph in the launcher.
+      row.accent = (spec && spec.accent !== "")
+        ? root.accentFor(String(row.providerId || "")) : undefined
+      // A fill row is a keyword or a past query, not an answer anything found,
+      // so there is nothing to attribute it to.
+      row.source = (count > 1 && name !== "" && row.fill === undefined) ? name : ""
+    }
+    return list
+  }
+
+  // ------------------------------------------------------------ row tail
+
+  // One chip per row, and only one: the source when the answer came from more
+  // than one place, and otherwise whatever the row called itself. A source chip
+  // and an accessory chip and a category chip stacked up say three things where
+  // the eye only wanted to know one.
+  function chipFor(row) {
+    return String((row && (row.source || row.accessory)) || "")
+  }
+
+  // How wide that column is: the widest chip in the current answer, so every
+  // chip shares a left edge as well as a right one and a row without one leaves
+  // the slot blank rather than letting its neighbours slide across.
+  //
+  // Measured rather than fixed, because a fixed width is either too narrow for
+  // "Applications" or too wide for "gh:", and which of those is on screen
+  // changes with every query. Kept here rather than in a view: the rows are the
+  // launcher's, and two views measuring the same list twice would eventually
+  // disagree about where the column is.
+  property int chipColumn: 0
+
+  TextMetrics {
+    id: chipMetrics
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.letterSpacing: 0.2
+  }
+
+  // A function, not a binding: measuring means assigning to the metrics object,
+  // and a binding that writes something in order to read it re-enters itself.
+  function measureChips() {
+    var widest = 0
+    for (var i = 0; i < root.rows.length; i++) {
+      var label = root.chipFor(root.rows[i])
+      if (label === "") continue
+      chipMetrics.text = label
+      widest = Math.max(widest, chipMetrics.width)
+    }
+    // Plus the padding a Chip puts around its own label, and zero when nothing
+    // in this answer has a chip: an empty column no one can see the reason for
+    // is just a margin in the wrong place.
+    root.chipColumn = widest > 0 ? Math.ceil(widest) + Style.space(16) : 0
+  }
+
+  onRowsChanged: root.measureChips()
+
   readonly property string activeView: {
     if (root.answerMode) return "answer"
     if (root.rows.length === 0) return "list"
     var wanted = String(root.rows[0].view || "list")
-    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar", "player"].indexOf(wanted) >= 0 ? wanted : "list"
+    return ["list", "hero", "cards", "split", "grid", "dashboard", "calendar",
+            "player", "slider", "form"].indexOf(wanted) >= 0 ? wanted : "list"
   }
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
@@ -180,6 +306,7 @@ Item {
   function open(payloadJson) {
     pinScreen()
     loadExtensions()
+    readClipboard()
     root.opened = true
     if (root.config.resetOnOpen !== false) root.queryText = ""
     root.pendingActivate = ""
@@ -203,6 +330,8 @@ Item {
     root.rows = []
     root.pendingActivate = ""
     root.actionPanelOpen = false
+    root.clipboardUrl = ""
+    root.flowStack = []
     leaveAnswer()
   }
 
@@ -243,6 +372,8 @@ Item {
     var query = Query.parse(text, ++root.epoch, root.knownKeywords)
 
     queryHelp(query)
+    queryPaste(query)
+    querySettings(query)
     queryRecent(query)
     queryApps(query)
     queryCommands(query)
@@ -292,6 +423,9 @@ Item {
     // can switch off, and a pin is an instruction you gave on purpose.
     Pins.apply(merged, root.pins)
     merged.sort(Rank.byScore)
+    // After the sort, because whether a row names its source depends on what
+    // else survived into the answer beside it.
+    root.tagSources(merged)
     root.rows = merged
 
     if (!root.cursorMoved) {
@@ -352,7 +486,12 @@ Item {
   function queryHelp(query) {
     if (!root.helpMode) return put("help", query, [])
 
-    var entries = Help.entries(Query.SIGILS, root.extensions, root.config.quicklinks)
+    // `settings` is a built-in, but Help's own list of those is a table in
+    // another file. Handed in beside the extensions instead, so the keyword
+    // appears under `?` without two places disagreeing about what is built in.
+    var listed = [{ keyword: "settings", title: "Settings", aliases: [], glyph: "" }]
+      .concat(root.extensions)
+    var entries = Help.entries(Query.SIGILS, listed, root.config.quicklinks)
     var out = []
 
     for (var i = 0; i < entries.length; i++) {
@@ -392,6 +531,216 @@ Item {
                        "Search Again"))
     }
     put("recents", query, out)
+  }
+
+  // ------------------------------------------------------------ settings
+
+  // `settings:` lists the extensions that declare any, and picking one opens a
+  // form over its fields. Two steps rather than one screen of everything,
+  // because the launcher is a text box and a wall of forty fields in it would
+  // be a config editor wearing a launcher's clothes.
+  //
+  // An extension declares what it wants in its own JSON file:
+  //
+  //   "settings": [
+  //     { "key": "org", "label": "Organisation", "value": "pehcastro" },
+  //     { "key": "token", "label": "API Token", "secret": true }
+  //   ]
+  //
+  // and reads the answers back out of omacast.json under its own id. The
+  // launcher never passes them to the search command: a token on a command line
+  // is a token in everyone's process list.
+  function extensionById(id) {
+    for (var i = 0; i < root.extensions.length; i++) {
+      if (root.extensions[i].id === id) return root.extensions[i]
+    }
+    return null
+  }
+
+  function querySettings(query) {
+    if (query.scope !== "settings") return put("settings", query, [])
+
+    var arg = Query.argFor(query, "settings", []).trim()
+    var chosen = root.extensionById(arg)
+
+    if (chosen && chosen.settings.length > 0) return put("settings", query, [settingsForm(chosen)])
+
+    var out = []
+    for (var i = 0; i < root.extensions.length; i++) {
+      var ext = root.extensions[i]
+      if (!ext.settings || ext.settings.length === 0) continue
+      if (arg !== "" && ext.id.indexOf(arg.toLowerCase()) !== 0
+          && ext.title.toLowerCase().indexOf(arg.toLowerCase()) < 0) continue
+
+      var saved = Settings.settingsFor(root.config, ext.id)
+      var filled = 0
+      for (var j = 0; j < ext.settings.length; j++) {
+        if (String(saved[String(ext.settings[j].key)] || "") !== "") filled += 1
+      }
+
+      out.push({
+        key: "settings:" + ext.id,
+        providerId: "settings",
+        group: "Settings",
+        title: ext.title,
+        subtitle: "",
+        // What is already filled in, so a half-configured extension is visible
+        // from the list rather than only from inside its own form.
+        detail: filled + " of " + ext.settings.length + " set",
+        accessory: ext.keyword + ":",
+        iconSource: "",
+        iconGlyph: ext.glyph,
+        score: Rank.score(Rank.TIER.forced, Math.max(0, 90000 - i * 200), 0),
+        pending: false,
+        // A query and nothing else: choosing one is a step further in, not a
+        // command, and Escape is what undoes it.
+        actions: [{ title: "Edit", shortcut: "↵", query: "settings:" + ext.id }]
+      })
+    }
+    put("settings", query, out)
+  }
+
+  // The form row for one extension. Built here rather than by the extension,
+  // because writing the config file is the launcher's job and a command line
+  // that could do it would also be a command line that could do anything else.
+  function settingsForm(ext) {
+    var saved = Settings.settingsFor(root.config, ext.id)
+    var fields = []
+
+    for (var i = 0; i < ext.settings.length; i++) {
+      var spec = ext.settings[i] || {}
+      var key = String(spec.key || "")
+      if (key === "") continue
+
+      fields.push({
+        name: key,
+        label: String(spec.label || key),
+        // What is saved wins over what the extension suggested: the suggestion
+        // is a default, and a default that overwrote an answer would not be one.
+        value: saved[key] !== undefined ? String(saved[key]) : String(spec.value || ""),
+        placeholder: String(spec.placeholder || ""),
+        secret: spec.secret === true
+      })
+    }
+
+    return {
+      key: "settings:form:" + ext.id,
+      providerId: "settings",
+      group: "Settings",
+      view: "form",
+      title: ext.title,
+      subtitle: "Saved to ~/.config/omarchy/omacast.json",
+      submit: "Save",
+      fields: fields,
+      // Back to the list, which the flow stack reads as walking back out.
+      query: "settings:",
+      onSubmit: (function (id) {
+        return function (values) { root.saveExtensionSettings(id, values) }
+      })(ext.id),
+      score: Rank.score(Rank.TIER.forced, 99000, 0),
+      pending: false
+    }
+  }
+
+  // Through the file's own text, so nothing the user wrote is lost and nothing
+  // we merely defaulted to is written down as though they had chosen it.
+  //
+  // omacast.json is watched, so this write comes straight back as a reload and
+  // the form's next visit shows what was saved. That round trip is only safe
+  // because this file is ours: the same write into shell.json would make the
+  // shell recompute its panel list and destroy this overlay mid-edit.
+  function saveExtensionSettings(id, values) {
+    var next = Settings.withExtensionSettings(configFile.text(), id, values)
+    if (next === "") return
+
+    configFile.setText(next)
+    // And applied here rather than waiting for the watch to report it back: a
+    // FileView does not raise onFileChanged for its own write, so the list you
+    // return to would still say nothing had been saved.
+    root.config = Settings.merge(next)
+  }
+
+  // ------------------------------------------------------------ clipboard
+
+  // A URL you just copied, offered as the first row of an empty box.
+  //
+  // Copying a link and then summoning a launcher is one gesture with one
+  // obvious ending, and typing the link back in by hand to reach it is absurd.
+  property string clipboardUrl: ""
+
+  // Only an explicit scheme counts. A bare `github.com/x` is a plausible URL
+  // and also a plausible thing to have copied for any other reason, and this
+  // row appears without being asked for, so the test has to be one that a
+  // sentence, a path or a snippet of code can never accidentally pass.
+  function urlInClipboard(text) {
+    var value = String(text || "").replace(/^\s+/, "").replace(/\s+$/, "")
+    if (value === "") return ""
+    // Truncated at the read limit: whatever this is, we are not looking at all
+    // of it, so we do not know that it is one URL and nothing else.
+    if (value.length >= 480) return ""
+    if (/\s/.test(value)) return ""
+    if (!/^https?:\/\/[^\s\/]+\.[^\s]*$/i.test(value)) return ""
+    return value
+  }
+
+  // head -c bounds the read: a clipboard holding a 40MB screenshot's worth of
+  // base64 costs one closed pipe rather than a string the launcher then has to
+  // hold. `-t text/plain` makes an image clipboard cost nothing at all, since
+  // wl-paste exits without writing anything.
+  //
+  // Once per summon, never per keystroke.
+  function readClipboard() {
+    root.clipboardUrl = ""
+    if (clipboardReader.running) return
+    clipboardReader.command = ["bash", "-lc",
+      "wl-paste -n -t text/plain 2>/dev/null | head -c 512"]
+    clipboardReader.running = true
+  }
+
+  Process {
+    id: clipboardReader
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var found = root.urlInClipboard(text)
+        if (found === "" || !root.opened) return
+        root.clipboardUrl = found
+        // The read finishes after the first paint, so the empty box has to
+        // redraw to gain the row.
+        if (root.recentMode) root.refresh()
+      }
+    }
+  }
+
+  // Only on an empty box. Once you have started typing you have said what you
+  // want, and a row about something you copied earlier is in the way.
+  function queryPaste(query) {
+    if (!root.recentMode || root.clipboardUrl === "") return put("paste", query, [])
+
+    var url = root.clipboardUrl
+    put("paste", query, [{
+      key: "paste:" + url,
+      providerId: "paste",
+      group: "Clipboard",
+      title: url,
+      subtitle: "",
+      detail: "On the clipboard",
+      accessory: "Open",
+      iconSource: "",
+      // A link glyph, so the row reads as something you copied before the URL
+      // itself has been read at all.
+      iconGlyph: "",
+      // Above the recent queries: it is the newer intent of the two.
+      score: Rank.score(Rank.TIER.forced, 95000, 0),
+      pending: false,
+      run: function () { root.openSearch(url) },
+      actions: [
+        { title: "Open Link", shortcut: "\u21B5",
+          exec: "omarchy-launch-browser " + Util.shellQuote(url) },
+        { title: "Search For It", exec: "omarchy-launch-browser "
+          + Util.shellQuote(Settings.url(root.config, root.defaultEngine, url)) }
+      ]
+    }])
   }
 
   function queryApps(query) {
@@ -691,6 +1040,56 @@ Item {
     probeNextProvider()
   }
 
+  // ------------------------------------------------------------ flows
+
+  // The queries you walked in from, oldest first.
+  //
+  // An action that carries a `query` lands you somewhere else instead of
+  // closing, which is what makes `wifi:` lead to one network and that network
+  // lead to a password form. Three steps in, the only honest way out is the way
+  // you came, so the launcher keeps the trail and Escape walks it.
+  //
+  // Escape already means back: leave the answer, clear the box, close. This is
+  // one more stage at the front of that ladder rather than a second key, so
+  // there is still exactly one thing to press when you want out.
+  property var flowStack: []
+
+  // True while the launcher is writing the box itself. Typing means you have
+  // abandoned the flow and the trail is worthless; a follow-up query writing the
+  // same box means you are still walking it, and the two look identical to
+  // onTextChanged without this.
+  property bool navigating: false
+
+  function pushFlow(from) {
+    var text = String(from || "")
+    var stack = root.flowStack
+    if (stack.length > 0 && String(stack[stack.length - 1]) === text) return
+
+    var next = stack.slice()
+    next.push(text)
+    // Deeper than anyone walks on purpose, shallow enough that a script whose
+    // follow-up lands back on itself cannot grow the trail forever.
+    if (next.length > 8) next.shift()
+    root.flowStack = next
+  }
+
+  function flowBack() {
+    if (root.flowStack.length === 0) return
+
+    var next = root.flowStack.slice()
+    var back = String(next.pop())
+    root.flowStack = next
+    goTo(back)
+  }
+
+  // Land on another query at once, without the box reading it as typing.
+  function goTo(text) {
+    root.navigating = true
+    resetSelection()
+    setInput(text)
+    root.navigating = false
+  }
+
   // ------------------------------------------------------------ activation
 
   function activate(row) {
@@ -752,6 +1151,21 @@ Item {
     // thing you want to look at next.
     var followUp = action.query !== undefined ? String(action.query) : ""
 
+    // Remember where this step started, so the chain can be walked back out.
+    // A follow-up that lands on the query you are already looking at is a
+    // refresh, not a step, and adding it would make Escape do nothing visible.
+    if (followUp !== "" && followUp !== root.queryText) {
+      var stack = root.flowStack
+      if (stack.length > 0 && String(stack[stack.length - 1]) === followUp) {
+        // Landing on where you came from is leaving, not going further in. A
+        // settings form saving and returning to its own list would otherwise
+        // stack a step whose only effect is to reopen the form you just left.
+        root.flowStack = stack.slice(0, stack.length - 1)
+      } else {
+        root.pushFlow(root.queryText)
+      }
+    }
+
     if (typeof action.run === "function") {
       if (followUp === "") dismiss()
       Qt.callLater(action.run)
@@ -765,7 +1179,12 @@ Item {
       if (followUp !== "") requery(followUp)
       return
     }
-    if (action.row) root.activate(action.row)
+    if (action.row) return root.activate(action.row)
+
+    // Nothing to run, only somewhere to go. `requery` exists for the other
+    // case, where something did run and the answer needs several passes to
+    // catch up with it; here the wait would just read as a slow launcher.
+    if (followUp !== "") root.goTo(followUp)
   }
 
   // Ask again, several times, because what just ran takes an unknown while to
@@ -796,7 +1215,11 @@ Item {
       followUp.round += 1
 
       if (followUp.round === 1) {
+        // Flagged, so the box changing under the user does not read as the user
+        // typing and throw away the trail back.
+        root.navigating = true
         input.text = followUp.text
+        root.navigating = false
         resetSelection()
         Qt.callLater(function () { input.forceActiveFocus() })
       } else {
@@ -853,11 +1276,35 @@ Item {
     stateSave.restart()
   }
 
+  // A view that took the keyboard is giving it back. Called from the view's
+  // own destruction rather than from whatever replaced it, because only the
+  // thing that took the focus knows for certain that it still has it.
+  function focusInput() {
+    Qt.callLater(function () { input.forceActiveFocus() })
+  }
+
+  // Escape, pressed inside a view that owns the keyboard. The same ladder the
+  // box's own Escape climbs, minus the stage that only means anything with a
+  // text cursor in the box.
+  function escapeFrom() {
+    if (root.flowStack.length > 0) root.flowBack()
+    else if (root.queryText.length > 0) root.setInput("")
+    else root.dismiss()
+  }
+
   // Put text in the box and search it, without closing.
   function setInput(text) {
     input.text = text
     input.cursorPosition = input.text.length
-    Qt.callLater(function () { input.forceActiveFocus() })
+    Qt.callLater(function () {
+      // A view that took the keyboard keeps it. Writing the box schedules this
+      // refocus, and landing on a form schedules the form's own: both are
+      // queued during the same assignment, and the box's was queued second, so
+      // without this it wins and the first thing typed into a password field
+      // goes into the search box instead.
+      if (root.activeView === "form") return
+      input.forceActiveFocus()
+    })
   }
 
   // Pin the selected row so it leads every query it matches. Keyed the way
@@ -949,13 +1396,18 @@ Item {
 
       row.score = Rank.score(Rank.TIER.calc, 0, 0)
       row.view = "hero"
-      row.run = (function (answer) {
-        return function () {
-          Util.execDetached("printf %s " + Util.shellQuote(answer) + " | wl-copy")
-        }
-      })(row.title)
+      // Copying the answer and remembering it are one gesture, so one command
+      // does both. `calc:` reads the file this writes, and its `when` is a test
+      // that the file has anything in it, so a launcher that only copied would
+      // leave that keyword permanently invisible.
+      var record = "omacast-calc-history record " + Util.shellQuote(calc.pendingText)
+        + " " + Util.shellQuote(row.title)
+
+      row.run = (function (command) {
+        return function () { Util.execDetached(command) }
+      })(record)
       row.actions = [
-        { title: "Copy Result", shortcut: "\u21B5", exec: "printf %s " + Util.shellQuote(row.title) + " | wl-copy" },
+        { title: "Copy Result", shortcut: "\u21B5", exec: record },
         { title: "Copy Expression", exec: "printf %s " + Util.shellQuote(calc.pendingText) + " | wl-copy" }
       ]
       root.put("calc", query, [row])
@@ -1006,6 +1458,14 @@ Item {
       var ext = Extensions.normalize(parsed[i], parsed[i].__source)
       if (!ext) continue
       if (!Settings.extensionEnabled(root.config, ext.id)) continue
+
+      // Read off the raw object rather than out of normalize. Both of these
+      // are the launcher's business and not the provider's: the accent is only
+      // ever used for drawing, and the settings list is only ever read by the
+      // settings form, so neither has any reason to travel through the code
+      // that builds search commands.
+      ext.accent = String(parsed[i].accent || "")
+      ext.settings = Array.isArray(parsed[i].settings) ? parsed[i].settings : []
       loaded.push(ext)
     }
     root.extensions = loaded
@@ -1160,6 +1620,12 @@ Item {
 
       anchors.horizontalCenter: parent.horizontalCenter
       y: Math.round(parent.height * 0.18)
+
+      // Nothing else stops a view drawing past this border. A view sizes itself
+      // from its own content, and a view that gets that sum wrong used to spill
+      // its last rows over the rounded corner and onto the wallpaper.
+      clip: true
+
       height: header.height
         + ((root.rows.length > 0 || root.answerMode)
            ? resultsArea.height + footer.height + Style.space(14) : 0)
@@ -1241,6 +1707,9 @@ Item {
 
           onTextChanged: {
             if (root.answerMode) root.leaveAnswer()
+            // Typing is leaving the flow, not walking back through it. Only the
+            // launcher's own writes to the box keep the trail alive.
+            if (!root.navigating) root.flowStack = []
             root.resetSelection()
             root.setQuery(text)
           }
@@ -1263,8 +1732,11 @@ Item {
               else return
               event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
-              // Three stages: leave the answer, clear the box, then close.
+              // Four stages: leave the answer, step back out of a flow, clear
+              // the box, then close. Each one is the smallest undo available at
+              // that moment, so holding Escape unwinds everything in order.
               if (root.answerMode) root.leaveAnswer()
+              else if (root.flowStack.length > 0) root.flowBack()
               else if (input.text.length > 0) input.text = ""
               else root.dismiss()
               event.accepted = true
@@ -1289,6 +1761,15 @@ Item {
               event.accepted = true
             } else if (event.key === Qt.Key_Backtab) {
               root.move(-1)
+              event.accepted = true
+            } else if (root.activeView === "slider"
+                       && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
+              // Left and right belong to the text cursor everywhere else, and
+              // are taken back only while the thing on screen is a row of
+              // ranges, where they are the whole point of the view.
+              if (resultsArea.item && typeof resultsArea.item.nudge === "function") {
+                resultsArea.item.nudge(event.key === Qt.Key_Right ? 1 : -1)
+              }
               event.accepted = true
             } else if ((root.activeView === "grid" || root.activeView === "dashboard" || root.activeView === "calendar")
                        && event.key === Qt.Key_Right) {
@@ -1394,6 +1875,19 @@ Item {
         anchors.right: parent.right
         active: root.rows.length > 0 || root.answerMode
 
+        // A view asks for the height its content wants, and the card grows to
+        // hold it. Neither of them knows about the screen, so a long answer put
+        // the footer below the bottom edge, out of reach.
+        //
+        // The cap goes here rather than on the card, because the footer follows
+        // this item's bottom: a shorter card would have hidden the footer
+        // instead of shortening the list. Every view clips, so what does not
+        // fit is cut cleanly.
+        readonly property int room: panel.height - card.y - header.height
+          - footer.height - Style.space(14) - Style.space(24)
+
+        height: Math.max(0, Math.min(item ? item.implicitHeight : 0, resultsArea.room))
+
         sourceComponent: {
           switch (root.activeView) {
           case "hero": return heroView
@@ -1403,21 +1897,25 @@ Item {
           case "dashboard": return dashboardView
           case "calendar": return calendarView
           case "player": return playerView
+          case "slider": return sliderView
+          case "form": return formView
           case "answer": return answerView
           default: return listView
           }
         }
       }
 
-      Component { id: listView;  ResultList  { launcher: root; width: resultsArea.width } }
-      Component { id: heroView;  ResultHero  { launcher: root; width: resultsArea.width } }
-      Component { id: cardsView; ResultCards { launcher: root; width: resultsArea.width } }
-      Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width } }
-      Component { id: gridView;  ResultGrid  { launcher: root; width: resultsArea.width } }
-      Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width } }
-      Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width } }
-      Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width } }
-      Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width } }
+      Component { id: listView;  ResultList  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: heroView;  ResultHero  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: cardsView; ResultCards { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: splitView; ResultSplit { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: gridView;  ResultGrid  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: answerView; ResultAnswer { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: dashboardView; ResultDashboard { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: calendarView;  ResultCalendar  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: formView;      ResultForm      { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
 
       // The hint bar: what Enter does, and that there is more on Ctrl+K.
       Item {
@@ -1441,6 +1939,12 @@ Item {
           anchors.leftMargin: Style.space(18)
           anchors.verticalCenter: parent.verticalCenter
           text: {
+            // A form's Enter is its own submit, and the row's first action is
+            // whatever the extension attached for the list view it came from.
+            if (root.activeView === "form" && root.rows.length > 0) {
+              return "\u21B5  " + String(root.rows[0].submit || "Submit")
+            }
+            if (root.activeView === "slider") return "\u2190 \u2192  Adjust"
             var actions = root.currentActions()
             return actions.length > 0 ? "\u21B5  " + String(actions[0].title || "Open") : ""
           }
@@ -1453,11 +1957,15 @@ Item {
           anchors.right: parent.right
           anchors.rightMargin: Style.space(18)
           anchors.verticalCenter: parent.verticalCenter
-          visible: root.currentActions().length > 1 || root.answerMode || root.answerAvailable
+          visible: root.currentActions().length > 1 || root.answerMode
+                   || root.answerAvailable || root.flowStack.length > 0
           text: {
             if (root.answerMode) return root.answerStreaming ? "\u238B  Stop" : "\u238B  Back"
             var actions = root.currentActions()
             var parts = []
+            // First, because it is the way out of somewhere you were led, and
+            // nothing else on this bar is about leaving.
+            if (root.flowStack.length > 0) parts.push("\u238B  Back")
             if (actions.length > 1) parts.push("\u21E7\u21B5  " + String(actions[1].title))
             if (root.answerAvailable && input.text.trim() !== "") parts.push("\u2303\u21B5  Ask " + root.answerModel)
             if (actions.length > 1) parts.push("\u2303K  Actions")

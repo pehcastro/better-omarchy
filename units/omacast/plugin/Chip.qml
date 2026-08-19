@@ -13,6 +13,10 @@ Rectangle {
   property alias text: label.text
   property color foreground: Color.menu.text
   property bool accented: false
+  // Which accent an accented chip uses. The theme's, unless the thing the chip
+  // is about has one of its own: a Spotify chip is green and a kill chip is
+  // red, and both are the same shape as every other chip on the card.
+  property color tint: Color.accent
   property string fontFamily: Style.font.menuFamily
 
   implicitWidth: label.implicitWidth + Style.space(16)
@@ -20,7 +24,7 @@ Rectangle {
   radius: height / 2
 
   color: accented
-    ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16)
+    ? Qt.rgba(tint.r, tint.g, tint.b, 0.16)
     : Qt.rgba(foreground.r, foreground.g, foreground.b, 0.07)
 
   visible: label.text !== ""
@@ -28,7 +32,7 @@ Rectangle {
   Text {
     id: label
     anchors.centerIn: parent
-    color: chip.accented ? Color.accent : Qt.darker(chip.foreground, 1.6)
+    color: chip.accented ? chip.tint : Qt.darker(chip.foreground, 1.6)
     font.family: chip.fontFamily
     font.pixelSize: Style.font.caption
     font.letterSpacing: 0.2

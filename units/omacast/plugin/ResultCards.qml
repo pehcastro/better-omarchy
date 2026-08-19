@@ -10,6 +10,9 @@ ListView {
 
   required property var launcher
 
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
+
   readonly property int rowHeight: Style.space(64)
 
   implicitHeight: Math.min(count, Math.max(3, view.launcher.maxRows - 3)) * rowHeight
@@ -115,17 +118,26 @@ ListView {
       }
     }
 
-    Text {
+    // The same tail column the list view draws, measured once by the launcher,
+    // so a card and a row put the kind of thing they are in the same place.
+    Item {
       id: accessory
       anchors.right: parent.right
       anchors.rightMargin: Style.space(20)
       anchors.verticalCenter: parent.verticalCenter
-      text: String(modelData.accessory || "")
-      color: Qt.darker(view.launcher.foreground, 1.8)
-      font.family: view.launcher.fontFamily
-      font.pixelSize: Style.font.caption
-      elide: Text.ElideRight
-      width: Math.min(implicitWidth, view.width * 0.22)
+      width: view.launcher.chipColumn
+      height: Style.space(20)
+
+      Chip {
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        text: view.launcher.chipFor(accessory.parent.modelData)
+        accented: String(accessory.parent.modelData.source || "") !== ""
+        tint: accessory.parent.modelData.accent
+          ? accessory.parent.modelData.accent : Color.accent
+        foreground: view.launcher.foreground
+        fontFamily: view.launcher.fontFamily
+      }
     }
   }
 }

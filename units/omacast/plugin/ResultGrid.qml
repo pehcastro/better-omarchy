@@ -13,6 +13,9 @@ Column {
 
   required property var launcher
 
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
+
   readonly property var current: launcher.rows.length > launcher.selectedIndex
     ? launcher.rows[launcher.selectedIndex] : null
 

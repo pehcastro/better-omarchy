@@ -25,12 +25,66 @@ ListView {
     var rows = view.launcher.rows
     if (index >= rows.length) return ""
     var group = String(rows[index].group || "")
+
+    // When the rows are naming their own source, a header saying the same word
+    // above them is that word twice. A group that says something the source
+    // does not, like Tracks under Spotify, still earns its line.
+    if (group === String(rows[index].source || "")) return ""
+
     if (index === 0) return group
     return String(rows[index - 1].group || "") === group ? "" : group
   }
 
-  implicitHeight: Math.min(count, launcher.maxRows) * rowHeight + Style.space(20)
+  // Group headers are drawn inside the delegate, above the row, so a grouped
+  // answer is taller than its row count says. Counting only rows left `git:`,
+  // which has four groups, about a hundred pixels shorter than its own content,
+  // and the rows that did not fit were clipped away with nothing to say so.
+  readonly property int headerCount: {
+    var seen = 0
+    for (var i = 0; i < count && i < launcher.maxRows; i++)
+      if (view.headerFor(i) !== "") seen += 1
+    return seen
+  }
+
+  // How much room the card has left. The launcher sets it, because only the
+  // launcher knows where the bottom of the screen is.
+  property int maxHeight: 0
+
+  readonly property int pad: Style.space(10)
+
+  // Everything the model would draw, plus a margin at each end.
+  readonly property int contentHeight_: launcher.rows.length * rowHeight
+    + headerCount * headerHeight
+  readonly property int wantedHeight: view.pad + contentHeight_ + view.pad
+
+  // When the answer is longer than the room, the view ends on a row boundary
+  // with the top margin still in place. A bottom margin only exists after the
+  // last item, so it cannot protect this edge: without the exact arithmetic the
+  // next row peeks over the bottom and the card reads as broken rather than as
+  // scrollable.
+  // Two limits: how many rows the user wants at once, and how much screen is
+  // left. Whichever is smaller wins.
+  readonly property int cap: {
+    var byRows = view.pad * 2 + launcher.maxRows * rowHeight + headerCount * headerHeight
+    return view.maxHeight > 0 ? Math.min(view.maxHeight, byRows) : byRows
+  }
+
+  implicitHeight: {
+    if (view.wantedHeight <= view.cap) return view.wantedHeight
+    var body = view.cap - view.pad - headerCount * headerHeight
+    return view.pad + Math.max(1, Math.floor(body / rowHeight)) * rowHeight
+      + headerCount * headerHeight
+  }
+
   clip: true
+
+  // Real margins, not extra room inside the view. The breathing space used to
+  // be added to implicitHeight alone, which left a gap the next row peeked
+  // through: the answer looked cut in half rather than merely longer than the
+  // box. Margins move the content instead of making space beside it.
+  topMargin: Style.space(10)
+  bottomMargin: Style.space(10)
+
   focus: false
   interactive: true
   currentIndex: launcher.selectedIndex
@@ -116,10 +170,16 @@ ListView {
         anchors.verticalCenter: parent.verticalCenter
       }
 
+      // The glyph takes the extension's own colour when it declared one, which
+      // is the cheapest place to put it: it is already the leftmost thing on
+      // the row, so a green dot and a red dot separate two sources before
+      // either name has been read.
       Text {
         visible: !icon.visible
         text: String(parent.parent.modelData.iconGlyph || "")
-        color: parent.parent.selected ? view.launcher.selectedText : Qt.darker(view.launcher.foreground, 1.5)
+        color: parent.parent.modelData.accent
+          ? parent.parent.modelData.accent
+          : (parent.parent.selected ? view.launcher.selectedText : Qt.darker(view.launcher.foreground, 1.5))
         font.family: view.launcher.fontFamily
         font.pixelSize: Style.font.body
         width: Style.space(20)
@@ -134,7 +194,7 @@ ListView {
       Column {
         anchors.left: parent.left
         anchors.leftMargin: Style.space(62)
-        anchors.right: tail.left
+        anchors.right: star.visible ? star.left : descriptor.left
         anchors.rightMargin: Style.space(12)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(1)
@@ -160,38 +220,57 @@ ListView {
         }
       }
 
-      Row {
+      // The kind of thing this is, last and hard against the right edge, in a
+      // slot as wide as the widest one in this answer. A row without a chip
+      // leaves the slot empty rather than letting the text beside it slide
+      // across, so the chips share a left edge as well as a right one.
+      Item {
         id: tail
         anchors.right: parent.right
         anchors.rightMargin: Style.space(20)
         anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.space(6)
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          visible: tail.parent.parent.modelData.pinned === true
-          text: "\u2605"
-          color: Color.accent
-          font.family: view.launcher.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        Text {
-          anchors.verticalCenter: parent.verticalCenter
-          text: String(tail.parent.parent.modelData.subtitle || "")
-          color: Qt.darker(view.launcher.foreground, 1.8)
-          font.family: view.launcher.fontFamily
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-          width: Math.min(implicitWidth, view.width * 0.32)
-        }
+        width: view.launcher.chipColumn
+        height: Style.space(20)
 
         Chip {
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          text: String(tail.parent.parent.modelData.accessory || "")
+          text: view.launcher.chipFor(tail.parent.parent.modelData)
+          accented: String(tail.parent.parent.modelData.source || "") !== ""
+          tint: tail.parent.parent.modelData.accent
+            ? tail.parent.parent.modelData.accent : Color.accent
           foreground: view.launcher.foreground
           fontFamily: view.launcher.fontFamily
         }
+      }
+
+      // What the thing is: an app's own descriptor, a command's category. Plain
+      // text, right-aligned against the chip slot, so its right edge is a column
+      // too even though its length is not.
+      Text {
+        id: descriptor
+        anchors.right: tail.left
+        anchors.rightMargin: view.launcher.chipColumn > 0 ? Style.space(10) : 0
+        anchors.verticalCenter: parent.verticalCenter
+        text: String(parent.parent.modelData.subtitle || "")
+        color: Qt.darker(view.launcher.foreground, 1.8)
+        font.family: view.launcher.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignRight
+        elide: Text.ElideRight
+        width: Math.min(implicitWidth, view.width * 0.3)
+      }
+
+      Text {
+        id: star
+        anchors.right: descriptor.left
+        anchors.rightMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        visible: parent.parent.modelData.pinned === true
+        text: "\u2605"
+        color: Color.accent
+        font.family: view.launcher.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
   }

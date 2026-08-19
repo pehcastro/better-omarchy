@@ -14,9 +14,15 @@ import qs.Ui
 // Every row is a month, so the row you have selected is the month on screen and
 // the tabs across the top are the rest of the answer.
 Item {
+  // Without this, a height computed from content draws past the card's border
+  // when the sum is wrong, rather than being cut off inside it.
+  clip: true
   id: view
 
   required property var launcher
+
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
 
   readonly property var current: launcher.rows.length > launcher.selectedIndex
     ? launcher.rows[launcher.selectedIndex] : null

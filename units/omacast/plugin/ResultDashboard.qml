@@ -13,9 +13,15 @@ import qs.Ui
 // without one is a fact, and a fact does not need a meter or a display face to
 // be true, so it stays quiet and lets the meters carry the tile.
 Item {
+  // Without this, a height computed from content draws past the card's border
+  // when the sum is wrong, rather than being cut off inside it.
+  clip: true
   id: view
 
   required property var launcher
+
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
 
   readonly property int gutter: Style.space(12)
   // Wide enough for "10G of 67G" at display size, which is the longest reading

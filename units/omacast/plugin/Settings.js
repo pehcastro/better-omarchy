@@ -66,6 +66,17 @@ var DEFAULTS = {
   //   "extensions": { "radio": false, "theme": false }
   extensions: {},
 
+  // What each extension was configured with, by extension id. An extension
+  // declares the settings it wants in its own JSON file; `settings:` in the
+  // launcher fills them in and writes them here.
+  //
+  //   "extensionSettings": { "gh": { "org": "pehcastro" } }
+  //
+  // A script reads its own back out of this file, which is why they live under
+  // the id rather than being flattened into the top level: two extensions both
+  // wanting a `token` must not be able to read each other's.
+  extensionSettings: {},
+
   // Rank by what you actually use. Set false to rank purely on match quality.
   frecency: true,
 
@@ -139,6 +150,50 @@ function providers(config) {
 function extensionEnabled(config, id) {
   var listed = config.extensions || {}
   return listed[id] !== false
+}
+
+// What one extension was configured with, as a plain object. Never null, so a
+// caller can read a key off it without checking first.
+function settingsFor(config, id) {
+  var all = (config && config.extensionSettings) || {}
+  var one = all[String(id)]
+  return (one && typeof one === "object") ? one : {}
+}
+
+// The whole config file, with one extension's settings replaced.
+//
+// This is the only thing in the launcher that writes the user's own config, and
+// it goes through the file's existing text rather than through the merged
+// object it was parsed into: writing the merge back would bake every default
+// into the file, so a later change to a default would silently not reach anyone
+// who had ever opened a settings form.
+//
+// A file that will not parse is left alone. Returning "" rather than a fresh
+// document is the point: someone is mid-edit in a text editor, and replacing
+// their half-written JSON with ours would take the rest of it with it.
+function withExtensionSettings(text, id, values) {
+  var data = {}
+
+  if (text && String(text).trim() !== "") {
+    try {
+      data = JSON.parse(text)
+    } catch (e) {
+      return ""
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) return ""
+  }
+
+  var all = (data.extensionSettings && typeof data.extensionSettings === "object")
+    ? data.extensionSettings : {}
+
+  var one = {}
+  for (var key in values) one[key] = String(values[key])
+  all[String(id)] = one
+
+  data.extensionSettings = all
+  // Two-space indent and a trailing newline, because this file is meant to be
+  // opened and read by hand after we have written it.
+  return JSON.stringify(data, null, 2) + "\n"
 }
 
 function engine(config, id) {

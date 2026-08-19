@@ -12,6 +12,9 @@ Item {
 
   required property var launcher
 
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
+
   implicitHeight: Math.min(
     Math.max(Style.space(120), body.implicitHeight + Style.space(48)),
     Style.space(420))

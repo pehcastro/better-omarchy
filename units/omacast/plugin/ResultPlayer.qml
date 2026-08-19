@@ -17,6 +17,9 @@ Item {
 
   required property var launcher
 
+  // Room left in the card. Set by the launcher; this view only clips to it.
+  property int maxHeight: 0
+
   readonly property var track: launcher.rows.length > 0 ? launcher.rows[0] : null
   readonly property bool playing: track && String(track.status || "") === "Playing"
 
