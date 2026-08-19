@@ -464,7 +464,18 @@ if ((pair_count >= 2)); then
     where="${pair#*:}"
     where="${where#"${where%%[![:space:]]*}"}"
     where="${where%"${where##*[![:space:]]}"}"
-    [[ -z $who || -z $where ]] && continue
+    [[ -z $who ]] && continue
+
+    # `me:` with nothing after it puts you in the grid. Your own hours used to
+    # be drawn as a ruler above everyone else's, which put you in every answer
+    # whether or not you were in the meeting. Being in it is now something you
+    # ask for.
+    if [[ -z $where ]]; then
+      case "${who,,}" in
+        me|i|local|here|home) people_names+=("$who"); people_zones+=("$local_zone"); continue ;;
+        *) continue ;;
+      esac
+    fi
 
     zone=$(resolve_zone "$where") || continue
     people_names+=("$who")

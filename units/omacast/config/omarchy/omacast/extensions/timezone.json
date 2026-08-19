@@ -24,5 +24,6 @@
       "value": "",
       "placeholder": "UTC, New York, Tokyo"
     }
-  ]
+  ],
+  "timeoutMs": 6000
 }

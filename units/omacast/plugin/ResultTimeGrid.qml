@@ -41,14 +41,22 @@ Item {
   // Wide enough for a name over "Sao Paulo · 12h ahead". At 120 the shift was
   // cut to "12h ahe…", which is the one number the row exists to tell you.
   readonly property int labelWidth: Style.space(168)
-  readonly property int gutter: Style.space(24)
+  // The same left edge as the search prompt above, so the card has one margin
+  // rather than two that nearly agree. At 2x the difference was visible as a
+  // step between the input and the grid under it.
+  readonly property int gutter: Style.space(18)
   readonly property int cellGap: Style.space(2)
   readonly property int rowHeight: Style.space(52)
+
+  // Smaller than a caption. Twenty-four of these sit side by side under a row
+  // of cells, so they have to fit the cell rather than the sentence, and at
+  // caption size they collided at 2x.
+  readonly property int numberSize: Math.max(9, Style.font.caption - 2)
   readonly property int headerHeight: Style.space(34)
   readonly property int summaryHeight: Style.space(56)
 
   // The card grows to hold this, and the launcher caps it against the screen.
-  implicitHeight: view.summaryHeight + view.headerHeight
+  implicitHeight: view.summaryHeight
     + view.people.length * view.rowHeight + Style.space(18)
 
   readonly property real cellWidth: {
@@ -130,33 +138,6 @@ Item {
       }
     }
 
-    // Hour labels, every third one. Twenty-four numbers across is a ruler
-    // nobody reads; four is a scale.
-    Item {
-      width: parent.width
-      height: view.headerHeight
-
-      Repeater {
-        model: view.columns
-
-        Text {
-          required property int index
-          visible: index % 3 === 0
-          x: view.gutter + view.labelWidth + index * (view.cellWidth + view.cellGap)
-          anchors.verticalCenter: parent.verticalCenter
-          text: {
-            var stamp = (view.row && view.row.startsAt) ? Number(view.row.startsAt) : 0
-            if (stamp === 0) return ""
-            var at = new Date((stamp + index * 3600) * 1000)
-            return ("0" + at.getHours()).slice(-2)
-          }
-          color: index === view.cursor ? Color.accent : Qt.darker(view.launcher.foreground, 2.1)
-          font.family: view.launcher.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-      }
-    }
-
     Repeater {
       model: view.people
 
@@ -221,15 +202,23 @@ Item {
             // the row: a colour says whether an hour is reasonable, a number
             // says which hour it is, and the second question is the one you
             // have to answer out loud to somebody.
+            // Every column, every row. A colour says whether an hour is
+            // reasonable; the number says which hour it is, and the number is
+            // what you have to say out loud to somebody. Showing every third
+            // one meant counting cells to read the rest.
+            //
+            // Muted by default so twenty-four numbers read as a background
+            // scale rather than as twenty-four things demanding attention, and
+            // only the column under the cursor comes forward.
             Text {
-              visible: index % 3 === 0 || index === view.cursor
               anchors.horizontalCenter: parent.horizontalCenter
               anchors.bottom: parent.bottom
               text: String(modelData.label || "").slice(0, 2)
               color: index === view.cursor
-                ? Color.accent : Qt.darker(view.launcher.foreground, 2.0)
+                ? Color.accent : Qt.darker(view.launcher.foreground, 2.6)
               font.family: view.launcher.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: view.numberSize
+              font.bold: index === view.cursor
             }
           }
         }
@@ -247,7 +236,7 @@ Item {
   Rectangle {
     // Sits above the rows and marks the hour under inspection.
     x: view.gutter + view.labelWidth + view.cursor * (view.cellWidth + view.cellGap) - Style.space(2)
-    y: view.summaryHeight + view.headerHeight - Style.space(4)
+    y: view.summaryHeight - Style.space(4)
     width: view.cellWidth + Style.space(4)
     height: view.people.length * view.rowHeight + Style.space(4)
     radius: Style.space(4)

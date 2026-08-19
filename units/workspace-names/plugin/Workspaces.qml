@@ -38,9 +38,68 @@ Panel {
     return ({ label: String(entry.label || ""), keepNumber: entry.keepNumber === true })
   }
 
-  // WidgetButton sizes itself to its label and cannot elide, so a long name
-  // is cut here instead. The full name stays in the button's tooltip.
-  readonly property int maxLabelChars: root.setting("maxLabelChars", 18)
+  // WidgetButton sizes itself to its label and cannot elide, so a long name is
+  // cut here instead. The full name stays in the button's tooltip.
+  //
+  // How much to cut depends on how much bar there is, and the first attempt at
+  // this guessed: a character was assumed to be 0.62 of the font size and the
+  // per-button padding was a number picked to make one screen look right. It
+  // was wrong in both directions on the next screen, cutting "general" to
+  // "gen…" on a desktop with room for all of it.
+  //
+  // So it is measured. TextMetrics reports the real advance width of the real
+  // font, the padding is read off the button rather than assumed, and the
+  // budget is what is left before whatever sits in the middle of the bar.
+  readonly property int maxLabelCeiling: root.setting("maxLabelChars", 18)
+
+  // The names may use this much of the bar. The clock is centred, so half is the
+  // hard wall, and with the empty workspaces hidden the row is short enough to
+  // go right up to it.
+  readonly property real labelShare: root.setting("labelShare", 0.50)
+
+  readonly property string barFontFamily: bar ? bar.fontFamily : Style.font.family
+
+  TextMetrics {
+    id: charProbe
+    font.family: root.barFontFamily
+    font.pixelSize: Style.font.body
+    // Twenty characters of mixed width, so the average is an average rather
+    // than the width of whichever letter was picked.
+    text: "abcdefghijklmnopqrst"
+  }
+
+  readonly property real charWidth: charProbe.advanceWidth > 0
+    ? charProbe.advanceWidth / 20 : Style.font.body * 0.62
+
+  // horizontalMargin 6 either side, plus the column spacing between buttons.
+  readonly property real buttonOverhead: Style.space(12) + Style.space(1)
+
+  readonly property int namedCount: {
+    var ids = root.workspaceIds()
+    var n = 0
+    for (var i = 0; i < ids.length; i++) {
+      if (root.entryFor(ids[i]).label !== "") n += 1
+    }
+    return Math.max(1, n)
+  }
+
+  readonly property int maxLabelChars: {
+    if (root.vertical) return root.maxLabelCeiling
+
+    // Screen.width is already in logical pixels, the same units everything here
+    // is laid out in. Dividing it by devicePixelRatio halved the budget.
+    var ids = root.workspaceIds()
+    var numbered = Math.max(0, ids.length - root.namedCount)
+
+    // A numbered workspace is one or two digits plus the same padding.
+    var numberedCost = numbered * (root.charWidth * 2 + root.buttonOverhead)
+    var budget = Screen.width * root.labelShare - numberedCost
+
+    var perLabel = budget / root.namedCount - root.buttonOverhead
+    var chars = Math.floor(perLabel / Math.max(1, root.charWidth))
+
+    return Math.max(4, Math.min(root.maxLabelCeiling, chars))
+  }
 
   function truncate(text) {
     if (root.maxLabelChars < 1 || text.length <= root.maxLabelChars) return text
@@ -75,17 +134,47 @@ Panel {
     return null
   }
 
-  function workspaceIds() {
-    var ids = [1, 2, 3, 4, 5]
-    var values = Hyprland.workspaces.values
+  // Show every workspace, or only the ones that are actually something.
+  //
+  // A row of five empty numbers is five slots of bar spent on nothing, and it
+  // is why the names had to be cut: they were competing with placeholders. With
+  // this on, a workspace earns its place by having a window, having a name, or
+  // being the one you are looking at.
+  readonly property bool hideEmpty: root.setting("hideEmpty", true)
 
-    for (var i = 0; i < values.length; i++) {
-      var id = values[i].id
-      if (id > 0 && id <= 10 && ids.indexOf(id) === -1) ids.push(id)
+  // A trailing button that takes you to the first free workspace. With the
+  // empty ones hidden there is otherwise no way to reach one by mouse, and
+  // "somewhere new" is a thing you want often enough to be one click.
+  readonly property bool showNewButton: root.setting("showNewButton", true)
+
+  function workspaceIds() {
+    var ids = []
+    var values = Hyprland.workspaces.values
+    var active = root.activeWorkspaceId()
+
+    for (var id = 1; id <= 10; id++) {
+      var ws = root.workspaceById(id)
+      var occupied = ws !== null && ws.toplevels.values.length > 0
+      var named = root.entryFor(id).label !== ""
+
+      if (!root.hideEmpty || occupied || named || id === active) ids.push(id)
     }
 
-    ids.sort(function(left, right) { return left - right })
+    // Never an empty row: with nothing open and nothing named there would be
+    // no workspace to click, and the widget would look broken rather than tidy.
+    if (ids.length === 0) ids.push(active > 0 ? active : 1)
     return ids
+  }
+
+  // The lowest workspace with nothing on it and no name. 0 when there is none,
+  // which hides the button rather than offering somewhere that does not exist.
+  function firstFreeWorkspace() {
+    for (var id = 1; id <= 10; id++) {
+      var ws = root.workspaceById(id)
+      var occupied = ws !== null && ws.toplevels.values.length > 0
+      if (!occupied && root.entryFor(id).label === "") return id
+    }
+    return 0
   }
 
   function focusWorkspace(id) {
@@ -165,6 +254,8 @@ Panel {
     root.buttons = next
   }
 
+  readonly property bool newVisible: root.showNewButton && root.firstFreeWorkspace() > 0
+
   implicitWidth: grid.implicitWidth + (root.vertical ? 0 : Style.spaceReal(1.5))
   implicitHeight: grid.implicitHeight
 
@@ -172,7 +263,7 @@ Panel {
     id: grid
     anchors.fill: parent
     anchors.rightMargin: root.vertical ? 0 : Style.spaceReal(1.5)
-    columns: root.vertical ? 1 : root.workspaceIds().length
+    columns: root.vertical ? 1 : root.workspaceIds().length + (root.newVisible ? 1 : 0)
     columnSpacing: root.vertical ? 0 : Style.space(1)
     rowSpacing: root.vertical ? Style.space(2) : 0
 
@@ -203,6 +294,22 @@ Panel {
         }
 
         Component.onCompleted: root.registerButton(modelData, wsButton)
+      }
+    }
+
+    WidgetButton {
+      visible: root.newVisible
+      bar: root.bar
+      text: "+"
+      tooltipText: "New workspace " + root.firstFreeWorkspace()
+      opacity: 0.35
+      horizontalMargin: 6
+      verticalPadding: 6
+      fixedWidth: root.vertical ? root.barSize : -1
+      fixedHeight: root.barSize
+      onPressed: function(button) {
+        var id = root.firstFreeWorkspace()
+        if (id > 0) root.focusWorkspace(id)
       }
     }
   }

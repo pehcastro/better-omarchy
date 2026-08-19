@@ -1,6 +1,6 @@
 name     = "workspace-names"
 summary  = "Workspace names in the bar, with a rename panel"
-version  = "0.1.0"
+version  = "0.2.0"
 category = "Compositor"
 tags     = ["bar","workspaces","hyprland"]
 author   = "pehcastro"
