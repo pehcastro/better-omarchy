@@ -63,8 +63,13 @@ bo version              what this is and where it lives
 ## Someone else's units
 
 A marketplace is a git repo holding units plus a `registry.json`. This repo is
-one. Point `bo` at anyone else's and their units appear in your list next to
-these:
+one. The shape is the one shadcn/ui uses and the one coding agents adopted for
+their own extensions: a repo, a manifest at a known path, a client that reads it,
+and nobody in the middle. `omarchy plugin add` covers a single QML plugin per
+repo; a unit can be QML, Lua, scripts and config at once, and can say what it
+needs. [docs/MARKETPLACE.md](docs/MARKETPLACE.md) explains why.
+
+Point `bo` at anyone else's and their units appear in your list next to these:
 
 ```bash
 bo market add https://github.com/someone/their-omarchy-units
