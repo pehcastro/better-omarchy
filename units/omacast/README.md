@@ -47,10 +47,14 @@ tells it what you want.
 | `theme:tokyo` | switch theme by name |
 | `cal:` or `cal:november 2027` | a month, drawn |
 | `sys:` | battery, memory, disk, uptime, address, kernel |
+| `?` | every keyword the launcher knows, built from what is loaded |
+| nothing at all | the last twenty queries that led somewhere |
 | anything with no match | search the web |
 
 `=`, `>`, `?` and `/` are one-character shorthands for calc, commands, web and
-file.
+file. `?` on its own is the exception: with nothing after it there is nothing to
+search for, so it lists the keywords instead. `Enter` on one leaves it in the
+box ready for the rest of the line.
 
 ## Keys
 
@@ -60,11 +64,18 @@ file.
 | `Shift+Enter` | run the second one, named in the footer |
 | `Ctrl+Enter` | ask a model, streamed into the card |
 | `Ctrl+K` | every other action this result has |
-| `Up` / `Down`, `Ctrl+P` / `Ctrl+N`, `Tab` | move |
+| `Ctrl+1` to `Ctrl+9` | run that row, by the number down the left |
+| `Ctrl+P` | pin the selected row, so it leads every query it matches |
+| `Up` / `Down`, `Ctrl+Shift+P` / `Ctrl+N`, `Tab` | move |
 | `Left` / `Right` | move, in the grid and calendar views |
 | `Escape` | leave an answer, then clear the box, then close |
 
 The footer always names what `Enter` does, so it is never a guess.
+
+A pin lifts a row the way frecency does and by more, and neither ever crosses a
+tier: a name that starts with what you typed still beats a pinned substring.
+Pins and recent queries live in `~/.local/state/omarchy/omacast-state.json`,
+beside the frecency file rather than in your settings, which stay yours to edit.
 
 ## Asking a model
 

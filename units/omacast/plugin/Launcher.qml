@@ -14,6 +14,9 @@ import "Extensions.js" as Extensions
 import "Settings.js" as Settings
 import "Quicklinks.js" as Quicklinks
 import "Frecency.js" as Frecency
+import "Help.js" as Help
+import "Recents.js" as Recents
+import "Pins.js" as Pins
 
 // OmaCast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
@@ -76,6 +79,20 @@ Item {
   property bool frecencyLoaded: false
   readonly property string defaultEngine: String(root.config.defaultEngine || "google")
 
+  // What you searched for, and what you pinned. Beside the frecency file rather
+  // than inside it: that one is pruned by decay, and neither of these decays.
+  property var recents: []
+  property var pins: ({})
+
+  // `?` on its own is help. `?dogs` stays a web search, because the sigil is
+  // worth more as the shorthand people already use than as a help key, and a
+  // `?` with nothing after it has nothing to search for anyway.
+  readonly property bool helpMode: root.queryText.trim() === "?"
+
+  // An empty box offers what you ran last, so reaching yesterday's query is one
+  // key rather than remembering how you phrased it.
+  readonly property bool recentMode: root.queryText.trim() === ""
+
   // Which layout the current results want. A provider declares it, so `=2+2`
   // renders one big answer and `music:` renders cards, without the launcher
   // knowing what either of them is.
@@ -120,6 +137,8 @@ Item {
 
   // What the active filter is called, for the chip in the header.
   readonly property string scopeLabel: {
+    if (root.helpMode) return "Keywords"
+
     var query = Query.parse(root.queryText, root.epoch, root.knownKeywords)
     if (query.scope === "") return ""
 
@@ -133,8 +152,7 @@ Item {
       if (String(links[j].keyword || "").toLowerCase() === query.scope) return String(links[j].title)
     }
 
-    var builtin = { calc: "Calculator", run: "Commands", web: "Web", apps: "Applications" }
-    return builtin[query.scope] || query.scope
+    return Help.builtinTitle(query.scope) || query.scope
   }
 
   readonly property string activeView: {
@@ -224,6 +242,8 @@ Item {
     root.queryText = text
     var query = Query.parse(text, ++root.epoch, root.knownKeywords)
 
+    queryHelp(query)
+    queryRecent(query)
     queryApps(query)
     queryCommands(query)
     queryQuicklinks(query)
@@ -267,8 +287,11 @@ Item {
     var merged = Rank.merge(root.buckets, query.scope, 60)
     if (root.config.frecency !== false && root.frecencyLoaded) {
       Frecency.apply(merged, root.frecency, Date.now())
-      merged.sort(Rank.byScore)
     }
+    // Pins are not part of the frecency setting: ranking by use is a guess you
+    // can switch off, and a pin is an instruction you gave on purpose.
+    Pins.apply(merged, root.pins)
+    merged.sort(Rank.byScore)
     root.rows = merged
 
     if (!root.cursorMoved) {
@@ -298,6 +321,78 @@ Item {
   }
 
   // ------------------------------------------------------------ providers
+
+  // A row that only changes what is in the box. Enter on one leaves you typing
+  // rather than running anything, which is what both `?` and the recent list
+  // are for, so `activate` gives `fill` its own branch.
+  function fillRow(providerId, key, group, title, subtitle, accessory, glyph, fill, rank, actionTitle) {
+    var row = {
+      key: key,
+      providerId: providerId,
+      group: group,
+      title: title,
+      subtitle: subtitle,
+      detail: "",
+      accessory: accessory,
+      iconSource: "",
+      iconGlyph: glyph,
+      fill: fill,
+      score: rank,
+      pending: false
+    }
+    // A self-reference, so the footer names what Enter does and Ctrl+K on the
+    // row leads back through activate rather than opening an empty panel.
+    row.actions = [{ title: actionTitle, shortcut: "\u21B5", row: row }]
+    return row
+  }
+
+  // Built from what is loaded, never from a table: an extension that arrived in
+  // an update and a quicklink added a minute ago are both in the list without
+  // anyone having written them down twice.
+  function queryHelp(query) {
+    if (!root.helpMode) return put("help", query, [])
+
+    var entries = Help.entries(Query.SIGILS, root.extensions, root.config.quicklinks)
+    var out = []
+
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i]
+      out.push(fillRow("help",
+                       "help:" + entry.keyword,
+                       entry.group,
+                       entry.title,
+                       entry.aliases.join(", "),
+                       entry.keyword + ":",
+                       entry.glyph,
+                       entry.keyword + ":",
+                       // Listed in the order Help built them, which is the
+                       // order a reader expects, so the rank only preserves it.
+                       Rank.score(Rank.TIER.forced, Math.max(0, 90000 - i * 200), 0),
+                       "Use Keyword"))
+    }
+    put("help", query, out)
+  }
+
+  // Not "recent", which is an extension id and would share its bucket.
+  function queryRecent(query) {
+    if (!root.recentMode) return put("recents", query, [])
+
+    var out = []
+    for (var i = 0; i < root.recents.length; i++) {
+      var entry = String(root.recents[i])
+      out.push(fillRow("recents",
+                       "past:" + entry,
+                       "Recent",
+                       entry,
+                       "",
+                       "",
+                       "",
+                       entry,
+                       Rank.score(Rank.TIER.forced, Math.max(0, 90000 - i * 200), 0),
+                       "Search Again"))
+    }
+    put("recents", query, out)
+  }
 
   function queryApps(query) {
     if (!Query.routesTo(query, "apps", ["app", "launch"]) || query.empty || !root.appLibrary) {
@@ -601,6 +696,10 @@ Item {
   function activate(row) {
     if (!row) return
 
+    // A keyword from `?`, or a query you ran before. Neither runs anything: the
+    // point of picking one is to carry on typing, so this stays open.
+    if (row.fill !== undefined) return root.setInput(String(row.fill))
+
     // A row with actions runs its first one, so the query follow-up a script
     // asked for is honoured whether Enter or the panel fired it.
     if (row.actions && row.actions.length > 0 && row.actions[0].query !== undefined) {
@@ -614,6 +713,7 @@ Item {
     }
 
     root.remember(row)
+    root.rememberQuery(root.queryText)
 
     // Dismiss before running. Launching while an exclusive-focus layer surface
     // is still mapped puts the new window behind it, and Omarchy's launch OSD
@@ -740,6 +840,46 @@ Item {
 
     root.frecency = Frecency.record(root.frecency, row.key, Date.now())
     frecencySave.restart()
+  }
+
+  // The question, not the answer. Recents.record drops a bare keyword and a
+  // repeat, and returns the list unchanged when there is nothing to add, so the
+  // save only fires when something really moved.
+  function rememberQuery(text) {
+    var next = Recents.record(root.recents, text)
+    if (next === root.recents) return
+
+    root.recents = next
+    stateSave.restart()
+  }
+
+  // Put text in the box and search it, without closing.
+  function setInput(text) {
+    input.text = text
+    input.cursorPosition = input.text.length
+    Qt.callLater(function () { input.forceActiveFocus() })
+  }
+
+  // Pin the selected row so it leads every query it matches. Keyed the way
+  // frecency is keyed, so the pin follows the thing rather than the search that
+  // happened to find it.
+  //
+  // A calculator answer and a web row are keyed by what you typed, so pinning
+  // one would pin a string you will never type again.
+  function togglePin() {
+    var row = root.rows[root.selectedIndex]
+    if (!row || !row.key) return
+    if (row.fill !== undefined) return
+    if (row.providerId === "calc" || row.providerId === "web") return
+
+    root.pins = Pins.toggle(root.pins, row.key)
+    stateSave.restart()
+
+    // Follow the row rather than the position: pinning it moves it, and the
+    // cursor should end up where the row went.
+    root.cursorMoved = true
+    root.selectedKey = row.key
+    root.rebuild()
   }
 
   function move(delta) {
@@ -869,6 +1009,10 @@ Item {
       loaded.push(ext)
     }
     root.extensions = loaded
+
+    // The list of keywords is only as good as what has loaded. Extensions
+    // arrive after the first paint, so a `?` already on screen has to redraw.
+    if (root.opened && root.helpMode) root.refresh()
   }
 
   FileView {
@@ -898,6 +1042,36 @@ Item {
       root.frecency = pruned
       frecencyFile.setText(JSON.stringify(pruned))
     }
+  }
+
+  // Recent queries and pins. Not in omacast.json: that file is the user's to
+  // edit, and a launcher rewriting it under them would lose their comments and
+  // their formatting the first time they searched for anything.
+  FileView {
+    id: stateFile
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/omacast-state.json"
+    printErrors: false
+    atomicWrites: true
+    // Not watched, for the reason the frecency file is not watched: this is the
+    // only writer, and reloading our own write would reorder mid-keystroke.
+    onLoaded: {
+      root.recents = Recents.parse(text())
+      root.pins = Pins.parse(text())
+    }
+    onLoadFailed: {
+      root.recents = []
+      root.pins = ({})
+    }
+  }
+
+  Timer {
+    id: stateSave
+    interval: 1200
+    onTriggered: stateFile.setText(JSON.stringify({
+      version: 1,
+      recents: root.recents,
+      pins: root.pins
+    }))
   }
 
   FileView {
@@ -1099,8 +1273,16 @@ Item {
               root.move(root.verticalStep)
               event.accepted = true
             } else if (event.key === Qt.Key_Up
-                       || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
+                       || (event.key === Qt.Key_P
+                           && (event.modifiers & Qt.ControlModifier)
+                           && (event.modifiers & Qt.ShiftModifier))) {
               root.move(-root.verticalStep)
+              event.accepted = true
+            } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
+              // Ctrl+P is the pin, and moving up gained the Shift. Up, Backtab
+              // and Ctrl+Shift+P all still do it, and Ctrl+N is untouched, so
+              // the one hand that never leaves the keys keeps a way up.
+              root.togglePin()
               event.accepted = true
             } else if (event.key === Qt.Key_Tab) {
               root.move(1)
@@ -1121,6 +1303,14 @@ Item {
               event.accepted = true
             } else if (event.key === Qt.Key_PageUp) {
               root.move(-root.maxRows)
+              event.accepted = true
+            } else if ((event.modifiers & Qt.ControlModifier)
+                       && event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
+              // Run the nth row without walking to it. The dim numbers down the
+              // left of the list are the other half of this: a shortcut nobody
+              // can see is a shortcut nobody uses.
+              var nth = event.key - Qt.Key_1
+              if (nth < root.rows.length) root.activate(root.rows[nth])
               event.accepted = true
             } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                        && (event.modifiers & Qt.ControlModifier)) {

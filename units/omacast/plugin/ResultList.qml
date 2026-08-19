@@ -7,6 +7,9 @@ import qs.Ui
 // Rows arrive ranked across every provider, so they are grouped here only where
 // the group actually changes. That keeps the best answer first, wherever it
 // came from, while still telling you what kind of thing you are looking at.
+//
+// The left gutter carries the row's number, which is what Ctrl+1 to Ctrl+9
+// run, and the right edge carries a star when the row is pinned.
 ListView {
   id: view
 
@@ -51,7 +54,7 @@ ListView {
 
       Text {
         anchors.left: parent.left
-        anchors.leftMargin: Style.space(20)
+        anchors.leftMargin: Style.space(30)
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Style.space(4)
         text: parent.parent.header.toUpperCase()
@@ -84,6 +87,21 @@ ListView {
         onClicked: view.launcher.activate(parent.parent.modelData)
       }
 
+      // Only the first nine are numbered, because only the first nine have a
+      // chord that runs them.
+      Text {
+        visible: parent.parent.index < 9
+        text: String(parent.parent.index + 1)
+        color: Qt.darker(view.launcher.foreground, 2.4)
+        font.family: view.launcher.fontFamily
+        font.pixelSize: Style.font.caption
+        width: Style.space(12)
+        horizontalAlignment: Text.AlignRight
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
       Image {
         id: icon
         visible: String(parent.parent.modelData.iconSource || "") !== ""
@@ -94,7 +112,7 @@ ListView {
         sourceSize.width: width * Screen.devicePixelRatio
         sourceSize.height: height * Screen.devicePixelRatio
         anchors.left: parent.left
-        anchors.leftMargin: Style.space(20)
+        anchors.leftMargin: Style.space(30)
         anchors.verticalCenter: parent.verticalCenter
       }
 
@@ -107,7 +125,7 @@ ListView {
         width: Style.space(20)
         horizontalAlignment: Text.AlignHCenter
         anchors.left: parent.left
-        anchors.leftMargin: Style.space(20)
+        anchors.leftMargin: Style.space(30)
         anchors.verticalCenter: parent.verticalCenter
       }
 
@@ -115,7 +133,7 @@ ListView {
       // fighting the other for the same line.
       Column {
         anchors.left: parent.left
-        anchors.leftMargin: Style.space(52)
+        anchors.leftMargin: Style.space(62)
         anchors.right: tail.left
         anchors.rightMargin: Style.space(12)
         anchors.verticalCenter: parent.verticalCenter
@@ -148,6 +166,15 @@ ListView {
         anchors.rightMargin: Style.space(20)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(6)
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: tail.parent.parent.modelData.pinned === true
+          text: "\u2605"
+          color: Color.accent
+          font.family: view.launcher.fontFamily
+          font.pixelSize: Style.font.caption
+        }
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
