@@ -506,7 +506,20 @@ if ((pair_count >= 1)); then
       esac
     fi
 
-    zone=$(resolve_zone "$where") || continue
+    # A place may hold spaces ("new york"), and the last word may be the start
+    # of the next name that has not got its colon yet. So try the whole thing,
+    # then drop trailing words until something resolves: while `john:tokyo m` is
+    # being typed, John is still in Tokyo.
+    zone=""
+    probe="$where"
+    while [[ -n $probe ]]; do
+      zone=$(resolve_zone "$probe") && break
+      [[ $probe == *[[:space:]]* ]] || { zone=""; break; }
+      probe="${probe% *}"
+      probe="${probe%"${probe##*[![:space:]]}"}"
+    done
+    [[ -n $zone ]] || continue
+
     people_names+=("$who")
     people_zones+=("$zone")
   done < <(sed -E 's/(^|[[:space:]])([A-Za-z0-9_-]+:)/\n\2/g' <<<"$trimmed")
@@ -531,11 +544,11 @@ if ((pair_count >= 1)); then
     exit 0
   fi
 
-  # Named people and placed none of them. Saying so beats falling through to a
-  # search for the whole string, which finds nothing and explains nothing.
-  if ((${#people_names[@]} == 0)); then
-    fail_row "None of those places is a timezone" "Try tz: ana:tokyo john:london"
-  fi
+  # Nobody placed. Fall through rather than complaining: the ordinary lookup
+  # below reports an unknown place perfectly well, and a second error here fired
+  # in the middle of typing. `tz: john:tokyo m` has one good pair and one that
+  # is half a word, and announcing that none of them is a timezone while the
+  # sentence is still being written is both wrong and in the way.
 fi
 
 # A bare unix timestamp, in the range that is a plausible date rather than a

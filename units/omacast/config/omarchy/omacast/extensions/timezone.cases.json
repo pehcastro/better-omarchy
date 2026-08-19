@@ -126,5 +126,29 @@
       "people",
       "startsAt"
     ]
+  },
+  {
+    "why": "typing the next name must not break the grid: 'john:tokyo m' flashed an error mid-sentence",
+    "query": "john:tokyo m",
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ]
+  },
+  {
+    "why": "a place with a space survives a half-typed word after it",
+    "query": "john:new york m",
+    "view": "timegrid",
+    "matches": {
+      "people": "New York"
+    }
+  },
+  {
+    "why": "a place that is genuinely wrong still says so",
+    "query": "maria:zzznope",
+    "minRows": 1,
+    "matches": {
+      "title": "No timezone matches"
+    }
   }
 ]
