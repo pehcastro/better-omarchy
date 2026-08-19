@@ -180,4 +180,75 @@ if [[ -n ${remote:-} ]]; then
     "printf %s $(printf '%q' "$remote") | wl-copy" "[]"
 fi
 
+# What GitHub knows about this repo
+# ------------------------------------------------------------------
+#
+# A repo is not only what is on disk. Whether anything is waiting for review,
+# and what people have opened against it, is part of "the state of this repo"
+# and is the reason you would otherwise open a browser.
+#
+# Read from a cache and never fetched inline. `git:` answers local questions in
+# a tenth of a second and a gh call takes one to three seconds: putting one in
+# front of the other would make the fast half wait for the slow half on every
+# keystroke. A background refresh fills the cache, and the rows appear on the
+# next query rather than making this one late.
+
+slug_of() {
+  local url="$1"
+  [[ $url == *github.com* ]] || return 1
+  url="${url#*github.com}"
+  url="${url#:}"
+  url="${url#/}"
+  url="${url%.git}"
+  [[ $url == */* ]] || return 1
+  printf '%s' "$url"
+}
+
+gh_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/git"
+slug=$(slug_of "${remote:-}") || slug=""
+
+if [[ -n $slug ]] && command -v gh >/dev/null; then
+  mkdir -p "$gh_cache_dir"
+  cache_file="$gh_cache_dir/$(printf '%s' "$slug" | tr '/' '_').json"
+
+  # Older than five minutes means somebody may have opened something since.
+  # Refreshed in the background so this run answers from whatever is there now,
+  # including nothing on the very first query.
+  if [[ ! -s $cache_file ]] || [[ -n $(find "$cache_file" -mmin +5 2>/dev/null) ]]; then
+    (
+      timeout 15 gh api "repos/$slug/pulls?state=open&per_page=5" \
+        --jq '[.[] | { kind: "pr", number: .number, title: .title,
+                       author: .user.login, url: .html_url,
+                       draft: .draft, updated: .updated_at }]' 2>/dev/null > "$cache_file.pr" &&
+      timeout 15 gh api "repos/$slug/issues?state=open&per_page=5" \
+        --jq '[.[] | select(.pull_request == null)
+                   | { kind: "issue", number: .number, title: .title,
+                       author: .user.login, url: .html_url, updated: .updated_at }]' 2>/dev/null > "$cache_file.issue" &&
+      jq -s 'add' "$cache_file.pr" "$cache_file.issue" > "$cache_file.tmp" 2>/dev/null &&
+      mv "$cache_file.tmp" "$cache_file"
+      rm -f "$cache_file.pr" "$cache_file.issue" "$cache_file.tmp"
+    ) >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
+
+  if [[ -s $cache_file ]]; then
+    while IFS=$'\t' read -r kind number title author url updated; do
+      [[ -n $number ]] || continue
+
+      group="Open Pull Requests"
+      [[ $kind == issue ]] && group="Open Issues"
+
+      emit "$kind:$number" "$title" "#$number  $author" "$slug" \
+        "$(short_age $((now - $(date -d "$updated" +%s 2>/dev/null || echo "$now"))))" \
+        "$group" "Open in Browser" \
+        "omarchy-launch-browser $(printf '%q' "$url")" \
+        "$(jq -cn --arg u "$url" --arg n "$number" '[
+             { title: "Copy URL", exec: ("printf %s " + ($u | @sh) + " | wl-copy") },
+             { title: "Copy Number", exec: ("printf %s " + (("#" + $n) | @sh) + " | wl-copy") }
+           ]')"
+    done < <(jq -r '.[] | [.kind, .number, .title, .author, .url, .updated] | @tsv' \
+               "$cache_file" 2>/dev/null)
+  fi
+fi
+
 exit 0

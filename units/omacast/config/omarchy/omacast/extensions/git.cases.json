@@ -1,0 +1,31 @@
+[
+  { "why": "the first row is what changed, because that is what you asked",
+    "query": "",
+    "minRows": 3,
+    "row": 0,
+    "fields": ["title", "detail", "group"],
+    "matches": { "group": "^Status$" } },
+
+  { "why": "the branch row names the repo like every other row, not the word 'on'",
+    "query": "",
+    "minRows": 2,
+    "row": 1,
+    "matches": { "group": "^Branch$", "subtitle": "^[a-z0-9._-]+$" } },
+
+  { "why": "recent commits carry a hash and an author, which is what makes them findable",
+    "query": "",
+    "minRows": 3,
+    "row": 2,
+    "fields": ["title", "detail", "subtitle"],
+    "matches": { "group": "^Recent Commits$", "subtitle": "^[0-9a-f]{7}$" } },
+
+  { "why": "every row can do something: a row with no actions is a row you cannot use",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "fields": ["actions", "exec"] },
+
+  { "why": "a filter that matches nothing answers nothing rather than the whole repo",
+    "query": "zzznosuchthing",
+    "maxRows": 0 }
+]
