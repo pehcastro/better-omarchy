@@ -218,6 +218,13 @@ Item {
     var wasRefresh = prov.refreshing
     prov.refreshing = false
 
+    // The process is over, so this provider is not waiting for it any more,
+    // whatever we decide to do with what it said. Clearing this only on the
+    // path that keeps the answer meant a run whose epoch had moved on left the
+    // flag raised for good: `stash:flows` typed one character at a time sat on
+    // a skeleton forever, while the same query pasted in one go was fine.
+    prov.launcher.markWaiting(prov.id, false)
+
     if (prov.inflightEpoch !== prov.launcher.epoch) return
 
     var parsed = Extensions.parseRows(text)
