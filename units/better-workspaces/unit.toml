@@ -1,0 +1,10 @@
+name     = "better-workspaces"
+summary  = "Named workspaces in the bar, a rename panel, and the empty ones out of the way"
+version  = "0.2.0"
+category = "Compositor"
+tags     = ["bar","workspaces","hyprland"]
+author   = "pehcastro"
+kind     = "plugin"
+id       = "bo.better-workspaces"
+needs    = ["hyprctl"]
+keys     = ["SUPER+F2", "SUPER+F3"]

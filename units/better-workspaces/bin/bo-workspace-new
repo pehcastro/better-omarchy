@@ -1,0 +1,49 @@
+#!/bin/bash
+# Go to the first workspace with nothing on it.
+#
+# With empty workspaces hidden from the bar there is no button for a fresh one,
+# so this is what the + and the keybinding both call. It picks the lowest free
+# id rather than the next one after the current, because "somewhere empty" means
+# the same place every time, and a workspace you can predict is one you can
+# reach without looking.
+
+set -uo pipefail
+
+names_file="$HOME/.config/omarchy/shell.json"
+
+# A workspace is free when nothing is on it and nobody has named it. A named but
+# empty workspace is somebody's plan for later, not scratch space.
+named() {
+  [[ -f $names_file ]] || return 1
+  python3 - "$names_file" "$1" <<'PY' 2>/dev/null
+import json, sys
+
+def walk(node, want):
+    if isinstance(node, dict):
+        entry = node.get("names", {}).get(want) if "names" in node else None
+        if isinstance(entry, dict) and entry.get("label"):
+            return True
+        if isinstance(entry, str) and entry:
+            return True
+        return any(walk(v, want) for v in node.values())
+    if isinstance(node, list):
+        return any(walk(v, want) for v in node)
+    return False
+
+with open(sys.argv[1]) as fh:
+    sys.exit(0 if walk(json.load(fh), sys.argv[2]) else 1)
+PY
+}
+
+occupied=$(hyprctl clients -j 2>/dev/null |
+  python3 -c 'import json,sys;print(" ".join(str(c["workspace"]["id"]) for c in json.load(sys.stdin)))' 2>/dev/null)
+
+for id in $(seq 1 10); do
+  [[ " $occupied " == *" $id "* ]] && continue
+  named "$id" && continue
+  hyprctl dispatch "hl.dsp.focus({ workspace = \"$id\" })" >/dev/null 2>&1
+  exit 0
+done
+
+omarchy-notification-send "No free workspace" "All ten are occupied or named" 2>/dev/null
+exit 1

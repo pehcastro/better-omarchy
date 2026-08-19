@@ -13,8 +13,8 @@ import qs.Ui
 // `hyprctl workspaces` stays truthful for anything that reads it.
 Panel {
   id: root
-  moduleName: "bo.workspace-names"
-  ipcTarget: "bo.workspace-names"
+  moduleName: "bo.better-workspaces"
+  ipcTarget: "bo.better-workspaces"
 
   // Panel is a bare Item, so the two geometry properties BarWidget would
   // have supplied are lifted off the host here.
@@ -239,9 +239,76 @@ Panel {
     // hyprctl in step and is not what the row reads.
     var hyprName = label === "" ? String(id) : (keep ? label + " (" + id + ")" : label)
     root.bar.run(
-      "omarchy bar set bo.workspace-names names " + Util.shellQuote(JSON.stringify(next)) + " --json" +
+      "omarchy bar set bo.better-workspaces names " + Util.shellQuote(JSON.stringify(next)) + " --json" +
       " ; hyprctl dispatch " + Util.shellQuote("hl.dsp.workspace.rename({ workspace = " + id + ", name = \"" + hyprName.replace(/"/g, "") + "\" })")
     )
+  }
+
+  // A name is a plan for a workspace. When the workspace is empty and you have
+  // walked away from it, the plan is over: quitting everything on "spotify" and
+  // going back to "coding" should leave a free workspace behind, not a label
+  // pointing at nothing.
+  //
+  // On a grace period rather than immediately, because closing the last window
+  // to open another one is a normal thing to do and the name should survive it.
+  readonly property bool releaseEmptyNames: root.setting("releaseEmptyNames", true)
+  readonly property int releaseAfterMs: root.setting("releaseAfterMs", 45000)
+
+  // id -> when it was last seen with something on it, or focused. A workspace
+  // absent from here has not been alive since the widget loaded.
+  property var lastAlive: ({})
+
+  Timer {
+    id: releaseTimer
+    running: root.releaseEmptyNames
+    interval: 5000
+    repeat: true
+    onTriggered: root.releaseStaleNames()
+  }
+
+  function releaseStaleNames() {
+    var now = Date.now()
+    var active = root.activeWorkspaceId()
+    var seen = root.lastAlive
+    var stale = []
+
+    for (var id = 1; id <= 10; id++) {
+      var key = String(id)
+      if (root.entryFor(id).label === "") { delete seen[key]; continue }
+
+      var ws = root.workspaceById(id)
+      var alive = (ws !== null && ws.toplevels.values.length > 0) || id === active
+
+      if (alive) { seen[key] = now; continue }
+
+      // Never alive this session, so nothing was finished here. A name you set
+      // last week on a workspace you have not opened yet is a plan, and the
+      // first version of this deleted every one of them forty-five seconds
+      // after login.
+      if (seen[key] === undefined) continue
+
+      if (now - seen[key] >= root.releaseAfterMs) stale.push(id)
+    }
+
+    root.lastAlive = seen
+    if (stale.length === 0 || !root.bar) return
+
+    // One write for all of them. Each `omarchy bar set` reloads every bar
+    // surface, so releasing three names in three calls would rebuild the bar
+    // three times.
+    var next = {}
+    for (var k in root.names) next[k] = root.names[k]
+
+    var renames = ""
+    for (var i = 0; i < stale.length; i++) {
+      delete next[String(stale[i])]
+      renames += " ; hyprctl dispatch " + Util.shellQuote(
+        "hl.dsp.workspace.rename({ workspace = " + stale[i] + ", name = \"" + stale[i] + "\" })")
+      delete root.lastAlive[String(stale[i])]
+    }
+
+    root.bar.run("omarchy bar set bo.better-workspaces names "
+      + Util.shellQuote(JSON.stringify(next)) + " --json" + renames)
   }
 
   // Delegate buttons by workspace id, so the panel can anchor under the one
@@ -307,9 +374,10 @@ Panel {
       verticalPadding: 6
       fixedWidth: root.vertical ? root.barSize : -1
       fixedHeight: root.barSize
+      // The same command SUPER+F3 runs, so there is one definition of "the
+      // first free workspace" rather than one here and one in a script.
       onPressed: function(button) {
-        var id = root.firstFreeWorkspace()
-        if (id > 0) root.focusWorkspace(id)
+        if (root.bar) root.bar.run("bo-workspace-new")
       }
     }
   }

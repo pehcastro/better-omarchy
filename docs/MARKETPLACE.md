@@ -202,7 +202,7 @@ which tells your users you forgot.
 
 ```
 better-omarchy
-  changed  on workspace-names      0.1.0 -> 0.2.0
+  changed  on better-workspaces      0.1.0 -> 0.2.0
   new         clipboard            0.1.0  Clipboard history in the bar
   changed     cpu-meter            0.1.0 (content changed, version did not)
   updated d5d89fe4451b -> 8c0f1a92be40

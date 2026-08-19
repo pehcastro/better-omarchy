@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "bo.workspace-names",
+  "id": "bo.better-workspaces",
   "name": "Workspaces",
   "version": "1.0.0",
   "author": "better-omarchy",
-  "description": "Named workspaces with an inline rename panel",
+  "description": "Named workspaces, a rename panel, and the empty ones out of the way",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Workspaces",
-    "description": "Named workspaces with an inline rename panel",
+    "description": "Named workspaces, a rename panel, and the empty ones out of the way",
     "category": "Compositor",
     "allowMultiple": false
   }

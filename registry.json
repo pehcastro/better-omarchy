@@ -5,8 +5,35 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "1dff9ba30190d0356ba40837205aeb2b82af8f16",
+  "generated_at_commit": "0a6dabc7187e14d8eac903e5ee0a95755f05f281",
   "units": {
+    "better-workspaces": {
+      "name": "better-workspaces",
+      "summary": "Named workspaces in the bar, a rename panel, and the empty ones out of the way",
+      "version": "0.2.0",
+      "kind": "plugin",
+      "category": "Compositor",
+      "tags": [
+        "bar",
+        "workspaces",
+        "hyprland"
+      ],
+      "author": "pehcastro",
+      "needs": [
+        "hyprctl"
+      ],
+      "keys": [
+        "SUPER+F2",
+        "SUPER+F3"
+      ],
+      "pluginId": "bo.better-workspaces",
+      "path": "units/better-workspaces",
+      "files": 6,
+      "hash": "6e6f082c249034f855b069d67f4186df88a9c928392ed251ab0928b0f8cca21c",
+      "commit": "",
+      "updated": "",
+      "author_last": ""
+    },
     "nkz-keys": {
       "name": "nkz-keys",
       "summary": "My keys: Alt+F4 closes, Super+E files, Super+B browser",
@@ -62,8 +89,8 @@
       "path": "units/omacast",
       "files": 106,
       "hash": "d9994b01cc0aada17ee2ba225a0d1e91cb8f73586d8a1d3b928349e5b0a07b27",
-      "commit": "1dff9ba30190d0356ba40837205aeb2b82af8f16",
-      "updated": "2026-08-19T02:53:13-03:00",
+      "commit": "0a6dabc7187e14d8eac903e5ee0a95755f05f281",
+      "updated": "2026-08-19T03:10:21-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
@@ -89,32 +116,6 @@
       "path": "units/undo-close",
       "files": 5,
       "hash": "5740d2f8736f9ae61b2551990f8e95482c70acc043c30f01ed72706159eaaf84",
-      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
-      "updated": "2026-08-18T19:50:40-03:00",
-      "author_last": "Luiz Paulo de Castro Oliveira"
-    },
-    "workspace-names": {
-      "name": "workspace-names",
-      "summary": "Workspace names in the bar, with a rename panel",
-      "version": "0.2.0",
-      "kind": "plugin",
-      "category": "Compositor",
-      "tags": [
-        "bar",
-        "workspaces",
-        "hyprland"
-      ],
-      "author": "pehcastro",
-      "needs": [
-        "hyprctl"
-      ],
-      "keys": [
-        "SUPER+F2"
-      ],
-      "pluginId": "bo.workspace-names",
-      "path": "units/workspace-names",
-      "files": 5,
-      "hash": "6e92314da4cb8be48164999b8e84560b1e42b3fbf31ef1a67827f5564f861bf6",
       "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
       "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"

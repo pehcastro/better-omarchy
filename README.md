@@ -85,7 +85,7 @@ notes, reminders, themes, a calendar, a system dashboard and the web, in one
 box. Everything it answers ships inside it, including which key opens it:
 `units/omacast/hypr/keys.lua` has three presets and one line to switch.
 
-**[workspace-names](units/workspace-names/README.md)** puts workspace names in
+**[better-workspaces](units/better-workspaces/README.md)** puts workspace names in
 the bar instead of numbers, with `Super+F2` to rename the one you are on.
 
 **[undo-close](units/undo-close/README.md)** reopens the window you closed last,

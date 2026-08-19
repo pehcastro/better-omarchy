@@ -27,7 +27,7 @@
           "id": "omarchy.menu"
         },
         {
-          "id": "bo.workspace-names",
+          "id": "bo.better-workspaces",
           "names": {
             "1": {
               "label": "general",
@@ -85,7 +85,7 @@
   },
   "plugins": [
     {
-      "id": "bo.workspace-names"
+      "id": "bo.better-workspaces"
     },
     {
       "id": "bo.omacast"
