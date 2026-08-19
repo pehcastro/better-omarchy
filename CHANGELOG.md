@@ -7,6 +7,22 @@ is a major, a new unit or command is a minor, a fix is a patch.
 A unit carries its own version in its unit.toml, bumped on its own schedule.
 This file is about bo and the marketplace itself.
 
+## 0.3.0 (2026-08-19)
+
+### Features
+
+- **omacast:** Help, recent queries, row shortcuts and pins
+- **omacast:** Timezones, unit conversion and a dictionary
+- **omacast:** Repos, git, github, ssh hosts and containers
+
+### Fixes
+
+- **omacast:** Keep the action panel on screen, and stop blaming an empty query
+
+### Documentation
+
+- **omacast:** List the new keywords, and rebuild the registry
+
 ## 0.2.0 (2026-08-19)
 
 ### Features
@@ -71,6 +87,7 @@ This file is about bo and the marketplace itself.
 - **changelog:** Regenerate
 - **changelog:** Regenerate
 - **changelog:** Regenerate
+- **changelog:** Cut v0.2.0 and rename the old scope
 
 ## 0.1.0 (2026-08-18)
 

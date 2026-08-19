@@ -1,6 +1,6 @@
 name     = "omacast"
 summary  = "A launcher: apps, maths, files, music, notes and the web in one box"
-version  = "0.2.0"
+version  = "0.3.0"
 category = "Productivity"
 tags     = ["launcher", "overlay", "quickshell"]
 author   = "pehcastro"

@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "9e1990779d433eae77d018abb3ca30f53b64282c",
+  "generated_at_commit": "d4cc8a624954b174da593f2c2c7ccf4ab1e22dc4",
   "units": {
     "nkz-keys": {
       "name": "nkz-keys",
@@ -37,7 +37,7 @@
     "omacast": {
       "name": "omacast",
       "summary": "A launcher: apps, maths, files, music, notes and the web in one box",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "plugin",
       "category": "Productivity",
       "tags": [
@@ -61,8 +61,8 @@
       "pluginId": "bo.omacast",
       "path": "units/omacast",
       "files": 86,
-      "hash": "f3d9b7b39b340e554cdb7b51fb67064149e8bfa7e0839458b33aa5aa813ccf89",
-      "commit": "9e1990779d433eae77d018abb3ca30f53b64282c",
+      "hash": "09dd2c7c6e76bf2861c900a37579ed3b51cc5b78ef2b58b41b29a2a0b2f5d50b",
+      "commit": "d4cc8a624954b174da593f2c2c7ccf4ab1e22dc4",
       "updated": "2026-08-18T23:26:34-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
