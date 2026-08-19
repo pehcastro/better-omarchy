@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "b595c214620c50944042fe364961f631d3c205f2",
+  "generated_at_commit": "7461def0c800813a39a1c197c65bb3294aa9c88f",
   "units": {
     "nkz-keys": {
       "name": "nkz-keys",

@@ -95,6 +95,38 @@ with open(os.path.join(root, "registry.json"), "w") as handle:
     handle.write("\n")
 '
 
+# Drops one id from shell.json's plugins list. Written back with the same two
+# space indent the shell writes, so a later diff is about the change and not
+# about formatting.
+FORGET_PLUGIN_PY='
+import json, os
+
+path = os.environ["BO_FORGET_CONFIG"]
+wanted = os.environ["BO_FORGET_ID"]
+
+try:
+    with open(path) as handle:
+        config = json.load(handle)
+except Exception:
+    raise SystemExit(0)
+
+plugins = config.get("plugins")
+if not isinstance(plugins, list):
+    raise SystemExit(0)
+
+def names(entry):
+    return entry.get("id") if isinstance(entry, dict) else entry
+
+kept = [entry for entry in plugins if names(entry) != wanted]
+if len(kept) == len(plugins):
+    raise SystemExit(0)
+
+config["plugins"] = kept
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+'
+
 # ---------------------------------------------------------------- marketplaces
 
 # Every marketplace root, one per line. A checkout carrying this script counts
@@ -407,7 +439,28 @@ unlink_plugin() {
   # symlink is enough. The stale entry renders nothing while the plugin is gone,
   # and is what makes a later `bo add` restore the widget where it was.
   unlink_path "$PLUGINS_DIR/$id"
+
+  # A widget's layout entry is worth keeping. Its entry in `plugins[]` is not:
+  # that list is what the registry reads to decide a third-party plugin is on,
+  # so leaving the id there means the shell keeps loading something whose files
+  # are gone. A service plugin is the case that bites, since it has no layout
+  # entry to notice and can leave the desktop in whatever state it last set.
+  forget_plugin_enabled "$id"
   rescan_plugins
+}
+
+forget_plugin_enabled() {
+  local id="$1" config="$CONFIG_HOME/omarchy/shell.json"
+  [[ -f $config ]] || return 0
+
+  BO_FORGET_ID="$id" BO_FORGET_CONFIG="$config" python3 -c "$FORGET_PLUGIN_PY"
+
+  # The shell holds shell.json in memory and rewrites the whole file on every
+  # mutation of its own. It watches for external changes, but until that reload
+  # arrives any shell-side write is computed from the stale copy and takes this
+  # one with it. Telling it to reload closes that window.
+  shell_running && omarchy-shell shell reloadConfig >/dev/null 2>&1
+  return 0
 }
 
 # Linked names carry the marketplace and the unit, so two units can ship a
@@ -1996,6 +2049,167 @@ cmd_version() {
   printf 'units          %s available, %s on\n' "$(all_refs | wc -l)" "$(linked_refs | wc -l)"
 }
 
+# ---------------------------------------------------------------- interactive
+#
+# `bo` with no arguments. Everything here is reachable as a command too, and the
+# commands stay the interface a script uses: this only saves you remembering
+# which one you wanted.
+#
+# gum does the drawing. It is not a dependency of anything else in bo, so a
+# machine without it still has every command, just not this.
+
+tui_available() { command -v gum >/dev/null; }
+
+tui_header() {
+  local markets units on
+  markets=$(market_names | join_lines)
+  units=$(all_refs | wc -l)
+  on=$(linked_refs | wc -l)
+
+  gum style --border rounded --padding "0 2" --margin "0" --border-foreground 240 \
+    "$(gum style --bold 'better-omarchy')  $(gum style --foreground 240 "$(cd "$SELF_ROOT" && git describe --tags --always 2>/dev/null || echo unknown)")" \
+    "$(gum style --foreground 240 "$on of $units units on  ·  $markets")"
+}
+
+# One line per unit, marked and aligned, for the picker to show.
+tui_unit_line() {
+  local ref="$1" mark
+  if is_linked "$ref"; then mark="●"; else mark="○"; fi
+
+  printf '%s %-26s %-9s %-13s %s' \
+    "$mark" "$(ref_unit "$ref")" "$(meta "$ref" kind)" "$(meta "$ref" category)" "$(meta "$ref" summary)"
+}
+
+# The ref a picked line refers to. The line carries the bare unit name, which is
+# ambiguous across marketplaces, so the list is rebuilt and matched by position.
+tui_ref_for_line() {
+  local line="$1" ref
+  while read -r ref; do
+    [[ "$(tui_unit_line "$ref")" == "$line" ]] && {
+      printf '%s' "$ref"
+      return 0
+    }
+  done < <(all_refs)
+  return 1
+}
+
+tui_units() {
+  local lines=() ref picked chosen
+
+  while read -r ref; do
+    lines+=("$(tui_unit_line "$ref")")
+  done < <(all_refs)
+
+  ((${#lines[@]} > 0)) || {
+    say "No units. Add a marketplace first."
+    return 0
+  }
+
+  picked=$(printf '%s\n' "${lines[@]}" |
+    gum filter --no-limit --height 16 --prompt "  " \
+      --placeholder "type to filter, tab to mark, enter to act on them" \
+      --header "$(printf '  %-26s %-9s %-13s %s' UNIT KIND CATEGORY SUMMARY)") || return 0
+
+  [[ -z $picked ]] && return 0
+
+  # Marked units are acted on together, and what to do is asked once. Asking per
+  # unit would make turning six things on six questions.
+  local refs=() line
+  while read -r line; do
+    [[ -z $line ]] && continue
+    chosen=$(tui_ref_for_line "$line") && refs+=("$chosen")
+  done <<<"$picked"
+
+  ((${#refs[@]} > 0)) || return 0
+
+  local action
+  action=$(printf 'Turn on\nTurn off\nRead about it\nShow details\n' |
+    gum choose --header "${#refs[@]} selected") || return 0
+
+  case "$action" in
+  "Turn on") for chosen in "${refs[@]}"; do link_unit "$chosen"; done ;;
+  "Turn off") for chosen in "${refs[@]}"; do unlink_unit "$chosen"; done ;;
+  "Show details") for chosen in "${refs[@]}"; do cmd_info "$chosen"; say ""; done ;;
+  "Read about it")
+    for chosen in "${refs[@]}"; do
+      local readme="$(ref_dir "$chosen")/README.md"
+      if [[ -f $readme ]]; then
+        gum pager <"$readme"
+      else
+        warn "$chosen has no README"
+      fi
+    done
+    ;;
+  esac
+}
+
+tui_markets() {
+  local action name
+
+  cmd_market_list
+  say ""
+
+  action=$(printf 'Add a marketplace\nUpdate all\nRemove one\nBack\n' | gum choose) || return 0
+
+  case "$action" in
+  "Add a marketplace")
+    local url
+    url=$(gum input --placeholder "https://github.com/someone/their-units" \
+      --prompt "git url  ") || return 0
+    [[ -n $url ]] && cmd_market_add "$url"
+    ;;
+  "Update all") cmd_market_update ;;
+  "Remove one")
+    name=$(market_names | gum choose --header "Remove which marketplace?") || return 0
+    [[ -n $name ]] && cmd_market_remove "$name"
+    ;;
+  esac
+}
+
+tui_checks() {
+  local action
+  action=$(printf 'Status and key conflicts\nDependencies\nTest every extension\nValidate plugins\nBack\n' |
+    gum choose) || return 0
+
+  case "$action" in
+  "Status and key conflicts") cmd_status ;;
+  "Dependencies") cmd_doctor ;;
+  "Test every extension") cmd_test ;;
+  "Validate plugins") cmd_validate ;;
+  esac
+}
+
+cmd_tui() {
+  tui_available || {
+    usage
+    return 0
+  }
+
+  # One screen per loop, cleared, so the terminal does not fill with the last
+  # five things you looked at.
+  while true; do
+    clear
+    tui_header
+    say ""
+
+    local choice
+    choice=$(printf 'Units\nMarketplaces\nUpdate everything\nChecks\nVersion\nQuit\n' |
+      gum choose --height 8) || return 0
+
+    case "$choice" in
+    Units) tui_units ;;
+    Marketplaces) tui_markets ;;
+    "Update everything") cmd_update ;;
+    Checks) tui_checks ;;
+    Version) cmd_version ;;
+    Quit | "") return 0 ;;
+    esac
+
+    say ""
+    gum input --placeholder "enter to go back" --prompt "" >/dev/null 2>&1 || return 0
+  done
+}
+
 usage() {
   cat <<'TXT'
 bo - Omarchy customizations, from any marketplace
@@ -2023,6 +2237,8 @@ bo - Omarchy customizations, from any marketplace
   bo sync                 copy the live shell.json into this checkout
   bo version              what this is and where it lives
 
+Run `bo` with no arguments for the interactive version of all of this.
+
 `bo update` also refreshes the `bo` link itself, and `bo list` says once a day
 when the marketplace it came from has moved on.
 
@@ -2049,6 +2265,8 @@ validate) cmd_validate ;;
 registry) shift; cmd_registry "$@" ;;
 sync) cmd_sync ;;
 version | --version | -V) cmd_version ;;
-"" | -h | --help | help) usage ;;
+"") cmd_tui ;;
+-h | --help | help) usage ;;
+ui | tui) cmd_tui ;;
 *) die "unknown command: $1. Try: bo help" ;;
 esac

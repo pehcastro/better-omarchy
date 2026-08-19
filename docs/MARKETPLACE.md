@@ -8,57 +8,34 @@ publish to: a user runs `bo market add <git-url>` and your units appear in their
 
 This repo is one, and nothing in `bo` is specific to it.
 
-## Why marketplaces rather than plugins
+## What this adds, and what it builds on
 
-Omarchy already installs plugins, with `omarchy plugin add <git-url>`. It works,
-and this does not replace it. It answers a narrower question.
+See the README for the short version. The part that matters when you are hosting
+one: Omarchy's plugin system covers QML in the shell and nothing else, and it has
+no distribution at all. There is no index, no search, no source but a git URL a
+person types. `omarchy-plugin-catalog`, despite the name, is a local `find` over
+two directories.
 
-`omarchy plugin add` takes one git repo and expects one plugin, with
-`manifest.json` at the root. That is a fine contract for a bar widget. It stops
-being one the moment a customization is not a single QML file:
+So a registry is not a second opinion about plugins. It is the layer Omarchy does
+not have: a way to publish a collection, keep it updated as a set, and let a
+client discover what is in it before installing.
 
-- **A repo holds one thing.** Ten customizations mean ten repos, ten clones, ten
-  places to look. A personal setup is not ten projects.
-- **Only QML counts.** A keybinding, a Hyprland rule, a shell script, an idle
-  setting: none of them is a plugin, so none of them can be installed, updated
-  or removed the same way. They stay as instructions in a README.
-- **There is no dependency between them.** A widget that also wants a key, or a
-  launcher extension that needs the launcher, has no way to say so.
-- **Removal is not the inverse of install.** For a bar widget, `plugin disable`
-  deletes its layout entry, taking its position and every setting with it.
+`bo` builds on Omarchy rather than replacing it, and a marketplace author gets
+that for free:
 
-So the unit of distribution here is a **unit**, not a plugin: a folder that may
-carry QML, Lua, scripts and config at once, that declares what it needs, which
-keys it claims and what it conflicts with, and whose removal leaves nothing
-behind. A plugin is one thing a unit can contain.
+- Plugin units are checked with `omarchy plugin validate`, the same gate
+  `omarchy plugin add` uses. There is no second validator to drift from it.
+- Config changes go through the shell's own IPC, because the shell holds
+  `shell.json` in memory and rewrites the whole file on every mutation of its
+  own. Editing that file behind its back gets your change overwritten.
+- The reserved `omarchy.*` namespace is left alone. An id there is dropped by
+  the shell with only a console warning, so it fails invisibly.
 
-## Why a registry
-
-The shape will be familiar if you have used [shadcn/ui](https://ui.shadcn.com).
-You do not install a package from a server. You point a tool at a repo that
-publishes a JSON index of what it holds, and the tool copies the pieces you
-asked for into your project, where they are yours to read and edit.
-
-The same shape is now how coding agents distribute their extensions: Claude
-Code's plugin marketplaces, Codex, and the Omarchy Marketplace Protocol all work
-this way. A git repo, a manifest at a known path, a client that reads it and
-installs from it, and no central authority in between.
-
-That is deliberate here rather than fashionable. It buys four things:
-
-- **You can read it before you run it.** A unit is a folder of scripts and QML in
-  a repo you cloned. `bo update` shows a per-unit changelog before applying it.
-- **Anyone can host one.** Publishing is `git push`. There is nobody to ask.
-- **A tool can drive it.** `registry.json` is machine readable, so an agent can
-  list what a marketplace holds, install one unit and know exactly which files
-  moved, which is the same reason agent marketplaces adopted the shape.
-- **Nothing is hidden.** Every file a unit installs is a symlink back into a
-  checkout you own. `bo remove` removes exactly those.
-
-The one thing it does not buy is safety. A marketplace is code that runs on your
-machine, unsandboxed, which is true of `omarchy plugin add` too. `bo` prints
-that warning when you add one, and the whole point of a readable registry is
-that you can check before saying yes.
+One tradeoff to know about: `bo` links a unit's plugin folder rather than copying
+it. The shell discovers a symlinked plugin and loads it, but its file watcher
+does not follow symlinks, so editing a linked plugin needs
+`omarchy restart shell` rather than reloading on save. That is the price of one
+checkout instead of a copy to keep in step.
 
 ## Existing Omarchy plugins
 

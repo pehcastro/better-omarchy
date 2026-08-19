@@ -15,25 +15,65 @@ curl -fsSL https://raw.githubusercontent.com/pehcastro/better-omarchy/master/set
 That installs `bo`, adds this repo as your first marketplace, and lets you pick.
 Nothing turns on without you choosing it.
 
-## Why not `omarchy plugin add`
+## What this adds to Omarchy
 
-Omarchy installs plugins already, and `bo` reads those repos too, so nothing you
-have is stranded. The difference is what can be installed at all.
+Omarchy has a plugin system, and it is good at what it is for: QML loaded into
+the running shell. It validates a manifest, hot-reloads on save, lets you clone
+a built-in to hack on it, and falls back to the stock bar when yours breaks.
+`bo` uses all of that rather than working around it, down to calling
+`omarchy plugin validate` itself and mutating config over the shell's own IPC.
 
-`omarchy plugin add` takes one repo, expects one plugin, and only QML counts. A
-keybinding is not a plugin. Nor is a Hyprland rule, a shell script, an idle
-setting, or a launcher extension. So a real customization arrives as a plugin
-plus a README telling you what to paste where, and removing it is manual.
+What it does not do is anything that is not QML. There is no manifest field for
+a keybinding, a script on your `PATH`, a file in `~/.config`, a package you
+need, a plugin you depend on, or one you conflict with. So a real customization
+arrives as a plugin plus a README telling you what to paste where, and taking it
+back out is a manual job.
 
-A **unit** is a folder that may hold QML, Lua, scripts and config at once. It
-declares what it needs, which keys it claims, and what it conflicts with, and
-removing it leaves nothing behind. A plugin is one thing a unit can contain.
+A **unit** is a folder that can hold all of those at once, and knows what it
+touched:
 
-The registry shape is the one [shadcn/ui](https://ui.shadcn.com) uses, and the
-one coding agents adopted for their own extensions: a repo, a manifest at a
-known path, a client that reads it, nobody in between. You can read a unit
-before you run it, publish by `git push`, and an agent can drive the whole thing
-because the index is machine readable.
+| | Omarchy plugin | bo unit |
+|---|---|---|
+| QML in the shell | yes | yes, unchanged |
+| Hyprland keybinding or rule | no | yes |
+| Script on your PATH | no | yes |
+| Files in `~/.config` | no | yes |
+| Needs another unit | no | `requires` |
+| Fights another unit | no | `conflicts`, and a key-conflict check |
+| Commands it needs | no | `needs`, checked by `bo doctor` |
+| Removing it | leaves state behind | removes what it linked |
+
+And the second half: Omarchy has no distribution at all. There is no index, no
+search, no notion of a source. You install from a git URL somebody typed, one
+repo at a time, and there is no way to publish a collection or to be told a
+plugin you have moved on.
+
+## Decentralized on purpose
+
+A **marketplace** is any git repo with a `registry.json` at its root. That is the
+whole mechanism. Publishing is `git push`. There is nobody to register with,
+nobody to approve you, and no server that can go away and take the index with
+it.
+
+It is the shape [shadcn/ui](https://ui.shadcn.com) uses, and the one coding
+agents adopted for their own extensions: a repo, a manifest at a known path, a
+client that reads it, nobody in the middle. It buys four things here:
+
+- **Many sources, no centre.** Add as many marketplaces as you like. Yours ranks
+  no lower than this one, and this one is not privileged in the code.
+- **Read before you run.** A unit is scripts and QML in a repo you cloned.
+  `bo update` shows a per-unit changelog before applying anything.
+- **Updatable as a set.** A collection updates together and tells you which of
+  its parts you actually have on.
+- **A tool can drive it.** `registry.json` is machine readable, which is the same
+  reason agent marketplaces adopted the shape.
+
+`bo` also installs a plain Omarchy plugin repo, wrapping it as a marketplace of
+one, so nothing you already have is stranded.
+
+It buys no safety. A marketplace is code that runs unsandboxed, exactly as
+`omarchy plugin add` is. `bo` says so when you add one, and a readable registry
+is what lets you check first.
 
 ## The units in this marketplace
 
