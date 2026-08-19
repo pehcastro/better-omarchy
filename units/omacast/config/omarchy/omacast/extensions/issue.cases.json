@@ -1,15 +1,44 @@
 [
-  { "why": "issue:owner/repo#5 is the one thing here that needs no request at all, ever: GitHub sends /issues/N to the pull request when it turns out to be one",
+  {
+    "why": "issue:owner/repo#5 is the one thing here that needs no request at all, ever: GitHub sends /issues/N to the pull request when it turns out to be one",
     "query": "!offline basecamp/omarchy#5",
     "minRows": 1,
     "maxRows": 1,
     "row": 0,
-    "fields": ["exec"],
-    "matches": { "exec": "/issues/5" } },
-
-  { "why": "with no account, what is assigned to you is unknowable, and saying so beats an empty card",
+    "fields": [
+      "exec"
+    ],
+    "matches": {
+      "exec": "/issues/5"
+    }
+  },
+  {
+    "why": "with no account, what is assigned to you is unknowable, and saying so beats an empty card",
     "query": "!offline",
     "minRows": 1,
     "row": 0,
-    "matches": { "title": "GitHub" } }
+    "matches": {
+      "title": "GitHub"
+    }
+  },
+  {
+    "why": "naming a repository asks about that repository: it fell through to your own inbox and answered nothing assigned to you about a repo holding hundreds of open issues",
+    "query": "basecamp/omarchy",
+    "minRows": 5,
+    "row": 0,
+    "matches": {
+      "group": "Open Issues  basecamp/omarchy",
+      "actions": "'query': 'gh:basecamp/omarchy'"
+    }
+  },
+  {
+    "why": "a word after the repository searches inside it, which is the only way to reach one of thirty open items without a browser",
+    "query": "basecamp/omarchy clipboard",
+    "minRows": 1,
+    "maxRows": 6,
+    "row": 0,
+    "matches": {
+      "title": "(?i)clipboard"
+    }
+  }
 ]

@@ -420,6 +420,16 @@ query($owner:String!, $name:String!) {
   }
 }'
 
+GQL_REPO_ISSUES='
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) {
+    nameWithOwner
+    issues(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url updatedAt repository { nameWithOwner }
+        author { login } comments { totalCount } labels(first:5){ nodes { name } } } }
+  }
+}'
+
 GQL_ISSUES='
 query {
   assigned: search(query: "is:issue is:open assignee:@me archived:false", type: ISSUE, first: 20) {
@@ -775,8 +785,11 @@ mode_prs() {
     local body
     body=$(pull "repoprs-$(key_for "$T_SLUG")" 45 \
       gh api graphql -f "query=$GQL_REPO_PRS" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
-    printf '%s' "$body" | emit --arg slug "$T_SLUG" "$JQ$JQ_PR_ROWS"'
-      [ (.data.repository.pullRequests.nodes // [])[] ] | .[:14]
+    printf '%s' "$body" | emit --arg slug "$T_SLUG" --arg q "${T_TEXT,,}" "$JQ$JQ_PR_ROWS"'
+      def keep: select($q == ""
+        or (((.title // "") + " " + (.author.login // "") + " " + (.headRefName // "")
+             + " #" + (.number | tostring)) | ascii_downcase | contains($q)));
+      [ (.data.repository.pullRequests.nodes // [])[] | keep ] | .[:14]
       | to_entries[] | .key as $i | .value
       | prrow("Open Pull Requests  " + $slug; 90000 - ($i * 100))'
     return
@@ -831,6 +844,37 @@ mode_issues() {
   fi
 
   authed || { signin_row; return; }
+
+  # A repository and no number is that repository's issues. It used to fall
+  # through to your own inbox and filter it by nothing, so `issue:basecamp/omarchy`
+  # answered "nothing assigned to you" about a repo holding 455 open issues.
+  if [[ $T_KIND == repo ]]; then
+    local rbody
+    rbody=$(pull "repoissues-$(key_for "$T_SLUG")" 45 \
+      gh api graphql -f "query=$GQL_REPO_ISSUES" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    printf '%s' "$rbody" | emit --arg slug "$T_SLUG" --arg q "${T_TEXT,,}" "$JQ"'
+      def keep: select($q == ""
+        or (((.title // "") + " " + (.author.login // "")
+             + " " + ([ (.labels.nodes // [])[].name ] | join(" "))
+             + " #" + (.number | tostring)) | ascii_downcase | contains($q)));
+      [ (.data.repository.issues.nodes // [])[] | keep ] | .[:14]
+      | to_entries[] | .key as $i | .value
+      | { id: ("issue:" + $slug + "#" + (.number | tostring)),
+          title: .title,
+          detail: ($slug + "  #" + (.number | tostring) + "  " + (.author.login // "")),
+          subtitle: ([ (.labels.nodes // [])[].name ] | join(", ")),
+          accessory: ((if (.comments.totalCount // 0) > 0 then "\(.comments.totalCount)󰆉  " else "" end)
+                      + ago(.updatedAt; $now)),
+          group: ("Open Issues  " + $slug),
+          exec: openurl(.url),
+          score: (90000 - ($i * 100)),
+          actions: [
+            { title: "Open in Browser", shortcut: "↵", exec: openurl(.url) },
+            { title: "This Repository", exec: "true", query: ("gh:" + $slug) },
+            { title: "Copy URL", exec: copyurl(.url) }
+          ] }'
+    return
+  fi
 
   local body out
   body=$(pull "my-issues" 60 gh api graphql -f "query=$GQL_ISSUES") || return
