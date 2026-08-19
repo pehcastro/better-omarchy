@@ -850,8 +850,31 @@ mode_issues() {
   # answered "nothing assigned to you" about a repo holding 455 open issues.
   if [[ $T_KIND == repo ]]; then
     local rbody
-    rbody=$(pull "repoissues-$(key_for "$T_SLUG")" 45 \
-      gh api graphql -f "query=$GQL_REPO_ISSUES" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    if [[ -n $T_TEXT ]]; then
+      # A word after the repository is a search of that repository, not a filter
+      # over the thirty most recent. The window is what the graphql query
+      # fetches, so `basecamp/omarchy clipboard` found nothing on a repo with
+      # four open clipboard issues, none of which were in the newest thirty.
+      # GitHub's own search reaches all of them and is one call either way.
+      rbody=$(pull "repoissuesearch-$(key_for "$T_SLUG $T_TEXT")" 45 \
+        gh search issues --repo "$T_SLUG" --state open --limit 30 \
+          --json number,title,url,updatedAt,repository,author,labels,commentsCount \
+          -- "$T_TEXT") || return
+
+      # `gh search` returns a flat array where the graphql returns it nested,
+      # and calls the comment count something else. Reshaped here so one jq
+      # filter serves both paths rather than two that must be kept in step.
+      rbody=$(printf '%s' "$rbody" | jq -c --arg slug "$T_SLUG" '
+        { data: { repository: { nameWithOwner: $slug, issues: { nodes:
+          [ .[] | { number, title, url, updatedAt,
+                    repository: { nameWithOwner: $slug },
+                    author: { login: (.author.login // "") },
+                    comments: { totalCount: (.commentsCount // 0) },
+                    labels: { nodes: [ (.labels // [])[] | { name } ] } } ] } } } }' 2>/dev/null) || return
+    else
+      rbody=$(pull "repoissues-$(key_for "$T_SLUG")" 45 \
+        gh api graphql -f "query=$GQL_REPO_ISSUES" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    fi
     printf '%s' "$rbody" | emit --arg slug "$T_SLUG" --arg q "${T_TEXT,,}" "$JQ"'
       def keep: select($q == ""
         or (((.title // "") + " " + (.author.login // "")

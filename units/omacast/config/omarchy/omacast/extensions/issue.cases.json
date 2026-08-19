@@ -32,10 +32,9 @@
     }
   },
   {
-    "why": "a word after the repository searches inside it, which is the only way to reach one of thirty open items without a browser",
+    "why": "a word after the repository searches that repository through GitHub, not the thirty most recently updated: the four clipboard issues on basecamp/omarchy are all older than that window and were unreachable",
     "query": "basecamp/omarchy clipboard",
     "minRows": 1,
-    "maxRows": 6,
     "row": 0,
     "matches": {
       "title": "(?i)clipboard"

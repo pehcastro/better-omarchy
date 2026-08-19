@@ -1,58 +1,402 @@
 #!/bin/bash
 # Internet radio for OmaCast's `radio:` keyword, from radio-browser.info.
 #
-#   radio:fip           stations matching that name
+#   radio:              what is playing, then the stations everybody votes for
+#   radio:fip           what is playing, then stations matching that name
 #   radio:jazz          the same, since the endpoint searches names not genres
 #
-# No key and no account. mpv plays the stream, and mpv-mpris puts it on the same
-# bus everything else here already talks to, so `music:` can pause it afterwards.
+# No key and no account. mpv plays the stream.
+#
+# Three subcommands sit behind the same script, so the rows can carry the calls
+# that change what is playing without a second binary to install:
+#
+#   omacast-search-radio play <url> <name> <subtitle> <art> <homepage>
+#   omacast-search-radio ctl toggle | stop | mute | volume up | volume down
+#
+# The rule this exists to enforce is that there is one radio. Pressing Enter on
+# a station used to run `mpv --no-video <url>` detached and close the launcher,
+# so a second press played a second station over the first and there was no way
+# back to either of them. `play` stops whatever it finds before it starts
+# anything, and it is the only way a station gets started.
 
 set -uo pipefail
 
-query="${1:-}"
+# One socket, one station. The socket path is also how the radio is recognised
+# among every other mpv on the machine: it is on the command line, so a pgrep
+# for it finds exactly our stream and never the film someone is watching.
+RUNDIR="${XDG_RUNTIME_DIR:-/tmp}/omacast"
+SOCK="$RUNDIR/radio.sock"
+STATE="$RUNDIR/radio.json"
+MARKER="--input-ipc-server=$SOCK"
 
-# `radio:` on its own used to answer nothing, which reads as a search that
-# failed rather than as a question not yet asked. The stations everybody else
-# votes for are a better opening than an empty box, and they are the ones you
-# want when you do not have a name in mind.
-endpoint="search"
-[[ -z $query ]] && endpoint="topvote"
+CACHEDIR="${XDG_CACHE_HOME:-$HOME/.cache}/omacast"
+# How long a station list is good for. The player refreshes this whole answer
+# every few seconds while it is on screen, and radio-browser runs on donated
+# mirrors: asking one of them the same question every three seconds is both
+# rude and slower than the launcher. The stations behind a name do not move in
+# ten minutes.
+LIST_TTL=600
 
 AGENT="omacast/0.1"
 
-# The project asks clients to resolve a mirror by DNS rather than pinning one of
-# the named hosts, which come and go. `all.api.radio-browser.info` is itself the
-# round-robin record, so curl gets a different healthy mirror per lookup without
-# this needing dig, which is not installed on a stock Omarchy box.
-host="all.api.radio-browser.info"
+self=$(basename "$0")
 
-encoded=$(jq -rn --arg q "$query" '$q|@uri')
+# --------------------------------------------------------------------- ipc
 
-curl -sf --max-time 6 -H "User-Agent: $AGENT" \
-  "$(if [[ $endpoint == topvote ]]; then
-       printf 'https://%s/json/stations/topvote?limit=10&hidebroken=true' "$host"
-     else
-       printf 'https://%s/json/stations/search?name=%s&limit=10&hidebroken=true&order=votes&reverse=true' "$host" "$encoded"
-     fi)" 2>/dev/null |
-  jq -c '
+# Talk to the running mpv. Each argument is a JSON command array; the reply
+# data comes back as one JSON array in the same order, or nothing at all with a
+# non-zero status when there is no mpv to talk to.
+#
+# mpv's own IPC rather than MPRIS, even though mpv-mpris puts this on the bus
+# and `omacast-search-music` already reads MPRIS. Two reasons. Which bus name
+# is ours is a guess: mpris.so registers org.mpris.MediaPlayer2.mpv and falls
+# back to an instance suffix, and the music script picks the first MPRIS name
+# it sees, which is Spotify's on any machine where Spotify is open. And Stop
+# over MPRIS stops the stream without ending the process, so the socket, the
+# process and the thing that has to die are all one object here and only one of
+# the two interfaces owns all three.
+#
+# python3 rather than socat, because python3 is already a declared dependency
+# of this unit and socat is not.
+mpv_ipc() {
+  [[ -S $SOCK ]] || return 1
+  python3 - "$SOCK" "$@" <<'PY'
+import json, socket, sys
+
+path, commands = sys.argv[1], sys.argv[2:]
+
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    s.connect(path)
+except OSError:
+    sys.exit(1)
+
+f = s.makefile("rwb")
+for i, c in enumerate(commands, 1):
+    f.write(json.dumps({"command": json.loads(c), "request_id": i}).encode() + b"\n")
+f.flush()
+
+got = {}
+try:
+    while len(got) < len(commands):
+        line = f.readline()
+        if not line:
+            break
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        # mpv streams events down the same socket it answers on, so a reply is
+        # only a reply if it carries back an id we handed out.
+        rid = message.get("request_id")
+        if isinstance(rid, int) and 1 <= rid <= len(commands) and "error" in message:
+            got.setdefault(rid, message.get("data"))
+except (OSError, socket.timeout):
+    pass
+
+print(json.dumps([got.get(i) for i in range(1, len(commands) + 1)]))
+PY
+}
+
+alive() { pgrep -f -- "$MARKER" >/dev/null 2>&1; }
+
+# Everything that ends the current stream, in the order that leaves nothing
+# behind. Called before a station starts and by `ctl stop`.
+stop_current() {
+  [[ -f $STATE ]] && rm -f "$STATE"
+  alive || { rm -f "$SOCK"; return 0; }
+
+  # Ask first: a clean quit closes the stream and unlinks the socket itself.
+  mpv_ipc '["quit"]' >/dev/null 2>&1
+
+  # Then insist. A wedged mpv still holds the speakers, and "one station at a
+  # time" is not a preference here, it is the whole fix.
+  pkill -f -- "$MARKER" >/dev/null 2>&1
+
+  # Wait for it to actually be gone before the next one starts. mpv unlinks the
+  # socket path it bound as it exits, and if the replacement has already bound
+  # the same path by then the dying process deletes the new one's socket and
+  # the player loses its only way to ask what is playing.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    alive || break
+    sleep 0.05
+  done
+  rm -f "$SOCK"
+}
+
+# --------------------------------------------------------------- play / ctl
+
+play() {
+  local url="${1:-}" name="${2:-}" subtitle="${3:-}" art="${4:-}" homepage="${5:-}"
+  [[ -z $url ]] && return 0
+
+  # The volume the last station was left at, so changing station does not undo
+  # turning it down.
+  local volume=100
+  [[ -f $STATE ]] && volume=$(jq -r '.volume // 100' "$STATE" 2>/dev/null)
+  [[ $volume =~ ^[0-9]+$ ]] || volume=100
+
+  stop_current
+  mkdir -p "$RUNDIR"
+
+  # Written before mpv is started, not after. mpv takes a second or two to open
+  # a stream, and the launcher re-queries within 900ms of the keypress: without
+  # a state file to answer from, that first re-query would find nothing playing
+  # and draw no player, which is exactly the moment the user is looking for one.
+  jq -cn --arg url "$url" --arg name "$name" --arg subtitle "$subtitle" \
+         --arg art "$art" --arg homepage "$homepage" --argjson volume "$volume" \
+         --argjson started "$(date +%s)" \
+    '{url: $url, name: $name, subtitle: $subtitle, art: $art,
+      homepage: $homepage, volume: $volume, started: $started}' >"$STATE"
+
+  # --no-terminal because nothing is attached to this. The user's mpv config is
+  # deliberately left alone: --no-config would also stop mpv-mpris loading, and
+  # that is what puts this stream on the bus where `music:` can see it.
+  setsid -f mpv --no-video --no-terminal \
+    --volume="$volume" "$MARKER" -- "$url" >/dev/null 2>&1
+}
+
+ctl() {
+  case "${1:-}" in
+    toggle) mpv_ipc '["cycle","pause"]' >/dev/null 2>&1 ;;
+    mute)   mpv_ipc '["cycle","mute"]'  >/dev/null 2>&1 ;;
+    stop)   stop_current ;;
+    volume)
+      local current step target
+      current=$(mpv_ipc '["get_property","volume"]' 2>/dev/null | jq -r '.[0] // empty')
+      [[ -n $current ]] || current=$(jq -r '.volume // 100' "$STATE" 2>/dev/null)
+      [[ $current =~ ^[0-9.]+$ ]] || current=100
+      step=5
+      [[ ${2:-up} == down ]] && step=-5
+      # Capped at 100 rather than mpv's 130. Above unity mpv amplifies, and a
+      # radio stream that is already compressed to within an inch of its life
+      # gets nothing from it but clipping.
+      target=$(awk -v c="$current" -v s="$step" \
+        'BEGIN { v = c + s; if (v < 0) v = 0; if (v > 100) v = 100; printf "%d", v }')
+      mpv_ipc "[\"set_property\",\"volume\",$target]" >/dev/null 2>&1
+      # Remembered, so the next station opens where this one was left.
+      if [[ -f $STATE ]]; then
+        jq -c --argjson v "$target" '.volume = $v' "$STATE" >"$STATE.tmp" 2>/dev/null &&
+          mv "$STATE.tmp" "$STATE"
+      fi
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------- now playing
+
+# The player row, when there is one. Silent when nothing is playing, which is
+# what makes `radio:` with no stream just a list of stations.
+now_playing() {
+  local followUp="$1"
+
+  [[ -f $STATE ]] || return 0
+  if ! alive; then
+    # The process is gone: someone closed it, or it lost the stream and gave
+    # up. Clear up rather than drawing a player for a stream nobody can hear.
+    rm -f "$STATE" "$SOCK"
+    return 0
+  fi
+
+  # One jq for the whole file, one line per field. This runs every few seconds
+  # while the player is on screen, and six jq processes to read six strings out
+  # of one small object is most of the cost of answering.
+  local name subtitle art homepage url volume
+  {
+    IFS= read -r name; IFS= read -r subtitle; IFS= read -r art
+    IFS= read -r homepage; IFS= read -r url; IFS= read -r volume
+  } < <(jq -r '.name // "", .subtitle // "", .art // "", .homepage // "",
+               .url // "", ((.volume // 100) | tostring)' "$STATE" 2>/dev/null)
+
+  # pause, mute, the ICY title, volume, core-idle, time-pos. One connection for
+  # all six: opening the socket six times to read six properties is most of the
+  # cost of answering at all.
+  #
+  # icy-title by key rather than media-title. media-title falls back to the
+  # filename when a station sends no metadata, so a stream at .../dance.mp3
+  # reported "dance.mp3" as the thing that was playing.
+  local reply status="Connecting" title="" elapsed=0 muted=false
+  reply=$(mpv_ipc '["get_property","pause"]' '["get_property","mute"]' \
+                  '["get_property","metadata/by-key/icy-title"]' '["get_property","volume"]' \
+                  '["get_property","core-idle"]' '["get_property","time-pos"]' 2>/dev/null)
+
+  if [[ -n $reply ]]; then
+    local paused idle icy vol pos
+    {
+      IFS= read -r paused; IFS= read -r muted; IFS= read -r icy
+      IFS= read -r vol; IFS= read -r idle; IFS= read -r pos
+    } < <(printf '%s' "$reply" | jq -r '
+      (if .[0] == true then "true" else "false" end),
+      (if .[1] == true then "true" else "false" end),
+      (.[2] // ""),
+      ((.[3] // "") | tostring),
+      (if .[4] == true then "true" else "false" end),
+      ((.[5] // 0) | tostring)')
+
+    # Paused first: mpv reports core-idle true while paused as well, and
+    # "Buffering" on a stream the user paused themselves is a lie.
+    if [[ $paused == true ]]; then
+      status="Paused"
+    elif [[ $idle == true ]]; then
+      status="Buffering"
+    else
+      status="Playing"
+    fi
+
+    [[ -n $vol ]] && volume=$(awk -v v="$vol" 'BEGIN { printf "%d", v }')
+    elapsed=$(awk -v p="$pos" 'BEGIN { printf "%d", (p > 0 ? p : 0) }')
+
+    # The ICY title is what the station is playing right now, which is the
+    # thing worth putting in the big text. Stations that send their own name
+    # there instead say nothing new, so they fall back to the layout below.
+    [[ $icy != "$name" ]] && title="$icy"
+  fi
+
+  # Connecting has no title yet and no station metadata worth reading. It is a
+  # real state, not an error: mpv is opening the stream, and the view draws a
+  # placeholder rather than an empty line.
+  local head sub
+  if [[ -n $title ]]; then
+    head="$title"
+    sub="$name"
+  else
+    head="$name"
+    sub="$subtitle"
+  fi
+
+  local ctlbase="$self ctl"
+
+  jq -cn \
+    --arg t "$head" --arg s "$sub" --arg station "$name" --arg art "$art" \
+    --arg status "$status" --arg url "$url" --arg homepage "$homepage" \
+    --arg followUp "$followUp" \
+    --arg toggle "$ctlbase toggle" --arg stop "$ctlbase stop" \
+    --arg mute "$ctlbase mute" \
+    --arg volUp "$ctlbase volume up" --arg volDown "$ctlbase volume down" \
+    --argjson volume "${volume:-100}" --argjson muted "$muted" \
+    --argjson elapsed "${elapsed:-0}" \
+    '{
+       id: "now",
+       kind: "player",
+       view: "radioplayer",
+       score: 99000,
+       title: $t,
+       subtitle: $s,
+       station: $station,
+       art: $art,
+       status: $status,
+       volume: $volume,
+       muted: $muted,
+       elapsedSeconds: $elapsed,
+       controls: { playPause: $toggle, stop: $stop, mute: $mute,
+                   volumeUp: $volUp, volumeDown: $volDown },
+       exec: $toggle,
+       actions: (
+         [{ title: (if $status == "Paused" then "Resume" else "Pause" end),
+            shortcut: "↵", exec: $toggle, query: $followUp },
+          { title: "Stop", exec: $stop, query: $followUp },
+          { title: (if $muted then "Unmute" else "Mute" end), exec: $mute, query: $followUp },
+          { title: "Volume Up", exec: $volUp, query: $followUp },
+          { title: "Volume Down", exec: $volDown, query: $followUp },
+          { title: "Copy Stream URL", exec: ("printf %s " + ($url | @sh) + " | wl-copy") }]
+         + (if $homepage != "" then
+              [{ title: "Open Homepage", exec: ("omarchy-launch-browser " + ($homepage | @sh)) }]
+            else [] end)
+       )
+     }'
+}
+
+# ---------------------------------------------------------------- stations
+
+stations() {
+  local query="$1" followUp="$2"
+
+  # `radio:` on its own used to answer nothing, which reads as a search that
+  # failed rather than as a question not yet asked. The stations everybody else
+  # votes for are a better opening than an empty box, and they are the ones you
+  # want when you do not have a name in mind.
+  local endpoint="search"
+  [[ -z $query ]] && endpoint="topvote"
+
+  # The project asks clients to resolve a mirror by DNS rather than pinning one
+  # of the named hosts, which come and go. `all.api.radio-browser.info` is
+  # itself the round-robin record, so curl gets a different healthy mirror per
+  # lookup without this needing dig, which is not installed on a stock Omarchy
+  # box.
+  local host="all.api.radio-browser.info"
+  local encoded url key file
+  encoded=$(jq -rn --arg q "$query" '$q|@uri')
+
+  if [[ $endpoint == topvote ]]; then
+    url=$(printf 'https://%s/json/stations/topvote?limit=10&hidebroken=true' "$host")
+  else
+    url=$(printf 'https://%s/json/stations/search?name=%s&limit=10&hidebroken=true&order=votes&reverse=true' "$host" "$encoded")
+  fi
+
+  mkdir -p "$CACHEDIR"
+  key=$(printf '%s' "$endpoint:$query" | md5sum | cut -c1-16)
+  file="$CACHEDIR/radio-$key.json"
+
+  local age=$LIST_TTL body
+  [[ -s $file ]] && age=$(( $(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0) ))
+  if [[ ! -s $file ]] || (( age >= LIST_TTL )); then
+    body=$(curl -sf --max-time 6 -H "User-Agent: $AGENT" "$url" 2>/dev/null)
+    [[ -n $body ]] && printf '%s' "$body" >"$file"
+  fi
+
+  # Nothing cached and nothing fetched: no rows, no noise, no error. A launcher
+  # that prints a diagnostic here would show it as a result.
+  [[ -s $file ]] || return 0
+
+  jq -c --arg self "$self" --arg followUp "$followUp" '
     .[]? |
     select((.url_resolved // "") != "") |
+    (.name | @sh) as $name |
+    (([.country, .language] | map(select(. != "" and . != null)) | join("  ·  ")) | @sh) as $sub |
+    ((.favicon // "") | @sh) as $art |
+    ((.homepage // "") | @sh) as $home |
+    (.url_resolved | @sh) as $url |
+    ($self + " play " + $url + " " + $name + " " + $sub + " " + $art + " " + $home) as $play |
     {
       id: .stationuuid,
+      kind: "station",
       title: .name,
       subtitle: ([.country, .language] | map(select(. != "" and . != null)) | join("  ·  ")),
       detail: ([(.codec // ""), (if .bitrate > 0 then ((.bitrate | tostring) + " kbps") else "" end)]
                | map(select(. != "")) | join("  ·  ")),
       accessory: (if .votes > 0 then ((.votes | tostring) + " votes") else "" end),
       art: (.favicon // ""),
-      view: "cards",
+      view: "radioplayer",
       score: 90000,
-      exec: ("mpv --no-video --really-quiet " + (.url_resolved | @sh)),
+      exec: $play,
       actions: [
-        { title: "Play", shortcut: "↵", exec: ("mpv --no-video --really-quiet " + (.url_resolved | @sh)) },
-        { title: "Stop Playing", exec: "pkill -f \"mpv --no-video\"" },
-        { title: "Copy Stream URL", exec: ("printf %s " + (.url_resolved | @sh) + " | wl-copy") },
-        { title: "Open Homepage", exec: ("omarchy-launch-browser " + ((.homepage // "") | @sh)) }
+        # `query` is what keeps the launcher here. Without it Enter starts a
+        # station and closes, which is how someone ends up with four of them
+        # playing and no way to reach any: the follow-up re-runs this same
+        # question, and the answer now has a player on top of it.
+        { title: "Play", shortcut: "↵", exec: $play, query: $followUp },
+        { title: "Copy Stream URL", exec: ("printf %s " + $url + " | wl-copy") },
+        { title: "Open Homepage", exec: ("omarchy-launch-browser " + $home) }
       ]
-    }' 2>/dev/null
+    }' <"$file" 2>/dev/null
+}
+
+# -------------------------------------------------------------------- main
+
+case "${1:-}" in
+  play) shift; play "$@"; exit 0 ;;
+  ctl)  shift; ctl  "$@"; exit 0 ;;
+esac
+
+query="${1:-}"
+
+# Where an action lands the launcher afterwards. The keyword rather than
+# whatever alias was typed, because the script is never told which of `radio:`,
+# `fm:`, `station:` or `stream:` was used and all four ask the same question.
+followUp="radio:$query"
+
+now_playing "$followUp"
+stations "$query" "$followUp"
 exit 0

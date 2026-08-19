@@ -47,12 +47,12 @@
     }
   },
   {
-    "why": "the panel offers four things, not eight",
+    "why": "the panel carries what you were about to open anyway: reading the repo and acting on it should not be a keystroke apart, so lazygit, herdr, the editor and a terminal in the right directory are all in there",
     "query": "",
     "minRows": 1,
     "row": 0,
     "atMost": {
-      "actions": 4
+      "actions": 8
     }
   },
   {

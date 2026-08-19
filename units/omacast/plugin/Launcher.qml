@@ -340,7 +340,8 @@ Item {
     "dashboard", "calendar", "player", "slider", "form", "timegrid", "zones",
     "gitrepo", "gitbranches", "gitstashes", "agent",
     "ghrepo", "ghpr", "docker", "notes", "processes", "emoji", "themes",
-    "windows", "hosts", "radios", "loading"]
+    "windows", "hosts", "radios", "radioplayer", "files", "repos",
+    "menutree", "snippets", "vault", "shortcuts", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -2085,7 +2086,7 @@ Item {
               event.accepted = true
             } else if ((root.activeView === "slider" || root.activeView === "timegrid"
                         || root.activeView === "emoji" || root.activeView === "themes"
-                        || root.activeView === "windows")
+                        || root.activeView === "windows" || root.activeView === "menutree")
                        && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
               // Left and right belong to the text cursor everywhere else, and
               // are taken back only while the thing on screen is a row of
@@ -2248,7 +2249,14 @@ Item {
           case "themes": return themesView
           case "windows": return windowsView
           case "hosts": return hostsView
+          case "shortcuts": return shortcutsView
           case "radios": return radiosView
+          case "radioplayer": return radioPlayerView
+          case "vault": return vaultView
+          case "snippets": return snippetsView
+          case "menutree": return menuTreeView
+          case "repos": return reposView
+          case "files": return filesView
           case "loading": return loadingView
           case "player": return playerView
           case "slider": return sliderView
@@ -2282,7 +2290,14 @@ Item {
       Component { id: themesView;    ResultThemes    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: windowsView;   ResultWindows   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: hostsView;     ResultHosts     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: shortcutsView; ResultShortcuts { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: radiosView;    ResultRadios    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: radioPlayerView; ResultRadioPlayer { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: filesView;     ResultFiles     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: reposView;     ResultRepos     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: menuTreeView;  ResultMenuTree  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: snippetsView;  ResultSnippets  { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: vaultView;     ResultVault     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: loadingView;   ResultLoading   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: playerView;    ResultPlayer    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: sliderView;    ResultSlider    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }

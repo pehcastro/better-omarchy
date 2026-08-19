@@ -42,6 +42,9 @@ import qs.Ui
 //   hostCores hostMem
 // The cpu and mem fields are absent until the sampler has run; see
 // omacast-docker for why they arrive a beat late rather than costing a second.
+// Everywhere one of them would be, a Skeleton holds the space until it lands,
+// so the first frame reads as a panel still counting rather than as a panel
+// that finished and found nothing.
 Item {
   // The card cannot hold a view that draws past its own height, and every view
   // here computes that height from its content. Clipping at the root is the one
@@ -250,6 +253,21 @@ Item {
               ? Style.font.heading : Style.font.display
             font.bold: true
             elide: Text.ElideRight
+          }
+
+          // Two of these four tiles answer a beat after the other two, because
+          // the sampler behind them costs a second and runs detached so the
+          // list can draw without it. An empty space under the word "cpu" is
+          // not a missing answer to look at, it is a finished tile that says
+          // nothing, so the space is held by the shape of the figure instead.
+          Skeleton {
+            anchors.left: reading.left
+            anchors.verticalCenter: reading.verticalCenter
+            width: Style.space(46)
+            height: Style.space(15)
+            radius: Style.space(4)
+            tint: view.launcher.foreground
+            visible: String(stat.modelData.value) === ""
           }
 
           Text {
@@ -498,6 +516,20 @@ Item {
                   font.pixelSize: Style.font.caption
                 }
 
+                // Where the figure will be. Narrower than the stat tile's
+                // block because "3.4%" is a shorter thing than "62.5GiB", and
+                // a placeholder wider than the value it stands in for makes
+                // the tile jump when the real one lands.
+                Skeleton {
+                  anchors.left: meterReading.left
+                  anchors.verticalCenter: meterReading.verticalCenter
+                  width: Style.space(30)
+                  height: Style.space(9)
+                  radius: Style.space(3)
+                  tint: view.launcher.foreground
+                  visible: !tile.measured
+                }
+
                 // The denominator, spelled out. A bar against a 512MiB cap and
                 // a bar against 62GiB of host mean opposite things at the same
                 // length, and the only way to tell is to say so.
@@ -539,6 +571,18 @@ Item {
                   height: track.height
                   radius: track.radius
                   color: meter.modelData.fraction >= 0.85 ? Color.urgent : Color.accent
+                }
+
+                // The track itself, while there is no bar to put in it. Not a
+                // partial bar: a placeholder that fills a third of the track
+                // would be read as a reading of a third, which is worse than
+                // showing nothing. The whole track breathing says the length
+                // is not known yet, and cannot be mistaken for a length.
+                Skeleton {
+                  anchors.fill: track
+                  radius: track.radius
+                  tint: view.launcher.foreground
+                  visible: !tile.measured
                 }
               }
             }

@@ -1,0 +1,302 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `shortcuts:` keyword: every key that is bound on
+# this machine, drawn as a keymap rather than as a list.
+#
+#   shortcuts:              everything, grouped by modifier family
+#   shortcuts:screenshot    the ones whose action matches
+#   shortcuts:super shift   the ones whose combination matches
+#   shortcuts:win+k         the same, with the names people actually type
+#
+# The truth is `hyprctl binds`, but not straight from it. Omarchy configures
+# Hyprland from Lua, and Hyprland reports every Lua bind as dispatcher `__lua`
+# with a numeric arg, and reports `code:` binds with no key at all: 59 of the
+# 235 binds on this machine come back with an empty `key` field, which is most
+# of the workspace switching. `omarchy-menu-keybindings --print` already solves
+# both, by re-reading ~/.config/hypr/hyprland.lua for the keys Hyprland dropped
+# and resolving keycodes through the compiled XKB keymap, and it caches the
+# result against a hash of `hyprctl binds`, so it answers in about 10ms warm.
+# Parsing its "COMBO -> Action" lines is a far smaller lie than keeping a second
+# copy of that Lua scanner here.
+#
+# `hyprctl binds -j` is the fallback for a machine without Omarchy's menu. It is
+# honest but poorer: it can only report the binds that still carry a key, and
+# the modmask has to be translated here.
+#
+# The launcher's own keys are in neither source. Ctrl+K, Ctrl+1 to Ctrl+9 and
+# Escape live in Launcher.qml's key handler and Hyprland has never heard of
+# them. They are listed too, marked OmaCast, because somebody asking what a key
+# does does not care which program owns it.
+#
+# Enter copies the combination in the form hyprland.lua wants. It does not fire
+# the binding: the dispatcher is `__lua` and the arg is a number, so there is
+# nothing here that could be re-run without that second copy of the Lua scanner,
+# and a third of these bindings close a window, kill a process or lock the
+# screen. A keymap that can maim you for pressing Enter in it is not a keymap.
+
+set -uo pipefail
+
+query="${1:-}"
+
+# Omarchy's cheatsheet, reduced to the three facts a row needs. Its output is
+# "%-35s -> %s", so the arrow is the split and the padding is trimmed. The
+# combination itself has exactly one " + " in it, between the modifiers and the
+# key, which is why the modifiers can be recovered without a modmask table.
+omarchy_binds() {
+  command -v omarchy-menu-keybindings >/dev/null 2>&1 || return 1
+
+  # Captured rather than streamed, so "the menu is installed but answered
+  # nothing" falls through to `hyprctl` instead of being a silent empty keymap.
+  # A pipeline that prints no lines still exits 0, so the emptiness is the only
+  # thing that can be tested here.
+  local records
+  records=$(omarchy-menu-keybindings --print 2>/dev/null | awk -v sep=" → " '
+    {
+      at = index($0, sep)
+      if (at == 0) next
+
+      combo = substr($0, 1, at - 1)
+      action = substr($0, at + length(sep))
+      sub(/[ \t]+$/, "", combo)
+      sub(/[ \t]+$/, "", action)
+      if (action == "" || combo == "") next
+
+      split_at = index(combo, " + ")
+      if (split_at > 0) {
+        mods = substr(combo, 1, split_at - 1)
+        key = substr(combo, split_at + 3)
+      } else {
+        mods = ""
+        key = combo
+      }
+      if (key == "") next
+
+      printf "System\t%s\t%s\t%s\n", mods, key, action
+    }
+  ')
+
+  [[ -n $records ]] || return 1
+  printf '%s\n' "$records"
+}
+
+# Without Omarchy's menu there is only the raw report, and a bind whose key
+# Hyprland dropped cannot be drawn as a key, so it is left out rather than shown
+# as a modifier with a hole after it. The description is the action; a bind
+# without one has nothing to say, since `__lua` and `16` are not an answer.
+hyprctl_binds() {
+  command -v hyprctl >/dev/null 2>&1 || return 1
+
+  local records
+  records=$(hyprctl binds -j 2>/dev/null | jq -r '
+    def mods:
+      { "0":"", "1":"SHIFT", "4":"CTRL", "5":"SHIFT CTRL",
+        "8":"ALT", "9":"SHIFT ALT", "12":"CTRL ALT", "13":"SHIFT CTRL ALT",
+        "64":"SUPER", "65":"SUPER SHIFT", "68":"SUPER CTRL",
+        "69":"SUPER SHIFT CTRL", "72":"SUPER ALT", "73":"SUPER SHIFT ALT",
+        "76":"SUPER CTRL ALT", "77":"SUPER SHIFT CTRL ALT" }[tostring] // "";
+
+    if type != "array" then empty else
+      .[]
+      | select((.key // "") != "")
+      | select((.description // "") != "")
+      | "System\t\(.modmask | mods)\t\(.key)\t\(.description)"
+    end' 2>/dev/null)
+
+  [[ -n $records ]] || return 1
+  printf '%s\n' "$records"
+}
+
+# Launcher.qml's key handler, written out. These are true whether or not
+# Hyprland is answering, so they are not gated on it: they describe the window
+# the reader is looking at while they read them.
+#
+# Ctrl+1 to Ctrl+9 is nine bindings and one idea, so it is one row. Nine rows of
+# "Run result N" would be four percent of the keymap saying the same thing.
+omacast_binds() {
+  printf 'OmaCast\t%s\t%s\t%s\n' \
+    'CTRL'       'K'         'Actions for the selected result' \
+    'CTRL'       'P'         'Pin or unpin the selected result' \
+    'CTRL'       'N'         'Next result' \
+    'CTRL SHIFT' 'P'         'Previous result' \
+    'CTRL'       '1 – 9'     'Run the first to ninth result' \
+    'CTRL'       'RETURN'    'Ask the agent this question' \
+    'SHIFT'      'RETURN'    'Second action on the selected result' \
+    ''           'RETURN'    'Run the selected result' \
+    ''           'ESCAPE'    'Leave the answer, step back, clear, then close' \
+    ''           'TAB'       'Next result' \
+    'SHIFT'      'TAB'       'Previous result' \
+    ''           'UP'        'Previous result' \
+    ''           'DOWN'      'Next result' \
+    ''           'LEFT'      'Adjust the value, where a view has one' \
+    ''           'RIGHT'     'Adjust the value, where a view has one' \
+    ''           'PRIOR'     'Up one page of results' \
+    ''           'NEXT'      'Down one page of results'
+}
+
+{
+  omarchy_binds || hyprctl_binds
+  omacast_binds
+} | jq -R -n -c --arg q "$query" '
+  # A modifier is drawn as a word, not as a shout. The chips are small and there
+  # are up to four of them on a line, and SUPER SHIFT CTRL ALT in caps reads as
+  # an error message.
+  def modname:
+    { "SUPER":"Super", "SHIFT":"Shift", "CTRL":"Ctrl", "ALT":"Alt" }[.]
+    // (.[0:1] + (.[1:] | ascii_downcase));
+
+  # Ties inside a family, so Super Shift Ctrl always sorts before Super Shift
+  # Alt rather than by whatever order the source happened to print.
+  def modweight:
+    { "SUPER":0, "SHIFT":1, "CTRL":2, "ALT":3 }[.] // 4;
+
+  # What goes on the last chip. A punctuation key is drawn as the punctuation,
+  # because that is what is printed on the key, and XF86AudioRaiseVolume is
+  # split at its humps because nobody reads a keycap name.
+  def keydisplay:
+    . as $k
+    | ($k | ascii_upcase) as $u
+    | { "RETURN":"Return", "ESCAPE":"Esc", "SPACE":"Space", "TAB":"Tab",
+        "BACKSPACE":"Backspace", "DELETE":"Delete", "PRINT":"Print",
+        "HOME":"Home", "END":"End", "PRIOR":"Page Up", "NEXT":"Page Down",
+        "UP":"↑", "DOWN":"↓", "LEFT":"←", "RIGHT":"→",
+        "COMMA":",", "PERIOD":".", "SLASH":"/", "MINUS":"-", "EQUAL":"=",
+        "GRAVE":"`", "BRACKETLEFT":"[", "BRACKETRIGHT":"]",
+        "LEFT MOUSE BUTTON":"Click", "RIGHT MOUSE BUTTON":"Right click",
+        "MIDDLE MOUSE BUTTON":"Middle click",
+        "MOUSE_DOWN":"Wheel ↓", "MOUSE_UP":"Wheel ↑" }[$u]
+      // (if ($k | startswith("XF86"))
+          then ($k[4:] | gsub("(?<a>[a-z0-9])(?<b>[A-Z])"; "\(.a) \(.b)"))
+          elif ($k | length) == 1 then $u
+          else $k end);
+
+  # Names people type that no source uses. Without these, "win" finds nothing on
+  # a machine where every second binding is a Super binding.
+  def keyaliases:
+    . as $k
+    | ($k | ascii_upcase) as $u
+    | { "RETURN":"enter", "ESCAPE":"esc", "PRINT":"printscreen prtsc",
+        "GRAVE":"tilde backtick", "SPACE":"spacebar", "DELETE":"del",
+        "BACKSPACE":"bksp", "PRIOR":"page up pgup", "NEXT":"page down pgdn",
+        "LEFT MOUSE BUTTON":"lmb click mouse",
+        "RIGHT MOUSE BUTTON":"rmb click mouse",
+        "MOUSE_DOWN":"scroll wheel mouse", "MOUSE_UP":"scroll wheel mouse" }[$u]
+      // (if ($k | startswith("XF86") | not) then ""
+          elif ($k | test("Audio")) then "media fn"
+          else "fn" end);
+
+  [ inputs | select(length > 0) | split("\t") | select(length >= 4) ]
+
+  | map(
+      { scope: .[0],
+        # Canonical order, always. The two sources disagree: Omarchy prints
+        # "SHIFT CTRL" and the handler here was written "CTRL SHIFT", and
+        # untouched that is two families holding one key each instead of one
+        # family holding two.
+        rawMods: (if .[1] == "" then []
+                  else (.[1] | split(" ") | sort_by(modweight)) end),
+        rawKey: .[2],
+        action: .[3] }
+    )
+
+  | map(
+      . + { modNames: (.rawMods | map(modname)),
+            keyName: (.rawKey | keydisplay) }
+    )
+
+  | map(
+      . + {
+        # The family is what the view groups by, and it is the modifiers and
+        # nothing else: Super plus a letter is one keyboard, Super Shift plus a
+        # letter is another, and telling them apart is the whole reason to draw
+        # this rather than list it.
+        family: (if (.modNames | length) == 0 then "Unmodified"
+                 else (.modNames | join(" ")) end),
+        # Super first, then fewest modifiers first, then a stable tie-break.
+        # Super is where nearly everything lives, so it goes at the top and the
+        # bare media keys go at the bottom.
+        rank: (if (.rawMods | index("SUPER")) then 0 else 1000 end)
+              + 100 * (.rawMods | length)
+              + ((.rawMods | map(modweight) | add) // 0)
+              + (if (.rawMods | length) == 0 then 4000 else 0 end),
+        # Every chip on the row, modifiers then key. The view draws the last one
+        # differently, because inside a family the key is the only thing that
+        # varies and it is the thing being looked for.
+        keys: (.modNames + [.rawKey | keydisplay]),
+        combo: ((.modNames + [.rawKey | keydisplay]) | join(" + ")),
+        # What hyprland.lua wants. Its own parser splits on "+" and matches each
+        # piece against a modifier table, so "SUPER SHIFT + K" would be read as
+        # a key called "SUPER SHIFT"; every piece gets its own plus.
+        config: ((.rawMods + [.rawKey]) | join(" + "))
+      }
+    )
+
+  | map(
+      . + {
+        # Searching matches the key or the action, both, because half the
+        # questions are "what is on Super Shift B" and the other half are "what
+        # takes a screenshot" and neither half knows which half it is in.
+        hay: ([ .combo, .config, .action, .scope, .rawKey,
+                (.rawKey | keyaliases),
+                (if (.rawMods | index("SUPER")) then "win meta cmd mod" else "" end)
+              ] | join(" ") | ascii_downcase),
+        # Single characters before names, so a family reads 1..9 then A..Z then
+        # the long keys, which is the order a keyboard is in.
+        sortKey: ((if (.keyName | length) == 1 then "0" else "1" end)
+                  + (.keyName | ascii_upcase))
+      }
+    )
+
+  | map(. + { words: (.hay | split(" ") | map(select(length > 0))) })
+
+  | (($q | ascii_downcase | gsub("[+]"; " ") | split(" ")
+      | map(select(length > 0))) // []) as $terms
+
+  # A term matches a whole word from its start, or, once it is long enough to
+  # mean something on its own, anywhere at all. Plain substring matching on the
+  # whole row was useless at one character: `shortcuts:win k` returned sixty-
+  # eight rows, because "k" is in "workspace". Prefix-only matching was wrong in
+  # the other direction, because "shot" is how people look for Screenshot.
+  | map(
+      . as $r
+      | select(all($terms[];
+          . as $t
+          | (any($r.words[]; startswith($t)))
+            or (($t | length) >= 3 and ($r.hay | contains($t)))))
+    )
+
+  | sort_by(.rank, .sortKey, .action)
+
+  | to_entries
+  | map(
+      .key as $i
+      | .value
+      | ("printf %s " + (.config | @sh) + " | wl-copy") as $copyCombo
+      | {
+          id: "\(.scope)|\(.config)|\(.action)",
+          title: .action,
+          # The combination in words, so the row still reads correctly if the
+          # shortcuts view is not registered and these fall back to a list.
+          subtitle: .combo,
+          group: .family,
+          keys: .keys,
+          combo: .combo,
+          config: .config,
+          scope: .scope,
+          # Nothing on a system row: a chip saying "System" on two hundred rows
+          # out of two hundred and seventeen is furniture. The seventeen that
+          # are not the system say so.
+          accessory: (if .scope == "OmaCast" then "OmaCast" else "" end),
+          view: "shortcuts",
+          exec: $copyCombo,
+          score: (99999 - $i),
+          actions: [
+            { title: "Copy Combination", shortcut: "↵", exec: $copyCombo },
+            { title: "Copy Action", exec: ("printf %s " + (.action | @sh) + " | wl-copy") },
+            { title: "Copy Line",
+              exec: ("printf %s " + ((.combo + "  →  " + .action) | @sh) + " | wl-copy") }
+          ]
+        }
+    )
+  | .[]
+' 2>/dev/null
+
+exit 0

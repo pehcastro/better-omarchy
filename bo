@@ -1678,7 +1678,19 @@ ext_meta() {
   python3 - "$1" "$2" <<'PY'
 import json, re, shlex, sys
 
-VIEWS = ("list", "hero", "cards", "grid", "split", "dashboard", "calendar", "player", "answer", "slider", "form", "timegrid", "zones", "gitrepo", "gitbranches", "gitstashes", "agent")
+# The views that exist, read off disk rather than listed here. A hand-kept list
+# went stale the moment anyone added a view: `bo test` then failed every
+# extension that used the new one, which reads as the extension being broken.
+# ResultFoo.qml is the view named "foo"; the launcher's own switch agrees.
+def _views(extension_path):
+    # The extension file lives at <unit>/config/omarchy/omacast/extensions/x.json,
+    # so the plugin directory is four levels up and one across.
+    import pathlib
+    unit = pathlib.Path(extension_path).resolve().parents[4]
+    found = {"list"}
+    for qml in (unit / "plugin").glob("Result*.qml"):
+        found.add(qml.stem[len("Result"):].lower())
+    return found
 TIERS = ("calc", "forced", "prefix", "substring", "weak", "file", "web")
 NUMBERS = ("minChars", "debounceMs", "timeoutMs", "maxRows")
 
@@ -1707,8 +1719,11 @@ if not search:
     fail("no search, so the launcher ignores the file without a word")
 
 view = ext.get("view")
-if view is not None and view not in VIEWS:
-    fail(f"view is {view!r}, and it is one of: {', '.join(VIEWS)}")
+if view is not None:
+    views = _views(path)
+    if view not in views:
+        fail(f"view is {view!r}, and no ResultX.qml provides it. "
+             f"There is: {', '.join(sorted(views))}")
 
 tier = ext.get("tier")
 if tier is not None and tier not in TIERS:
@@ -1980,6 +1995,12 @@ def program_of(command):
             # A browser launcher takes a URL, not a program. Unwrapping past it
             # asked whether "https://github.com/tmux/tmux" was installed.
             if parts and re.match(r"^[\x27\"]?[a-z]+://", parts[0]):
+                return None
+            # An editor launcher takes a file, not a program. Unwrapping past it
+            # asked whether "/home/nkz/.ssh/config" was installed, which it
+            # reported as a missing command for a file that exists and is the
+            # whole point of the action.
+            if parts and re.match(r"^[\x27\"]?[~/]", parts[0]):
                 return None
             continue
         if "=" in head and not head.startswith("/"):

@@ -1,0 +1,26 @@
+{
+  "id": "shortcuts",
+  "title": "Shortcuts",
+  "keyword": "shortcuts",
+  "aliases": [
+    "shortcut",
+    "keys",
+    "key",
+    "keybindings",
+    "keybinds",
+    "binds",
+    "hotkeys",
+    "keymap",
+    "kb"
+  ],
+  "subtitle": "Shortcut",
+  "glyph": "󰌌",
+  "search": "omacast-shortcuts {query}",
+  "when": "command -v hyprctl",
+  "minChars": 0,
+  "debounceMs": 120,
+  "timeoutMs": 5000,
+  "maxRows": 400,
+  "tier": "prefix",
+  "view": "shortcuts"
+}

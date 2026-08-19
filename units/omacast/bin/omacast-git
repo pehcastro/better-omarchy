@@ -186,6 +186,15 @@ if [[ -z $needle ]]; then
          # here teaches the shorter way in.
          { title: "Branches", query: ("branch:" + $name) },
          { title: "Stashes", query: ("stash:" + $name) },
+         # Reading the state is the smaller half. The reason you asked is almost
+         # always that you are about to do something, so the things you would
+         # have opened anyway are one key away rather than a terminal and a cd.
+         { title: "Open in Lazygit",
+           exec: ("omarchy-launch-tui --app-id=org.omarchy.lazygit lazygit -p " + $quoted) },
+         { title: "Open in Herdr",
+           exec: ("omarchy-launch-tui --app-id=org.omarchy.herdr herdr " + $quoted) },
+         { title: "Open in Editor",
+           exec: ("omarchy-launch-editor " + $quoted) },
          { title: "Open Terminal Here",
            exec: ("setsid uwsm-app -- xdg-terminal-exec --dir=" + $quoted) }
        ] }'
