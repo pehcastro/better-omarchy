@@ -158,6 +158,9 @@ Panel {
 
   Timer {
     id: lingerTick
+    // False until the first pass has looked at every workspace, so that pass
+    // can tell "was already empty when we started" from "just emptied".
+    property bool seeded: false
     running: root.hideEmpty
     interval: 400
     repeat: true
@@ -174,7 +177,11 @@ Panel {
         if (occupied) {
           if (next[key] !== undefined) { delete next[key]; changed = true }
         } else if (next[key] === undefined) {
-          next[key] = now
+          // Backdated past the linger on the first sighting. Stamping it with
+          // now would mean every empty workspace counted as just-emptied, so
+          // the whole row expanded for five seconds on startup and again after
+          // anything that reset the map.
+          next[key] = lingerTick.seeded ? now : now - root.emptyLingerMs - 1
           changed = true
         } else if (now - next[key] < root.emptyLingerMs + lingerTick.interval) {
           // Still inside the window, or the tick just past it. liveIds reads
@@ -184,6 +191,7 @@ Panel {
         }
       }
 
+      lingerTick.seeded = true
       if (changed) { root.emptiedAt = ({}); root.emptiedAt = next }
     }
   }
@@ -351,14 +359,11 @@ Panel {
       // looking at it, and then its name has no work left to do.
       if (occupied || id === active) { seen[key] = 0; continue }
 
-      // Never touched since the shell started. Turning this feature on should
-      // clean up after the session you are in, not reach back and delete names
-      // set before it.
-      if (seen[key] === undefined) continue
-
-      // First tick since it went quiet. Start the clock rather than reading a
-      // zero as "five seconds ago".
-      if (seen[key] === 0) { seen[key] = now; continue }
+      // First tick since it went quiet, whether that was a moment ago or before
+      // the shell started. A name on an empty workspace is a label on nothing
+      // either way, and this follows the same rule the bar does: finished with
+      // means finished with.
+      if (seen[key] === undefined || seen[key] === 0) { seen[key] = now; continue }
 
       if (now - seen[key] >= root.releaseAfterMs) stale.push(id)
     }
