@@ -22,22 +22,43 @@ function looksLikeMath(text) {
 // are how a person writes a conversion. `to` means only one thing to qalc, so
 // the word is swapped on the way in. Anything without a digit in front of it is
 // left alone, because `3 in` really is three inches.
-var DATA_UNITS = {
+// The units qalc reads as something else. `c` is the speed of light, `f` is
+// farad, `mb` is millibar, `gb` is gram·bel, and every one of them is how a
+// person writes the unit they mean. `180f in c` answered 6.00415E-7 c.
+var AMBIGUOUS = {
+  f: "\u00B0F", "\u00B0f": "\u00B0F", degf: "\u00B0F", fahrenheit: "\u00B0F",
+  c: "\u00B0C", "\u00B0c": "\u00B0C", degc: "\u00B0C", celsius: "\u00B0C",
+  k: "K", kelvin: "K",
   kb: "kilobyte", mb: "megabyte", gb: "gigabyte", tb: "terabyte", pb: "petabyte",
   kib: "kibibyte", mib: "mebibyte", gib: "gibibyte", tib: "tebibyte",
-  kbit: "kilobit", mbit: "megabit", gbit: "gigabit"
+  kbit: "kilobit", mbit: "megabit", gbit: "gigabit",
+  "in": "inch"
 }
 
-function forQalc(text) {
-  var out = String(text).replace(/(\d\s*[^\s]*)\s+in\s+(?=[A-Za-z])/i, "$1 to ")
+function canonUnit(token) {
+  var full = AMBIGUOUS[String(token).toLowerCase()]
+  return full === undefined ? token : full
+}
 
-  // And `mb` is millibar to qalc, `gb` is gram·bel: `2 gb to mb` answers
-  // 2000 mb·g. Data sizes are typed in lower case more than any other unit, so
-  // the short spellings are written out.
-  return out.replace(/\b([kmgtp]i?b(?:it)?)\b/gi, function (m) {
-    var full = DATA_UNITS[m.toLowerCase()]
-    return full === undefined ? m : full
+// What to hand qalc. Two rewrites, both only where a conversion is being asked:
+//
+//   `in` becomes `to`, because qalc reads a lone `in` as inches and answered
+//   `40 miles in km` with 1635094 m³, exit code 0.
+//
+//   an ambiguous unit becomes its full name, on both sides of the `to`.
+//
+// Neither touches plain arithmetic, and neither touches a query without a
+// quantity in front, so `3 in` is still three inches.
+function forQalc(text) {
+  var out = String(text).replace(/(\d\s*[^\s]*)\s+in\s+(?=[A-Za-z\u00B0])/i, "$1 to ")
+
+  var split = out.match(/^(.*?)\s+to\s+(\S+)\s*$/i)
+  if (!split) return out
+
+  var left = split[1].replace(/([\d.]\s*)([A-Za-z\u00B0]+)\s*$/, function (m, num, unit) {
+    return num + canonUnit(unit)
   })
+  return left + " to " + canonUnit(split[2])
 }
 
 function normalize(s) {
