@@ -10,7 +10,7 @@
   "subtitle": "Radio",
   "glyph": "",
   "search": "omacast-search-radio {query}",
-  "minChars": 2,
+  "minChars": 0,
   "debounceMs": 250,
   "timeoutMs": 8000,
   "maxRows": 10,

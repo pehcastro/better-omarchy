@@ -30,7 +30,26 @@ busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS " || {
 # race the playback that is about to start.
 busctl --user set-property "$BUS" "$BUS_PATH" "$PLAYER" Shuffle b false 2>/dev/null || true
 
+# Spotify answers OpenUri over MPRIS, and MPRIS only exists while Spotify is
+# running. Requiring it to be open first made "search a song and play it" a
+# thing you could only do once you had already opened the thing, so a closed
+# Spotify is started here and the URI waits for the bus.
+player_up() {
+  busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS "
+}
+
 open_uri() {
+  if ! player_up; then
+    command -v spotify >/dev/null 2>&1 || return 1
+    setsid uwsm-app -- spotify >/dev/null 2>&1 &
+    local i
+    for ((i = 0; i < 40; i++)); do
+      sleep 0.5
+      player_up && break
+    done
+    # The bus appears before the player will accept a URI.
+    sleep 1.5
+  fi
   busctl --user call "$BUS" "$BUS_PATH" "$PLAYER" OpenUri s "$1" >/dev/null 2>&1
 }
 

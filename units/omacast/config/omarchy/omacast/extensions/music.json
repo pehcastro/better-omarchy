@@ -11,7 +11,7 @@
   "subtitle": "Spotify",
   "glyph": "",
   "search": "omacast-search-music {query}",
-  "when": "busctl --user list --no-legend 2>/dev/null | grep -q org.mpris.MediaPlayer2",
+  "when": "command -v spotify",
   "minChars": 0,
   "debounceMs": 60,
   "maxRows": 9,

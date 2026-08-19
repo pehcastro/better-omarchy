@@ -10,7 +10,13 @@
 set -uo pipefail
 
 query="${1:-}"
-[[ -z $query ]] && exit 0
+
+# `radio:` on its own used to answer nothing, which reads as a search that
+# failed rather than as a question not yet asked. The stations everybody else
+# votes for are a better opening than an empty box, and they are the ones you
+# want when you do not have a name in mind.
+endpoint="search"
+[[ -z $query ]] && endpoint="topvote"
 
 AGENT="omacast/0.1"
 
@@ -23,7 +29,11 @@ host="all.api.radio-browser.info"
 encoded=$(jq -rn --arg q "$query" '$q|@uri')
 
 curl -sf --max-time 6 -H "User-Agent: $AGENT" \
-  "https://$host/json/stations/search?name=$encoded&limit=10&hidebroken=true&order=votes&reverse=true" 2>/dev/null |
+  "$(if [[ $endpoint == topvote ]]; then
+       printf 'https://%s/json/stations/topvote?limit=10&hidebroken=true' "$host"
+     else
+       printf 'https://%s/json/stations/search?name=%s&limit=10&hidebroken=true&order=votes&reverse=true' "$host" "$encoded"
+     fi)" 2>/dev/null |
   jq -c '
     .[]? |
     select((.url_resolved // "") != "") |
