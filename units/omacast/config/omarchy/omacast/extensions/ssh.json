@@ -1,0 +1,19 @@
+{
+  "id": "ssh",
+  "title": "SSH Hosts",
+  "keyword": "ssh",
+  "aliases": [
+    "host",
+    "hosts"
+  ],
+  "subtitle": "SSH",
+  "glyph": "",
+  "search": "omacast-ssh {query}",
+  "when": "test -f \"$HOME/.ssh/config\"",
+  "minChars": 0,
+  "debounceMs": 60,
+  "timeoutMs": 4000,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

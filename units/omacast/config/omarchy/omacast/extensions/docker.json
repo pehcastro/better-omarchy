@@ -1,0 +1,19 @@
+{
+  "id": "docker",
+  "title": "Containers",
+  "keyword": "docker",
+  "aliases": [
+    "container",
+    "containers"
+  ],
+  "subtitle": "Container",
+  "glyph": "",
+  "search": "omacast-docker {query}",
+  "when": "docker info --format '{{.ServerVersion}}' >/dev/null 2>&1",
+  "minChars": 0,
+  "debounceMs": 80,
+  "timeoutMs": 6000,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}

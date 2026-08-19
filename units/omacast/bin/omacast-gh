@@ -1,0 +1,330 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's GitHub keywords, through the `gh` CLI.
+#
+#   omacast-gh repos  [query]   `gh:`     your repos, then a search
+#   omacast-gh prs    [repo]    `pr:`     open pull requests
+#   omacast-gh issues [query]   `issue:`  open issues assigned to you
+#   omacast-gh runs   [repo]    `ci:`     recent workflow runs
+#   omacast-gh gists  [query]   `gist:`   your gists
+#
+# Every keyword's extension gates on `gh auth status`, so nothing here runs at
+# all until `gh` is logged in. Each mode still exits 0 with no output when the
+# call fails, because a network blip must draw nothing rather than an error.
+#
+# Two things this has to get right, both of them about not being rude to the
+# API. Requests are cached under ~/.local/state/omarchy/omacast-gh, keyed by a
+# fingerprint of the gh credentials, so a `gh auth logout` or a token swap
+# invalidates every cached answer instead of serving somebody else's repos. And
+# `gh:` answers the first two characters by filtering the cached list of your
+# own repos in jq, with no request at all: search only starts at three
+# characters, which is where a search term becomes meaningful anyway.
+#
+# `timeout` wraps every call because the launcher kills the shell it started but
+# not necessarily a `gh` stuck on a socket, and the wrapper is what makes the
+# extension's own timeoutMs the real ceiling.
+
+set -uo pipefail
+
+mode="${1:-}"
+query="${2:-}"
+
+command -v gh >/dev/null 2>&1 || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
+CACHE_DIR="$STATE/omacast-gh"
+GH_TIMEOUT=8
+
+# The identity behind the cache. hosts.yml changes on any login, logout or host
+# change, and the two token variables override it, so this covers every way the
+# answer could start belonging to somebody else.
+auth_fingerprint() {
+  local hosts="${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml" stamp=""
+  [[ -f $hosts ]] && stamp=$(stat -c '%Y:%s' "$hosts" 2>/dev/null)
+  printf '%s|%s|%s' "$stamp" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}" | md5sum | cut -c1-12
+}
+
+FP=$(auth_fingerprint)
+
+cached() {
+  local key ttl out file age
+  key="$1"
+  ttl="$2"
+  shift 2
+
+  mkdir -p "$CACHE_DIR" 2>/dev/null || {
+    timeout "$GH_TIMEOUT" "$@" 2>/dev/null
+    return
+  }
+
+  # Anything written under another fingerprint belonged to another login, so it
+  # is deleted rather than aged out. That is what stops a stale cache from
+  # outliving a `gh auth` change.
+  local stale
+  for stale in "$CACHE_DIR"/*.json; do
+    [[ -e $stale ]] || continue
+    [[ ${stale##*/} == "$FP-"* ]] || rm -f -- "$stale"
+  done
+
+  file="$CACHE_DIR/$FP-$key.json"
+  if [[ -f $file ]]; then
+    age=$(($(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0)))
+    if ((age >= 0 && age < ttl)); then
+      cat "$file"
+      return 0
+    fi
+  fi
+
+  out=$(timeout "$GH_TIMEOUT" "$@" 2>/dev/null) || return 1
+  [[ -n $out ]] || return 1
+  printf '%s' "$out" >"$file" 2>/dev/null
+  printf '%s' "$out"
+}
+
+key_for() {
+  printf '%s' "$*" | md5sum | cut -c1-16
+}
+
+now=$(date +%s)
+
+# jq helpers shared by every mode: a short age from an ISO timestamp, and the
+# check summary, which has to read two different rollup shapes because a commit
+# status and a check run do not name their result the same way.
+JQ_LIB='
+def shortage($iso; $now):
+  ($iso | if . == null or . == "" then null else (fromdateiso8601? // null) end) as $t
+  | if $t == null then "" else
+      (($now - $t) | floor) as $d
+      | if $d < 3600 then "\(($d / 60) | floor)m"
+        elif $d < 86400 then "\(($d / 3600) | floor)h"
+        elif $d < 2592000 then "\(($d / 86400) | floor)d"
+        elif $d < 31536000 then "\(($d / 2592000) | floor)mo"
+        else "\(($d / 31536000) | floor)y" end
+    end;
+
+def rollup:
+  [ (. // [])[]
+    | [ (.conclusion // ""), (.state // ""), (.status // "") ]
+    | map(select(. != "")) | first // "" ]
+  | map(ascii_upcase) as $all
+  | if ($all | length) == 0 then ""
+    elif ($all | any(. == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "STARTUP_FAILURE" or . == "ACTION_REQUIRED")) then "✗"
+    elif ($all | any(. == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "WAITING" or . == "REQUESTED")) then "●"
+    elif ($all | any(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")) then "✓"
+    else "" end;
+
+def reviewword:
+  . as $d
+  | if $d == "APPROVED" then "approved"
+    elif $d == "CHANGES_REQUESTED" then "changes requested"
+    elif $d == "REVIEW_REQUIRED" then "review required"
+    else "" end;
+'
+
+# `pr:` and `ci:` need a repo. The argument wins when it names one, otherwise
+# the launcher falls back to the repo `git:` would answer for, which is the same
+# inference and therefore the same answer.
+resolve_repo() {
+  local arg="$1"
+  if [[ $arg == */* ]]; then
+    printf '%s' "${arg%% *}"
+    return 0
+  fi
+  omacast-repo --slug 2>/dev/null
+}
+
+case "$mode" in
+
+repos)
+  # Your own repos, cached for two minutes: the list does not change between
+  # keystrokes, and two minutes is short enough that a repo you just created
+  # shows up before you go looking for it a second time.
+  own=$(cached "own-repos" 120 gh repo list --limit 100 \
+    --json nameWithOwner,description,primaryLanguage,stargazerCount,pushedAt,isPrivate,isArchived,url) || own="[]"
+  [[ -n ${own:-} ]] || own="[]"
+
+  printf '%s' "$own" | jq -c --arg q "${query,,}" --argjson now "$now" "$JQ_LIB"'
+    [ .[] | select($q == "" or ((.nameWithOwner + " " + (.description // "")) | ascii_downcase | contains($q))) ]
+    | sort_by(.pushedAt) | reverse | .[:12]
+    | to_entries[] | .key as $i | .value
+    | {
+        id: ("own:" + .nameWithOwner),
+        title: .nameWithOwner,
+        detail: (.description // ""),
+        subtitle: ([ (.primaryLanguage.name // ""), (if .isPrivate then "private" else "" end) ]
+                   | map(select(. != "")) | join("  ")),
+        accessory: ("★ " + (.stargazerCount | tostring) + "  " + shortage(.pushedAt; $now)),
+        group: "Your Repos",
+        exec: ("omarchy-launch-browser " + (.url | @sh)),
+        score: (90000 - ($i * 100)),
+        actions: [
+          { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
+          { title: "Clone", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh repo clone " + (.nameWithOwner | @sh)) },
+          { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
+          { title: "Pull Requests", exec: "true", query: ("pr:" + .nameWithOwner) }
+        ]
+      }' 2>/dev/null
+
+  # Three characters, because two is not a search term and every keystroke below
+  # that is answered from the cache above for free.
+  if ((${#query} >= 3)); then
+    seen=$(printf '%s' "$own" | jq -c '[.[].nameWithOwner]' 2>/dev/null) || seen="[]"
+    cached "search-$(key_for "$query")" 120 gh search repos "$query" --limit 12 \
+      --json fullName,description,language,stargazersCount,updatedAt,url,isPrivate |
+      jq -c --argjson seen "$seen" --argjson now "$now" "$JQ_LIB"'
+        [ .[] | select(.fullName as $n | ($seen | index($n)) == null) ] | .[:8]
+        | to_entries[] | .key as $i | .value
+        | {
+            id: ("search:" + .fullName),
+            title: .fullName,
+            detail: (.description // ""),
+            subtitle: (.language // ""),
+            accessory: ("★ " + (.stargazersCount | tostring) + "  " + shortage(.updatedAt; $now)),
+            group: "GitHub",
+            exec: ("omarchy-launch-browser " + (.url | @sh)),
+            score: (80000 - ($i * 100)),
+            actions: [
+              { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
+              { title: "Clone", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh repo clone " + (.fullName | @sh)) },
+              { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
+            ]
+          }' 2>/dev/null
+  fi
+  ;;
+
+prs)
+  slug=$(resolve_repo "$query")
+  [[ -n ${slug:-} ]] || exit 0
+
+  # Free text after a repo name narrows the list locally, so `pr:owner/repo fix`
+  # costs the same one request as `pr:owner/repo`.
+  if [[ $query == */* ]]; then
+    filter="${query#"${query%% *}"}"
+    filter="${filter# }"
+  else
+    filter="$query"
+  fi
+
+  cached "prs-$(key_for "$slug")" 45 gh pr list --repo "$slug" --state open --limit 20 \
+    --json number,title,author,headRefName,isDraft,reviewDecision,statusCheckRollup,updatedAt,url |
+    jq -c --arg q "${filter,,}" --arg slug "$slug" --argjson now "$now" "$JQ_LIB"'
+      [ .[] | select($q == "" or ((.title + " " + (.author.login // "") + " " + .headRefName) | ascii_downcase | contains($q))) ]
+      | to_entries[] | .key as $i | .value
+      | (.statusCheckRollup | rollup) as $checks
+      | {
+          id: ("pr:" + $slug + "#" + (.number | tostring)),
+          title: (if .isDraft then "draft  " else "" end) + .title,
+          detail: ("#" + (.number | tostring) + "  " + (.author.login // "") + "  " + .headRefName),
+          subtitle: (.reviewDecision // "" | reviewword),
+          accessory: (($checks + " " + shortage(.updatedAt; $now)) | ltrimstr(" ")),
+          group: ("Pull Requests  " + $slug),
+          exec: ("omarchy-launch-browser " + (.url | @sh)),
+          score: (90000 - ($i * 100)),
+          actions: [
+            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
+            { title: "Show Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr diff --repo " + ($slug | @sh) + " " + (.number | tostring)) },
+            { title: "Checks", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr checks --repo " + ($slug | @sh) + " " + (.number | tostring)) },
+            { title: "Check Out Locally", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh pr checkout --repo " + ($slug | @sh) + " " + (.number | tostring)) },
+            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
+          ]
+        }' 2>/dev/null
+  ;;
+
+issues)
+  # Assigned to you, across every repo, which is the list you keep in your head
+  # and would otherwise open five tabs to rebuild.
+  args=(gh search issues --assignee=@me --state=open --limit 25
+    --json repository,number,title,updatedAt,url,labels)
+  [[ -n $query ]] && args+=("$query")
+
+  cached "issues-$(key_for "$query")" 45 "${args[@]}" |
+    jq -c --argjson now "$now" "$JQ_LIB"'
+      to_entries[] | .key as $i | .value
+      | (.repository.nameWithOwner // .repository.name // "") as $repo
+      | {
+          id: ("issue:" + $repo + "#" + (.number | tostring)),
+          title: .title,
+          detail: ($repo + "  #" + (.number | tostring)),
+          subtitle: ([ (.labels // [])[].name ] | join(", ")),
+          accessory: shortage(.updatedAt; $now),
+          group: "Assigned Issues",
+          exec: ("omarchy-launch-browser " + (.url | @sh)),
+          score: (90000 - ($i * 100)),
+          actions: [
+            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
+            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
+            { title: "Pull Requests", exec: "true", query: ("pr:" + $repo) }
+          ]
+        }' 2>/dev/null
+  ;;
+
+runs)
+  slug=$(resolve_repo "$query")
+  [[ -n ${slug:-} ]] || exit 0
+
+  cached "runs-$(key_for "$slug")" 45 gh run list --repo "$slug" --limit 15 \
+    --json databaseId,displayTitle,workflowName,status,conclusion,headBranch,event,createdAt,url |
+    jq -c --arg slug "$slug" --argjson now "$now" "$JQ_LIB"'
+      to_entries[] | .key as $i | .value
+      | (if .conclusion == "success" then "✓"
+         elif .conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure" then "✗"
+         elif .conclusion == "cancelled" then "⊘"
+         elif .status == "completed" then ""
+         else "●" end) as $mark
+      | {
+          id: ("run:" + $slug + ":" + (.databaseId | tostring)),
+          title: .displayTitle,
+          detail: (.workflowName + "  " + .headBranch + "  " + .event),
+          subtitle: (if .conclusion == "" or .conclusion == null then .status else .conclusion end),
+          accessory: (($mark + " " + shortage(.createdAt; $now)) | ltrimstr(" ")),
+          group: ("Workflow Runs  " + $slug),
+          exec: ("omarchy-launch-browser " + (.url | @sh)),
+          score: (90000 - ($i * 100)),
+          actions: [
+            { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) },
+            { title: "Failed Logs", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh run view --repo " + ($slug | @sh) + " " + (.databaseId | tostring) + " --log-failed") },
+            { title: "Watch", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh run watch --repo " + ($slug | @sh) + " " + (.databaseId | tostring)) },
+            { title: "Rerun Failed Jobs", exec: ("out=$(gh run rerun --repo " + ($slug | @sh) + " " + (.databaseId | tostring) + " --failed 2>&1) && omarchy-notification-send \"Rerunning failed jobs\" || omarchy-notification-send -u normal \"gh run rerun failed\" \"$out\"") },
+            { title: "Copy URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") }
+          ]
+        }' 2>/dev/null
+  ;;
+
+gists)
+  # `gh gist list` has no --json, so the REST endpoint is the only way to get
+  # the raw URL a gist is usually wanted for.
+  cached "gists" 120 gh api "/gists?per_page=40" |
+    jq -c --arg q "${query,,}" --argjson now "$now" "$JQ_LIB"'
+      [ .[]
+        | { id: .id, description: (.description // ""), url: .html_url,
+            public: .public, updated: .updated_at,
+            names: [ (.files // {}) | keys[] ],
+            raw: ([ (.files // {}) | .[] | .raw_url ] | first // "") }
+        | select($q == "" or ((.description + " " + (.names | join(" "))) | ascii_downcase | contains($q)))
+      ] | .[:12]
+      | to_entries[] | .key as $i | .value
+      | {
+          id: ("gist:" + .id),
+          title: (if .description != "" then .description else (.names | first // .id) end),
+          detail: (.names | join(", ")),
+          subtitle: (if .public then "public" else "secret" end),
+          accessory: shortage(.updated; $now),
+          group: "Gists",
+          exec: ("omarchy-launch-browser " + (.url | @sh)),
+          score: (90000 - ($i * 100)),
+          actions: (
+            [ { title: "Open in Browser", shortcut: "↵", exec: ("omarchy-launch-browser " + (.url | @sh)) } ]
+            + (if .raw == "" then [] else
+                 [ { title: "Copy Raw URL", exec: ("printf %s " + (.raw | @sh) + " | wl-copy") } ] end)
+            + [ { title: "Copy Gist URL", exec: ("printf %s " + (.url | @sh) + " | wl-copy") },
+                { title: "Edit", exec: ("omarchy-launch-tui --app-id=org.omarchy.git gh gist edit " + (.id | @sh)) } ]
+          )
+        }' 2>/dev/null
+  ;;
+
+*)
+  exit 0
+  ;;
+esac
+
+exit 0

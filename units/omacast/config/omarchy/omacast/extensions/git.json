@@ -1,0 +1,18 @@
+{
+  "id": "git",
+  "title": "This Repo",
+  "keyword": "git",
+  "aliases": [
+    "branch"
+  ],
+  "subtitle": "Git",
+  "glyph": "",
+  "search": "omacast-git {query}",
+  "when": "command -v git >/dev/null",
+  "minChars": 0,
+  "debounceMs": 100,
+  "timeoutMs": 5000,
+  "maxRows": 24,
+  "tier": "substring",
+  "view": "list"
+}

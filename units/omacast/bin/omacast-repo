@@ -1,0 +1,410 @@
+#!/bin/bash
+# Emits one JSON row per local git repository for OmaCast's `repo:` keyword.
+#
+#   repo:                    every repo found, most recently touched first
+#   repo:oma                 by name or by path
+#   repo:oma branch:main     only the ones sitting on that branch
+#
+# Two side modes, used by the other git extensions rather than by the launcher:
+#
+#   omacast-repo --paths     every discovered repo path, one per line
+#   omacast-repo --current   the one repo `git:` and `pr:` should answer for
+#   omacast-repo --slug [p]  owner/name for that repo, for handing to `gh`
+#
+# Cost is the whole design here. Discovery walks the project roots once with fd
+# and is cached, because a keystroke must not pay for a filesystem walk. Name
+# and path matching then run in bash with no forks at all. Branch, dirty state,
+# ahead/behind and last-commit age are read only for the rows that survive to
+# the answer, so the expensive part is proportional to what is shown (a dozen
+# rows, two git calls each) rather than to what exists on the disk. `branch:` is
+# the one filter that needs a fact about every candidate, and it gets it by
+# reading .git/HEAD in bash rather than forking git per repo.
+
+set -uo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
+CACHE="$STATE/omacast-repos.list"
+PIN="$STATE/omacast-repo"
+
+# Two minutes. A repo you cloned in the last two minutes is not the one you are
+# reaching for from a launcher, and this is the only number that decides whether
+# typing costs a filesystem walk.
+CACHE_TTL=120
+
+MAX_ROWS=12
+
+roots=()
+collect_roots() {
+  local candidates=() c
+  if [[ -n ${OMACAST_REPO_ROOTS:-} ]]; then
+    IFS=: read -r -a candidates <<<"$OMACAST_REPO_ROOTS"
+  else
+    candidates=(
+      "$HOME/localhost" "$HOME/Projects" "$HOME/projects" "$HOME/Work"
+      "$HOME/work" "$HOME/src" "$HOME/code" "$HOME/dev" "$HOME/repos"
+      "$HOME/git" "$HOME/Developer"
+    )
+  fi
+  for c in "${candidates[@]}"; do
+    c="${c/#\~/$HOME}"
+    [[ -d $c ]] && roots+=("$c")
+  done
+}
+
+discover() {
+  # --hidden because .git is hidden, --max-depth because a monorepo full of
+  # vendored checkouts is not a list of your projects.
+  fd --hidden --type d --max-depth 6 --absolute-path \
+    --exclude node_modules --exclude .cache --exclude vendor \
+    --exclude target --exclude .venv \
+    '^\.git$' "${roots[@]}" 2>/dev/null |
+    sed 's:/\.git/\?$::'
+}
+
+repos=()
+load_repos() {
+  collect_roots
+  ((${#roots[@]})) || return 1
+
+  local now age stamp
+  now=$(date +%s)
+  if [[ -f $CACHE ]]; then
+    stamp=$(stat -c %Y "$CACHE" 2>/dev/null) || stamp=0
+    age=$((now - stamp))
+    if ((age >= 0 && age < CACHE_TTL)); then
+      mapfile -t repos <"$CACHE"
+      ((${#repos[@]})) && return 0
+    fi
+  fi
+
+  mapfile -t repos < <(discover)
+  mkdir -p "$STATE" 2>/dev/null
+  if ((${#repos[@]})); then
+    printf '%s\n' "${repos[@]}" >"$CACHE" 2>/dev/null
+  else
+    : >"$CACHE" 2>/dev/null
+  fi
+  ((${#repos[@]}))
+}
+
+# The real git directory, which is a file rather than a directory inside a
+# worktree or a submodule.
+git_dir() {
+  local repo="$1" line
+  if [[ -f $repo/.git ]]; then
+    read -r line <"$repo/.git" 2>/dev/null || return 1
+    line="${line#gitdir: }"
+    [[ $line == /* ]] || line="$repo/$line"
+    printf '%s' "$line"
+    return 0
+  fi
+  [[ -d $repo/.git ]] || return 1
+  printf '%s' "$repo/.git"
+}
+
+# Branch without forking git, for the case where every candidate needs one.
+head_branch() {
+  local gitdir="$1" line
+  [[ -f $gitdir/HEAD ]] || return 1
+  read -r line <"$gitdir/HEAD" 2>/dev/null || return 1
+  if [[ $line == "ref: refs/heads/"* ]]; then
+    printf '%s' "${line#ref: refs/heads/}"
+  else
+    printf '%s' "${line:0:7}"
+  fi
+}
+
+# Reading .git/config directly is the same answer git would give and saves a
+# third fork on every displayed row.
+origin_url() {
+  local cfg="$1/config" line section="" url=""
+  [[ -f $cfg ]] || return 1
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    case $line in
+    \[*)
+      section="$line"
+      ;;
+    url*=*)
+      [[ $section == '[remote "origin"]'* ]] || continue
+      url="${line#*=}"
+      url="${url#"${url%%[![:space:]]*}"}"
+      ;;
+    esac
+  done <"$cfg"
+  [[ -n $url ]] || return 1
+  printf '%s' "$url"
+}
+
+# scp-style, ssh://, git:// and https:// all name the same page in a browser.
+web_url() {
+  local u="${1%/}"
+  u="${u%.git}"
+  case $u in
+  git@*:*)
+    u="${u#git@}"
+    u="${u/://}"
+    printf 'https://%s' "$u"
+    ;;
+  ssh://git@*) printf 'https://%s' "${u#ssh://git@}" ;;
+  ssh://*) printf 'https://%s' "${u#ssh://}" ;;
+  git://*) printf 'https://%s' "${u#git://}" ;;
+  http://* | https://*) printf '%s' "$u" ;;
+  *) return 1 ;;
+  esac
+}
+
+# owner/name, for handing to `gh` and to the `pr:` keyword.
+name_with_owner() {
+  local web="$1" path
+  case $web in
+  https://github.com/*) path="${web#https://github.com/}" ;;
+  *) return 1 ;;
+  esac
+  [[ $path == */* ]] || return 1
+  printf '%s' "${path%%/*}/${path#*/}"
+}
+
+short_age() {
+  local d=$1
+  ((d < 0)) && d=0
+  if ((d < 3600)); then
+    printf '%dm' $((d / 60))
+  elif ((d < 86400)); then
+    printf '%dh' $((d / 3600))
+  elif ((d < 2592000)); then
+    printf '%dd' $((d / 86400))
+  elif ((d < 31536000)); then
+    printf '%dmo' $((d / 2592000))
+  else
+    printf '%dy' $((d / 31536000))
+  fi
+}
+
+if [[ -n ${VISUAL:-} ]]; then
+  # Deliberately unquoted where it is used: VISUAL routinely carries flags, as
+  # in "zeditor --wait". setsid keeps a --wait style editor from holding on to
+  # the launcher's child.
+  EDITOR_PREFIX="setsid $VISUAL"
+else
+  EDITOR_PREFIX="omarchy-launch-editor"
+fi
+
+# --paths and --current, for the other extensions
+# ------------------------------------------------------------------
+
+mode="${1:-}"
+
+if [[ $mode == "--paths" ]]; then
+  load_repos || exit 0
+  printf '%s\n' "${repos[@]}"
+  exit 0
+fi
+
+up_to_repo() {
+  local d="$1"
+  while [[ -n $d && $d != "/" ]]; do
+    [[ -e $d/.git ]] && {
+      printf '%s' "$d"
+      return 0
+    }
+    d="${d%/*}"
+  done
+  return 1
+}
+
+# A launcher has no working directory, so "the repo I am in" has to be inferred.
+# In order of how much the answer was actually chosen by the user: an explicit
+# environment override, then a repo pinned from this extension's own action
+# list, then the directory of the terminal that had focus before the launcher
+# opened (the same trick Omarchy's own terminal-in-cwd keybinding uses), then
+# the repo touched most recently. The first three are what you meant; the last
+# one is a guess that is right often enough to beat answering nothing.
+current_repo() {
+  local candidate
+
+  if [[ -n ${OMACAST_REPO:-} ]] && candidate=$(up_to_repo "${OMACAST_REPO%/}"); then
+    printf '%s' "$candidate"
+    return 0
+  fi
+
+  if [[ -f $PIN ]]; then
+    read -r candidate <"$PIN" 2>/dev/null
+    if [[ -n ${candidate:-} && -e $candidate/.git ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  fi
+
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v omarchy-cmd-terminal-cwd >/dev/null 2>&1; then
+    candidate=$(omarchy-cmd-terminal-cwd 2>/dev/null)
+    if [[ -n $candidate ]] && candidate=$(up_to_repo "$candidate"); then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  fi
+
+  load_repos || return 1
+  local newest="" newest_ts=0 gitdir ts r
+  for r in "${repos[@]}"; do
+    gitdir=$(git_dir "$r") || continue
+    # The reflog moves on commit, checkout, merge and pull, which is a better
+    # reading of "the repo I am working in" than the mtime of a build artefact.
+    ts=$(stat -c %Y "$gitdir/logs/HEAD" 2>/dev/null) || ts=0
+    ((ts > newest_ts)) && {
+      newest_ts=$ts
+      newest="$r"
+    }
+  done
+  [[ -n $newest ]] || return 1
+  printf '%s' "$newest"
+}
+
+if [[ $mode == "--current" ]]; then
+  current_repo || exit 0
+  printf '\n'
+  exit 0
+fi
+
+if [[ $mode == "--slug" ]]; then
+  target="${2:-}"
+  [[ -n $target ]] || target=$(current_repo) || exit 0
+  gitdir=$(git_dir "$target") || exit 0
+  remote=$(origin_url "$gitdir") || remote=$(git -C "$target" remote get-url origin 2>/dev/null)
+  [[ -n ${remote:-} ]] || exit 0
+  web=$(web_url "$remote") || exit 0
+  slug=$(name_with_owner "$web") || exit 0
+  printf '%s\n' "$slug"
+  exit 0
+fi
+
+# repo:
+# ------------------------------------------------------------------
+
+query="${1:-}"
+branch_filter="${2:-}"
+
+load_repos || exit 0
+
+needle="${query,,}"
+now=$(date +%s)
+
+# Rank first, with nothing but string work, then pay for git only on the rows
+# that are going to be drawn.
+ranked=()
+for repo in "${repos[@]}"; do
+  [[ -d $repo ]] || continue
+  name="${repo##*/}"
+  lower_name="${name,,}"
+  lower_path="${repo,,}"
+
+  score=1000
+  if [[ -n $needle ]]; then
+    if [[ $lower_name == "$needle"* ]]; then
+      score=40000
+    elif [[ $lower_name == *"$needle"* ]]; then
+      score=25000
+    elif [[ $lower_path == *"$needle"* ]]; then
+      score=10000
+    else
+      continue
+    fi
+  fi
+
+  gitdir=$(git_dir "$repo") || continue
+
+  if [[ -n $branch_filter ]]; then
+    head=$(head_branch "$gitdir") || continue
+    [[ ${head,,} == *"${branch_filter,,}"* ]] || continue
+  fi
+
+  touched=$(stat -c %Y "$gitdir/logs/HEAD" 2>/dev/null) || touched=0
+  ranked+=("$score	$touched	$repo	$gitdir")
+done
+
+((${#ranked[@]})) || exit 0
+
+while IFS=$'\t' read -r score touched repo gitdir; do
+  [[ -n $repo ]] || continue
+
+  branch="" upstream="" ab="" dirty=0
+  # porcelain v2 with --branch is one call for branch, upstream, ahead/behind
+  # and dirtiness. --no-optional-locks so a launcher reading in the background
+  # never writes to somebody's index.
+  while IFS= read -r line; do
+    case $line in
+    "# branch.head "*) branch="${line#\# branch.head }" ;;
+    "# branch.upstream "*) upstream="${line#\# branch.upstream }" ;;
+    "# branch.ab "*) ab="${line#\# branch.ab }" ;;
+    "#"*) ;;
+    ?*) dirty=1 ;;
+    esac
+  done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch --untracked-files=no 2>/dev/null)
+
+  [[ -n $branch ]] || branch=$(head_branch "$gitdir") || branch="?"
+  [[ $branch == "(detached)" ]] && branch="detached"
+
+  committed=$(git -C "$repo" --no-optional-locks log -1 --format=%ct 2>/dev/null)
+  [[ -n ${committed:-} ]] || committed=$touched
+
+  state="$branch"
+  ((dirty)) && state="$state ●"
+  if [[ -n $ab ]]; then
+    ahead="${ab%% *}"
+    behind="${ab##* }"
+    ((${ahead#+} > 0)) && state="$state ↑${ahead#+}"
+    ((${behind#-} > 0)) && state="$state ↓${behind#-}"
+  fi
+
+  display="${repo/#$HOME/\~}"
+  quoted=$(printf '%q' "$repo")
+
+  remote=$(origin_url "$gitdir") || remote=$(git -C "$repo" remote get-url origin 2>/dev/null)
+  web=""
+  slug=""
+  if [[ -n ${remote:-} ]]; then
+    web=$(web_url "$remote") || web=""
+    [[ -n $web ]] && slug=$(name_with_owner "$web") || slug=""
+  fi
+
+  jq -cn \
+    --arg id "$repo" \
+    --arg title "${repo##*/}" \
+    --arg detail "$display" \
+    --arg subtitle "$state" \
+    --arg accessory "$(short_age $((now - committed)))" \
+    --arg open "$EDITOR_PREFIX $quoted" \
+    --arg term "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
+    --arg log "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted log --oneline --graph --decorate -40" \
+    --arg copypath "printf %s $quoted | wl-copy" \
+    --arg clone "${remote:-}" \
+    --arg web "$web" \
+    --arg slug "$slug" \
+    --arg pin "mkdir -p $(printf '%q' "$STATE") && printf %s $quoted > $(printf '%q' "$PIN")" \
+    --argjson score "$score" '
+      {
+        id: $id, title: $title, detail: $detail, subtitle: $subtitle,
+        accessory: $accessory, exec: $open, score: $score,
+        actions: (
+          [
+            { title: "Open in Editor", shortcut: "↵", exec: $open },
+            { title: "Open Terminal Here", exec: $term }
+          ]
+          + (if $web == "" then [] else
+               [{ title: "Open Remote in Browser",
+                  exec: ("omarchy-launch-browser " + ($web | @sh)) }] end)
+          + [
+            { title: "Copy Path", exec: $copypath },
+            { title: "Recent Commits", exec: $log }
+          ]
+          + (if $clone == "" then [] else
+               [{ title: "Copy Clone URL",
+                  exec: ("printf %s " + ($clone | @sh) + " | wl-copy") }] end)
+          + (if $slug == "" then [] else
+               [{ title: "Pull Requests", exec: "true", query: ("pr:" + $slug) }] end)
+          + [{ title: "Pin for git:", exec: $pin }]
+        )
+      }'
+done < <(printf '%s\n' "${ranked[@]}" | sort -t$'\t' -k1,1rn -k2,2rn | head -"$MAX_ROWS")
+
+exit 0

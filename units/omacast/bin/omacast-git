@@ -1,0 +1,183 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `git:` keyword: the state of the repo you are
+# in, without opening a terminal to ask.
+#
+#   git:            status, branch, recent commits, branches, stashes, remote
+#   git:feature     the same, narrowed to rows matching that text
+#
+# The repo is resolved by `omacast-repo --current`, which is where the choice of
+# what "the repo I am in" means for a launcher with no working directory is
+# written down. Everything below is one pass of cheap git plumbing over that one
+# repo, so the cost does not depend on how many repos exist.
+#
+# Rows carry a group, so the list view labels each section rather than running
+# six different kinds of thing together.
+
+set -uo pipefail
+
+query="${1:-}"
+needle="${query,,}"
+
+command -v git >/dev/null 2>&1 || exit 0
+
+repo=$(omacast-repo --current 2>/dev/null)
+[[ -n $repo && -e $repo/.git ]] || exit 0
+
+quoted=$(printf '%q' "$repo")
+name="${repo##*/}"
+display="${repo/#$HOME/\~}"
+now=$(date +%s)
+
+short_age() {
+  local d=$1
+  ((d < 0)) && d=0
+  if ((d < 3600)); then
+    printf '%dm' $((d / 60))
+  elif ((d < 86400)); then
+    printf '%dh' $((d / 3600))
+  elif ((d < 2592000)); then
+    printf '%dd' $((d / 86400))
+  elif ((d < 31536000)); then
+    printf '%dmo' $((d / 2592000))
+  else
+    printf '%dy' $((d / 31536000))
+  fi
+}
+
+# The filter reads what the row says rather than being pushed down into any one
+# git query, because the six sections have nothing in common to filter on.
+keep() {
+  [[ -z $needle ]] && return 0
+  local hay="${1,,} ${2,,} ${3,,}"
+  [[ $hay == *"$needle"* ]]
+}
+
+score=90000
+emit() {
+  local id="$1" title="$2" detail="$3" subtitle="$4" accessory="$5" group="$6"
+  local primary="$7" exec="$8" extra="${9:-[]}"
+  keep "$title" "$detail" "$group" || return 0
+  jq -cn --arg id "$id" --arg t "$title" --arg d "$detail" --arg s "$subtitle" \
+    --arg a "$accessory" --arg g "$group" --arg p "$primary" --arg e "$exec" \
+    --argjson sc "$score" --argjson extra "$extra" \
+    '{ id: $id, title: $t, detail: $d, subtitle: $s, accessory: $a,
+       group: $g, exec: $e, score: $sc,
+       actions: ([{ title: $p, shortcut: "↵", exec: $e }] + $extra) }'
+  score=$((score - 100))
+}
+
+# Status and branch, in one call
+# ------------------------------------------------------------------
+
+branch="" upstream="" ab="" staged=0 changed=0 conflicted=0
+while IFS= read -r line; do
+  case $line in
+  "# branch.head "*) branch="${line#\# branch.head }" ;;
+  "# branch.upstream "*) upstream="${line#\# branch.upstream }" ;;
+  "# branch.ab "*) ab="${line#\# branch.ab }" ;;
+  "#"*) ;;
+  "u "*) conflicted=$((conflicted + 1)) ;;
+  "1 "* | "2 "*)
+    # Field two of a v2 entry is the XY state: X staged, Y in the worktree.
+    # Sliced rather than cut, so a repo with a thousand changes is still no
+    # forks at all.
+    rest="${line#* }"
+    xy="${rest%% *}"
+    [[ ${xy:0:1} != "." ]] && staged=$((staged + 1))
+    [[ ${xy:1:1} != "." ]] && changed=$((changed + 1))
+    ;;
+  "? "*) changed=$((changed + 1)) ;;
+  esac
+done < <(git -C "$repo" --no-optional-locks status --porcelain=v2 --branch 2>/dev/null)
+
+[[ -n $branch ]] || exit 0
+[[ $branch == "(detached)" ]] && branch="detached"
+
+parts=()
+((staged)) && parts+=("$staged staged")
+((changed)) && parts+=("$changed changed")
+((conflicted)) && parts+=("$conflicted conflicted")
+((${#parts[@]})) || parts=("clean")
+summary=$(
+  IFS=", "
+  printf '%s' "${parts[*]}"
+)
+
+emit "status" "$summary" "$display" "$name" "" "Status" "Open Terminal Here" \
+  "setsid uwsm-app -- xdg-terminal-exec --dir=$quoted" \
+  "$(jq -cn --arg q "$quoted" '[
+       { title: "Show Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " diff") },
+       { title: "Show Staged Diff", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " diff --cached") },
+       { title: "Full Status", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " status") }
+     ]')"
+
+track="${upstream:-no upstream}"
+if [[ -n $ab ]]; then
+  ahead="${ab%% *}"
+  behind="${ab##* }"
+  ((${ahead#+} > 0)) && track="$track ↑${ahead#+}"
+  ((${behind#-} > 0)) && track="$track ↓${behind#-}"
+fi
+
+emit "branch" "$branch" "$track" "$name" "" "Branch" "Copy Branch Name" \
+  "printf %s $(printf '%q' "$branch") | wl-copy" \
+  "$(jq -cn --arg q "$quoted" '[
+       { title: "Fetch", exec: ("out=$(git -C " + $q + " fetch --all --prune 2>&1) && omarchy-notification-send \"Fetched\" \"$out\" || omarchy-notification-send -u normal \"git fetch failed\" \"$out\"") }
+     ]')"
+
+# Recent commits
+# ------------------------------------------------------------------
+
+while IFS=$'\t' read -r hash subject author ts; do
+  [[ -n $hash ]] || continue
+  emit "commit:$hash" "$subject" "$author" "$hash" "$(short_age $((now - ts)))" \
+    "Recent Commits" "Copy Hash" \
+    "printf %s $hash | wl-copy" \
+    "$(jq -cn --arg h "$hash" --arg q "$quoted" '[
+         { title: "Show Commit", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " show " + ($h | @sh)) }
+       ]')"
+done < <(git -C "$repo" --no-optional-locks log -8 --format=$'%h\t%s\t%an\t%ct' 2>/dev/null)
+
+# Branches to switch to
+# ------------------------------------------------------------------
+
+while IFS=$'\t' read -r ref ts; do
+  [[ -n $ref && $ref != "$branch" ]] || continue
+  # A `git switch` that refuses because the tree is dirty would otherwise fail
+  # invisibly, so the outcome is reported as a notification either way.
+  esc_ref=$(printf '%q' "$ref")
+  switch="out=\$(git -C $quoted switch $esc_ref 2>&1)"
+  switch+=" && omarchy-notification-send \"Switched to $ref\""
+  switch+=" || omarchy-notification-send -u normal \"git switch failed\" \"\$out\""
+  emit "head:$ref" "$ref" "switch to this branch" "branch" "$(short_age $((now - ts)))" \
+    "Branches" "Switch" "$switch" \
+    "$(jq -cn --arg r "$ref" --arg q "$quoted" '[
+         { title: "Copy Branch Name", exec: ("printf %s " + ($r | @sh) + " | wl-copy") },
+         { title: "Log This Branch", exec: ("omarchy-launch-tui --app-id=org.omarchy.git git -C " + $q + " log --oneline --graph --decorate -40 " + ($r | @sh)) }
+       ]')"
+done < <(git -C "$repo" --no-optional-locks for-each-ref --sort=-committerdate --count=10 \
+  --format=$'%(refname:short)\t%(committerdate:unix)' refs/heads 2>/dev/null)
+
+# Stashes
+# ------------------------------------------------------------------
+
+while IFS=$'\t' read -r ref subject ts; do
+  [[ -n $ref ]] || continue
+  emit "stash:$ref" "$subject" "$ref" "stash" "$(short_age $((now - ts)))" \
+    "Stashes" "Show Stash" \
+    "omarchy-launch-tui --app-id=org.omarchy.git git -C $quoted stash show -p $(printf '%q' "$ref")" \
+    "$(jq -cn --arg r "$ref" '[
+         { title: "Copy Stash Ref", exec: ("printf %s " + ($r | @sh) + " | wl-copy") }
+       ]')"
+done < <(git -C "$repo" --no-optional-locks stash list --format=$'%gd\t%gs\t%ct' 2>/dev/null)
+
+# Remote
+# ------------------------------------------------------------------
+
+remote=$(git -C "$repo" --no-optional-locks remote get-url origin 2>/dev/null)
+if [[ -n ${remote:-} ]]; then
+  emit "remote" "$remote" "origin" "remote" "" "Remote" "Copy Remote URL" \
+    "printf %s $(printf '%q' "$remote") | wl-copy" "[]"
+fi
+
+exit 0

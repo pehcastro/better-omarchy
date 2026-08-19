@@ -1,0 +1,138 @@
+#!/bin/bash
+# Emits one JSON row per host in ~/.ssh/config for OmaCast's `ssh:` keyword.
+#
+#   ssh:            every host you have written down
+#   ssh:prod        by alias, hostname or user
+#
+# Include directives are followed, because a config split across
+# ~/.ssh/config.d is common and a launcher that only reads the top file would
+# quietly show half the answer. Wildcard entries are skipped: `Host *` is a
+# block of defaults, not a machine you can connect to.
+#
+# The terminal is whatever xdg-terminal-exec resolves, through
+# omarchy-launch-tui, so this follows `omarchy default terminal` rather than
+# hardcoding one.
+
+set -uo pipefail
+
+query="${1:-}"
+needle="${query,,}"
+
+CONFIG="$HOME/.ssh/config"
+[[ -f $CONFIG ]] || exit 0
+
+# Emits "file" lines in the order ssh itself would read them. Depth is bounded
+# because an Include cycle would otherwise be an infinite loop rather than an
+# error.
+expand_includes() {
+  local file="$1" depth="$2" line word target
+  ((depth > 8)) && return 0
+  [[ -f $file ]] || return 0
+
+  printf 'FILE\t%s\n' "$file"
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ $line == "#"* || -z $line ]] && continue
+    read -r word rest <<<"$line"
+    [[ ${word,,} == "include" ]] || continue
+
+    for target in $rest; do
+      target="${target/#\~/$HOME}"
+      # A relative Include is relative to ~/.ssh, not to the current directory.
+      [[ $target == /* ]] || target="$HOME/.ssh/$target"
+      local match
+      for match in $target; do
+        [[ -f $match ]] && expand_includes "$match" $((depth + 1))
+      done
+    done
+  done <"$file"
+}
+
+now_host=""
+now_hostname=""
+now_user=""
+now_port=""
+now_file=""
+
+rank=90000
+emitted=0
+
+flush() {
+  [[ -n $now_host ]] || return 0
+
+  local sub target
+  target="${now_hostname:-$now_host}"
+  if [[ -n $now_user ]]; then
+    sub="$now_user@$target"
+  else
+    sub="$target"
+  fi
+  [[ -n $now_port && $now_port != "22" ]] && sub="$sub:$now_port"
+
+  if [[ -n $needle ]]; then
+    [[ "${now_host,,} ${sub,,}" == *"$needle"* ]] || return 0
+  fi
+
+  local quoted
+  quoted=$(printf '%q' "$now_host")
+
+  jq -cn --arg id "$now_host" --arg t "$now_host" --arg d "$sub" \
+    --arg s "${now_file/#$HOME/\~}" --arg h "$target" \
+    --arg e "omarchy-launch-tui --app-id=org.omarchy.ssh ssh $quoted" \
+    --arg host "$now_host" --argjson sc "$rank" \
+    '{
+       id: $id, title: $t, detail: $d, subtitle: $s, exec: $e, score: $sc,
+       actions: [
+         { title: "Connect", shortcut: "↵", exec: $e },
+         { title: "Copy SSH Command", exec: ("printf %s " + (("ssh " + $host) | @sh) + " | wl-copy") },
+         { title: "Copy Hostname", exec: ("printf %s " + ($h | @sh) + " | wl-copy") },
+         { title: "Open SFTP", exec: ("setsid uwsm-app -- nautilus " + (("sftp://" + $host) | @sh)) }
+       ]
+     }'
+
+  rank=$((rank - 100))
+  emitted=$((emitted + 1))
+}
+
+while IFS= read -r entry; do
+  [[ $entry == FILE$'\t'* ]] || continue
+  file="${entry#FILE$'\t'}"
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ $line == "#"* || -z $line ]] && continue
+
+    # ssh accepts "Key value" and "Key=value" alike. Only a leading Key= is
+    # rewritten, or an "=" inside a ProxyCommand would be eaten too.
+    [[ $line =~ ^[A-Za-z]+= ]] && line="${line/=/ }"
+    read -r key value <<<"$line"
+    [[ -n ${value:-} ]] || continue
+
+    case "${key,,}" in
+    host)
+      flush
+      now_host=""
+      now_hostname=""
+      now_user=""
+      now_port=""
+      now_file="$file"
+      # Only the first pattern of a Host line is a name you can type, and a
+      # pattern is a default block rather than a machine.
+      read -r first _ <<<"$value"
+      [[ $first == *[\*\?\!]* ]] || now_host="$first"
+      ;;
+    hostname) now_hostname="$value" ;;
+    user) now_user="$value" ;;
+    port) now_port="$value" ;;
+    esac
+
+    ((emitted >= 30)) && break
+  done <"$file"
+done < <(expand_includes "$CONFIG" 0)
+
+flush
+
+exit 0

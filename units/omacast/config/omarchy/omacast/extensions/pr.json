@@ -1,0 +1,19 @@
+{
+  "id": "pr",
+  "title": "Pull Requests",
+  "keyword": "pr",
+  "aliases": [
+    "prs",
+    "pulls"
+  ],
+  "subtitle": "Pull Request",
+  "glyph": "",
+  "search": "omacast-gh prs {query}",
+  "when": "gh auth status >/dev/null 2>&1",
+  "minChars": 0,
+  "debounceMs": 300,
+  "timeoutMs": 9000,
+  "maxRows": 12,
+  "tier": "substring",
+  "view": "list"
+}
