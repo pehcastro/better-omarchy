@@ -51,6 +51,50 @@ die() {
   exit 1
 }
 
+# Writes the registry for a wrapped Omarchy plugin. Kept in a variable rather
+# than a heredoc because it is called from inside a function that already reads
+# from stdin in other branches.
+WRAP_REGISTRY_PY='
+import json, os
+
+root = os.environ["BO_WRAP_ROOT"]
+unit = os.environ["BO_WRAP_UNIT"]
+
+registry = {
+    "schema": 1,
+    "name": os.environ["BO_WRAP_ID"],
+    "title": os.environ["BO_WRAP_NAME"],
+    "description": os.environ.get("BO_WRAP_DESC", ""),
+    "homepage": os.environ.get("BO_WRAP_URL", ""),
+    "maintainer": os.environ["BO_WRAP_AUTHOR"],
+    "wrapped": "omarchy-plugin",
+    "units": {
+        unit: {
+            "name": unit,
+            "summary": os.environ.get("BO_WRAP_DESC") or os.environ["BO_WRAP_NAME"],
+            "version": os.environ["BO_WRAP_VERSION"],
+            "kind": "plugin",
+            "category": "Other",
+            "tags": [],
+            "author": os.environ["BO_WRAP_AUTHOR"],
+            "needs": [],
+            "keys": [],
+            "pluginId": os.environ["BO_WRAP_ID"],
+            "path": os.path.join(".bo", "units", unit),
+            "files": 0,
+            "hash": "",
+            "commit": "",
+            "updated": "",
+            "author_last": os.environ["BO_WRAP_AUTHOR"],
+        }
+    },
+}
+
+with open(os.path.join(root, "registry.json"), "w") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+'
+
 # ---------------------------------------------------------------- marketplaces
 
 # Every marketplace root, one per line. A checkout carrying this script counts
@@ -139,9 +183,18 @@ ref_market() { printf '%s' "${1%%/*}"; }
 ref_unit() { printf '%s' "${1##*/}"; }
 
 ref_dir() {
-  local root
+  local root unit
   root=$(market_root "$(ref_market "$1")") || return 1
-  printf '%s/units/%s' "$root" "$(ref_unit "$1")"
+  unit=$(ref_unit "$1")
+
+  # A wrapped Omarchy plugin keeps its generated unit under .bo, so the author's
+  # tree stays exactly as they published it.
+  if [[ -f "$root/.bo/units/$unit/unit.toml" ]]; then
+    printf '%s/.bo/units/%s' "$root" "$unit"
+    return 0
+  fi
+
+  printf '%s/units/%s' "$root" "$unit"
 }
 
 ref_exists() {
@@ -155,7 +208,7 @@ all_refs() {
   local root name dir
   while read -r root; do
     name=$(market_name "$root")
-    for dir in "$root"/units/*/; do
+    for dir in "$root"/units/*/ "$root"/.bo/units/*/; do
       [[ -f "$dir/unit.toml" ]] || continue
       printf '%s/%s\n' "$name" "$(basename "$dir")"
     done
@@ -281,8 +334,12 @@ unlink_path() {
   [[ -L $dst ]] || return 0
   target=$(readlink -f "$dst")
   while read -r root; do
+    root=$(readlink -f "$root")
+    # The root itself counts, not only paths under it: a wrapped Omarchy plugin
+    # links its plugin folder to the repo root, so the resolved target is the
+    # marketplace directory rather than something inside it.
     case "$target" in
-    "$(readlink -f "$root")"/*)
+    "$root" | "$root"/*)
       rm -f "$dst"
       return 0
       ;;
@@ -772,12 +829,63 @@ cmd_market_list() {
   printf '%-22s %-7s %s\n' MARKETPLACE UNITS SOURCE
   while read -r root; do
     name=$(market_name "$root")
-    count=$(find "$root/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)
+    count=$(find "$root/units" "$root/.bo/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)
     url=$(git -C "$root" remote get-url origin 2>/dev/null || printf 'local')
     printf '%-22s %-7s %s\n' "$name" "$count" "$url"
     [[ $(readlink -f "$root") == "$(readlink -f "$SELF_ROOT")" ]] &&
       printf '%s\n' "$(dim "  (this checkout, where bo itself lives: $root)")"
   done < <(market_roots)
+}
+
+# Turn a cloned Omarchy plugin repo into a marketplace holding one unit.
+#
+# The plugin folder is the repo root, and a unit wants it under `plugin/`, so the
+# generated unit links to it rather than copying: one checkout, one thing to
+# update, and `bo remove` still only removes symlinks it made. The generated
+# files live under .bo, so the author's tree is left exactly as published.
+wrap_plugin_repo() {
+  local root="$1" url="$2"
+  local id name version author description unit
+
+  id=$(json_get "$root/manifest.json" id)
+  [[ -n $id ]] || {
+    warn "that repo has a manifest.json with no id"
+    return 1
+  }
+
+  name=$(json_get "$root/manifest.json" name)
+  version=$(json_get "$root/manifest.json" version)
+  author=$(json_get "$root/manifest.json" author)
+  description=$(json_get "$root/manifest.json" description)
+
+  # Named after the plugin without its author prefix, since the marketplace
+  # already carries who it came from.
+  unit="${id##*.}"
+
+  mkdir -p "$root/.bo/units/$unit"
+  # Relative, because the clone is staged under one name and moved to another:
+  # an absolute link would point at the staging path and break on the move.
+  ln -sfn ../../.. "$root/.bo/units/$unit/plugin"
+
+  {
+    printf '%-9s = "%s"\n' name "$unit"
+    printf '%-9s = "%s"\n' summary "${description:-${name:-$id}}"
+    printf '%-9s = "%s"\n' version "${version:-0.0.0}"
+    printf '%-9s = "%s"\n' category "Other"
+    printf '%-9s = "%s"\n' author "${author:-unknown}"
+    printf '%-9s = "%s"\n' kind "plugin"
+    printf '%-9s = "%s"\n' id "$id"
+    printf '%-9s = []\n' needs
+    printf '%-9s = []\n' keys
+  } >"$root/.bo/units/$unit/unit.toml"
+
+  # A generated registry, so everything downstream reads one shape. No content
+  # hash: the author never asked to be in a registry, and hashing a tree we did
+  # not generate would go stale on their next commit for no gain.
+  BO_WRAP_ROOT="$root" BO_WRAP_UNIT="$unit" BO_WRAP_ID="$id" \
+  BO_WRAP_NAME="${name:-$id}" BO_WRAP_VERSION="${version:-0.0.0}" \
+  BO_WRAP_AUTHOR="${author:-unknown}" BO_WRAP_DESC="$description" \
+  BO_WRAP_URL="$url" python3 -c "$WRAP_REGISTRY_PY"
 }
 
 cmd_market_add() {
@@ -796,9 +904,20 @@ cmd_market_add() {
     die "clone failed"
   }
 
+  # A plain Omarchy plugin repo has a manifest.json at its root and no registry.
+  # Rather than turning it away, wrap it as a marketplace of one unit, so an
+  # existing plugin installs and removes through bo with nothing changed by its
+  # author. This is the only place bo knows what an Omarchy plugin is.
+  if [[ ! -f "$tmp/registry.json" && -f "$tmp/manifest.json" ]]; then
+    wrap_plugin_repo "$tmp" "$url" || {
+      rm -rf "$tmp"
+      return 1
+    }
+  fi
+
   [[ -f "$tmp/registry.json" ]] || {
     rm -rf "$tmp"
-    die "that repo has no registry.json at its root, so it is not a marketplace"
+    die "that repo has neither a registry.json nor a manifest.json at its root, so it is neither a marketplace nor an Omarchy plugin"
   }
 
   [[ -n $name ]] || name=$(json_get "$tmp/registry.json" name)
@@ -814,7 +933,7 @@ cmd_market_add() {
 
   mv "$tmp" "$MARKETS_DIR/$name"
   say "$(green added) $name $(dim "$(json_get "$MARKETS_DIR/$name/registry.json" homepage)")"
-  say "$(find "$MARKETS_DIR/$name/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l) units. Run: bo list"
+  say "$(find "$MARKETS_DIR/$name/units" "$MARKETS_DIR/$name/.bo/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l) units. Run: bo list"
 
   # Code from a marketplace runs on this machine, so say so once, plainly.
   say ""
@@ -1468,7 +1587,7 @@ cmd_validate() {
   local ref failed=0 dir
   while read -r ref; do
     [[ $(meta "$ref" kind) == plugin ]] || continue
-    dir="$(ref_dir "$ref")/plugin"
+    dir=$(readlink -f "$(ref_dir "$ref")/plugin")
     if omarchy plugin validate "$dir" >/dev/null 2>&1; then
       say "$(green ok) $ref"
     else

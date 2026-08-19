@@ -60,6 +60,30 @@ machine, unsandboxed, which is true of `omarchy plugin add` too. `bo` prints
 that warning when you add one, and the whole point of a readable registry is
 that you can check before saying yes.
 
+## Existing Omarchy plugins
+
+`bo market add` also takes a plain Omarchy plugin repo, the kind
+`omarchy plugin add` installs: a `manifest.json` at the root and no registry.
+
+```bash
+bo market add https://github.com/ericvrp/omarchy-bar-autohide
+bo add bar-autohide
+```
+
+It becomes a marketplace holding one unit. Nothing is asked of the author, and
+their tree is left exactly as published: the generated `unit.toml` and
+`registry.json` live under `.bo/`, and the unit's `plugin/` is a relative
+symlink back to the repo root, so there is one checkout to update rather than a
+copy to keep in step.
+
+What you gain over `omarchy plugin add` is removal: `bo remove` takes out the
+symlinks it made and leaves the bar layout entry alone, where `plugin disable`
+deletes that entry along with the widget's position and settings.
+
+What you do not gain is any of the rest. A plugin repo has no `needs`, no
+`keys`, no `conflicts` and no version history bo can read, so `bo doctor`,
+`bo status` and the per-unit changelog have nothing to say about it.
+
 ## marketplace.json
 
 ```json
