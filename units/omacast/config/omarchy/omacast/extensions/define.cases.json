@@ -1,0 +1,261 @@
+[
+  {
+    "why": "a word with one sense, in the pane rather than in a list",
+    "query": "ephemeral",
+    "minRows": 1,
+    "row": 0,
+    "view": "split",
+    "fields": [
+      "title",
+      "subtitle",
+      "preview"
+    ],
+    "matches": {
+      "title": "^ephemeral"
+    }
+  },
+  {
+    "why": "a word with many senses gives one row per sense",
+    "query": "set",
+    "minRows": 5,
+    "row": 0,
+    "matches": {
+      "title": "^set  ·  "
+    }
+  },
+  {
+    "why": "case is not part of a word",
+    "query": "Ephemeral",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ephemeral"
+    }
+  },
+  {
+    "why": "nor is shouting it",
+    "query": "EPHEMERAL",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ephemeral"
+    }
+  },
+  {
+    "why": "a full stop is punctuation, not spelling: this used to answer nothing",
+    "query": "ephemeral.",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ephemeral"
+    }
+  },
+  {
+    "why": "and neither is a question mark",
+    "query": "ephemeral?",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ephemeral"
+    }
+  },
+  {
+    "why": "a plural: the dictionary answers it directly when it has an entry, and falls back to the singular when it does not",
+    "query": "cats",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^cats?  ·  "
+    }
+  },
+  {
+    "why": "a -ies plural: answered directly when the dictionary knows it, else stemmed to -y",
+    "query": "berries",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^berr(y|ies)  ·  "
+    }
+  },
+  {
+    "why": "a past tense with the consonant doubled",
+    "query": "occured",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^occur  ·  "
+    }
+  },
+  {
+    "why": "a conjugated verb the dictionary does carry answers as itself",
+    "query": "running",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^running  ·  "
+    }
+  },
+  {
+    "why": "an irregular past tense",
+    "query": "went",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^went  ·  "
+    }
+  },
+  {
+    "why": "a comparative",
+    "query": "happier",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^happier  ·  "
+    }
+  },
+  {
+    "why": "a phrase is one entry, not its first word: this used to define ice",
+    "query": "ice cream",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ice cream  ·  "
+    }
+  },
+  {
+    "why": "the hyphenated spelling: answered as written when the dictionary has it, else as the spaced phrase",
+    "query": "ice-cream",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^ice[- ]cream  ·  "
+    }
+  },
+  {
+    "why": "an idiom is an entry",
+    "query": "kick the bucket",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^kick the bucket  ·  "
+    }
+  },
+  {
+    "why": "a phrase with no entry falls back to its head word and says so",
+    "query": "hello world",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^hello  ·  ",
+      "detail": "showing “hello”"
+    }
+  },
+  {
+    "why": "a common misspelling is answered by the word that was meant, and the row says it guessed",
+    "query": "recieve",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^receive  ·  ",
+      "detail": "did you mean “receive”"
+    }
+  },
+  {
+    "why": "another one",
+    "query": "definately",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^definitely  ·  "
+    }
+  },
+  {
+    "why": "a keyboard mash is not a misspelling of anything: this used to be answered with oesophageal",
+    "query": "asdfghjkl",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^No definition"
+    }
+  },
+  {
+    "why": "a word the dictionary does not carry says so and offers the web, rather than guessing at a word that rhymes",
+    "query": "kubernetes",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^No definition"
+    },
+    "fields": [
+      "exec",
+      "actions"
+    ]
+  },
+  {
+    "why": "the empty query is silent",
+    "query": "",
+    "maxRows": 0
+  },
+  {
+    "why": "one letter is a keystroke on the way to a word",
+    "query": "e",
+    "maxRows": 0
+  },
+  {
+    "why": "a sentence is not a word and the dictionary is not indexed by sentences",
+    "query": "the quick brown fox jumps",
+    "maxRows": 0
+  },
+  {
+    "why": "a path is not a word: the search box is not a way to build a URL",
+    "query": "../../etc/passwd",
+    "maxRows": 0
+  },
+  {
+    "why": "nor is a query string",
+    "query": "a?b=c",
+    "maxRows": 0
+  },
+  {
+    "why": "a number is not a word",
+    "query": "12345",
+    "maxRows": 0
+  },
+  {
+    "why": "the thesaurus row comes last, after every sense",
+    "query": "happy",
+    "minRows": 2,
+    "matches": {
+      "title": "."
+    }
+  },
+  {
+    "why": "every row can be copied, by definition, by word and by sense",
+    "query": "serendipity",
+    "minRows": 1,
+    "row": 0,
+    "fields": [
+      "exec",
+      "actions",
+      "preview"
+    ]
+  },
+  {
+    "why": "an accented word is still a word",
+    "query": "café",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^café"
+    }
+  },
+  {
+    "why": "an adverb built from an adjective",
+    "query": "quickly",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "title": "^quickly  ·  "
+    }
+  }
+]

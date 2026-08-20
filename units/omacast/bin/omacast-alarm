@@ -65,17 +65,50 @@ unit_seconds() {
   esac
 }
 
+# The numbers people say rather than type. "twenty minutes" was silent, which is
+# the same as refusing a sentence for being spelled out.
+word_number() {
+  case "${1,,}" in
+  one) printf '1' ;; two) printf '2' ;; three) printf '3' ;; four) printf '4' ;;
+  five) printf '5' ;; six) printf '6' ;; seven) printf '7' ;; eight) printf '8' ;;
+  nine) printf '9' ;; ten) printf '10' ;; eleven) printf '11' ;; twelve) printf '12' ;;
+  thirteen) printf '13' ;; fourteen) printf '14' ;; fifteen) printf '15' ;;
+  sixteen) printf '16' ;; seventeen) printf '17' ;; eighteen) printf '18' ;;
+  nineteen) printf '19' ;; twenty) printf '20' ;; thirty) printf '30' ;;
+  forty | fourty) printf '40' ;; fifty) printf '50' ;; sixty) printf '60' ;;
+  ninety) printf '90' ;;
+  *) return 1 ;;
+  esac
+}
+
+# A count that may carry a decimal point, in either of the two ways a decimal
+# point gets written. "1.5h" and "1,5h" are the same hour and a half, and both
+# were refused. Returns hundredths, so the caller can multiply without floats.
+hundredths() {
+  local n="${1//,/.}"
+  [[ $n =~ ^([0-9]+)$ ]] && { printf '%d' $((10#${BASH_REMATCH[1]} * 100)); return 0; }
+  [[ $n =~ ^([0-9]*)\.([0-9]{1,2})$ ]] || return 1
+  local whole=${BASH_REMATCH[1]:-0} frac=${BASH_REMATCH[2]}
+  ((${#frac} == 1)) && frac="${frac}0"
+  printf '%d' $((10#$whole * 100 + 10#$frac))
+}
+
 # One word holding its own units: 1h30m, 90s, 5m. Longest unit spellings come
 # first in the alternation so "5minutes" is not read as 5 followed by "inutes".
 compact_seconds() {
-  local rest="${1,,}" total=0 num unit step
+  local rest="${1,,}" total=0 num unit step hun
   [[ $rest =~ ^[0-9] ]] || return 1
-  while [[ $rest =~ ^([0-9]+)(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(.*)$ ]]; do
+  # "2h30" is how a duration gets written when the trailing m is not worth the
+  # keystroke. Only up to twelve: "19h30" is half past seven to anyone who
+  # writes times that way, and parse_clock has already taken it.
+  [[ $rest =~ ^([0-9]{1,2})h([0-5][0-9])$ ]] && rest="${BASH_REMATCH[1]}h${BASH_REMATCH[2]}m"
+  while [[ $rest =~ ^([0-9]+([.,][0-9]{1,2})?)(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(.*)$ ]]; do
     num=${BASH_REMATCH[1]}
-    unit=${BASH_REMATCH[2]}
-    rest=${BASH_REMATCH[3]}
+    unit=${BASH_REMATCH[3]}
+    rest=${BASH_REMATCH[4]}
     step=$(unit_seconds "$unit") || return 1
-    total=$((total + num * step))
+    hun=$(hundredths "$num") || return 1
+    total=$((total + hun * step / 100))
   done
   [[ -n $rest ]] && return 1
   ((total > 0)) || return 1
@@ -91,7 +124,8 @@ starts_duration() {
   case "${word,,}" in
   a | an | half | quarter) return 0 ;;
   esac
-  [[ ${word,,} =~ ^[0-9]+$ ]] && return 0
+  [[ ${word,,} =~ ^[0-9]+([.,][0-9]{1,2})?$ ]] && return 0
+  word_number "$word" >/dev/null && return 0
   compact_seconds "$word" >/dev/null && return 0
   return 1
 }
@@ -111,20 +145,27 @@ format_span() {
 # rather than "90 minutes", because the row is a confirmation and a confirmation
 # in different words than the question is one more thing to check.
 say_duration() {
-  local mins="$1" hours out=""
+  local mins="$1" days hours parts=()
+  # A reminder three days out used to read "in 72 hours", which is a number a
+  # person has to divide before it means anything.
+  days=$((mins / 1440))
+  mins=$((mins % 1440))
   hours=$((mins / 60))
   mins=$((mins % 60))
 
-  ((hours == 1)) && out="1 hour"
-  ((hours > 1)) && out="$hours hours"
+  ((days == 1)) && parts+=("1 day")
+  ((days > 1)) && parts+=("$days days")
+  ((hours == 1)) && parts+=("1 hour")
+  ((hours > 1)) && parts+=("$hours hours")
+  ((mins == 1)) && parts+=("1 minute")
+  ((mins > 1)) && parts+=("$mins minutes")
 
-  if ((mins > 0)); then
-    [[ -n $out ]] && out+=" and "
-    ((mins == 1)) && out+="1 minute"
-    ((mins > 1)) && out+="$mins minutes"
-  fi
-
-  printf '%s' "$out"
+  case ${#parts[@]} in
+  0) printf 'no time at all' ;;
+  1) printf '%s' "${parts[0]}" ;;
+  2) printf '%s and %s' "${parts[0]}" "${parts[1]}" ;;
+  *) printf '%s, %s and %s' "${parts[0]}" "${parts[1]}" "${parts[2]}" ;;
+  esac
 }
 
 # ---- pending reminders
@@ -169,6 +210,176 @@ if [[ -z $query ]]; then
   exit 0
 fi
 
+# ---- a clock time, read off the front
+#
+# "at 7", "7pm", "19:30", "tomorrow at 8", "quarter past 3", "noon". Every one
+# of these was silent, and two of them were worse than silent: `alarm:7 pm
+# dinner` set a reminder in seven minutes called "pm dinner", and `alarm:0730
+# gym` read 0730 as seven hundred and thirty minutes and armed it for a quarter
+# to ten at night. A time that is read as a different time and then set without
+# saying so is the one failure this keyword cannot have.
+#
+# A clock is only read when the query says it is one: an "at", a day in front, an
+# am/pm, a separator, "o'clock", "noon", "midnight", or four digits. A bare "7"
+# stays seven minutes, which is what it has always meant here and what `omarchy
+# reminder 7` means too.
+
+clock_hh=0
+clock_mm=0
+clock_day=""    # "" is today; otherwise a phrase `date -d` understands
+clock_used=0
+
+# The day words, in the same readings `date:` gives them, so "tomorrow" is one
+# day in both and "next friday" is the coming Friday in both.
+day_phrase() {
+  case "${1,,}" in
+  today | tonight) printf 'today' ;;
+  tomorrow | tmr | tmrw) printf 'tomorrow' ;;
+  mon | monday) printf 'monday' ;;
+  tue | tues | tuesday) printf 'tuesday' ;;
+  wed | weds | wednesday) printf 'wednesday' ;;
+  thu | thur | thurs | thursday) printf 'thursday' ;;
+  fri | friday) printf 'friday' ;;
+  sat | saturday) printf 'saturday' ;;
+  sun | sunday) printf 'sunday' ;;
+  *) return 1 ;;
+  esac
+}
+
+# One bare hour, plus whatever half-of-an-hour language came before it.
+# "quarter past 3", "half past 7", "20 to 6".
+read_fraction_clock() {
+  local a="${1,,}" b="${2,,}" c="${3:-}" mins
+  case $a in
+  quarter) mins=15 ;;
+  half) mins=30 ;;
+  *) mins=$(word_number "$a") || { [[ $a =~ ^[0-9]{1,2}$ ]] && mins=$a; } || return 1 ;;
+  esac
+  [[ $b == past || $b == to || $b == till || $b == til ]] || return 1
+  local hour
+  hour=$(word_number "$c") || hour="$c"
+  [[ $hour =~ ^[0-9]{1,2}$ ]] || return 1
+  ((10#$hour > 23)) && return 1
+
+  if [[ $b == past ]]; then
+    clock_hh=$((10#$hour))
+    clock_mm=$mins
+  else
+    clock_hh=$(((10#$hour + 23) % 24))
+    clock_mm=$((60 - mins))
+    ((clock_mm == 60)) && { clock_mm=0; clock_hh=$((10#$hour)); }
+  fi
+  ((clock_mm > 59)) && return 1
+  return 0
+}
+
+parse_clock() {
+  local -n ws=$1
+  local n=${#ws[@]} i=0 explicit=0 forced=0 tok ampm="" hh="" mm=0 phrase
+
+  clock_day=""
+  clock_used=0
+  ((n == 0)) && return 1
+
+  if phrase=$(day_phrase "${ws[0]}"); then
+    clock_day="$phrase"
+    explicit=1
+    forced=1
+    i=1
+  elif [[ ${ws[0],,} == next ]] && phrase=$(day_phrase "${ws[1]:-}"); then
+    clock_day="next $phrase"
+    explicit=1
+    forced=1
+    i=2
+  fi
+
+  if [[ ${ws[i]:-} =~ ^([aA][tT]|@|[oO][nN])$ ]]; then
+    explicit=1
+    forced=1
+    i=$((i + 1))
+  fi
+
+  tok="${ws[i]:-}"
+  tok="${tok,,}"
+  tok="${tok%%,}"
+  [[ -z $tok ]] && return 1
+
+  # "quarter past three" eats three words and settles the hour on its own.
+  if read_fraction_clock "$tok" "${ws[i + 1]:-}" "${ws[i + 2]:-}"; then
+    explicit=1
+    i=$((i + 3))
+    if [[ ${ws[i]:-} =~ ^([aA][mM]|[pP][mM])$ ]]; then
+      ampm="${ws[i],,}"
+      i=$((i + 1))
+    fi
+    hh=$clock_hh
+    mm=$clock_mm
+  else
+    case $tok in
+    noon | midday)
+      hh=12; mm=0; explicit=1; i=$((i + 1)) ;;
+    midnight)
+      hh=0; mm=0; explicit=1; i=$((i + 1))
+      # Midnight is the start of a day, and the one being asked for is the one
+      # coming rather than the one eighteen hours gone.
+      [[ -z $clock_day ]] && clock_day="tomorrow" ;;
+    *)
+      # `h` is not a separator here, whatever it is elsewhere. In a keyword
+      # whose whole job is durations, "2h30" is two and a half hours and "2h" is
+      # two hours: reading either as a wall clock would set an alarm most of a
+      # day away from the one that was asked for.
+      if [[ $tok =~ ^(1[3-9]|2[0-3])h([0-5][0-9])$ ]]; then
+        # "19h30" past thirteen is a wall clock in every language that writes
+        # times with an h in them. Under thirteen it is a duration, and
+        # compact_seconds takes it.
+        hh=${BASH_REMATCH[1]}; mm=${BASH_REMATCH[2]}; explicit=1
+      elif [[ $tok =~ ^([0-9]{1,2})[:.]([0-9]{2})(am|pm)?$ ]]; then
+        hh=${BASH_REMATCH[1]}; mm=${BASH_REMATCH[2]}; ampm=${BASH_REMATCH[3]}; explicit=1
+      elif [[ $tok =~ ^([0-9]{1,2})(am|pm)$ ]]; then
+        hh=${BASH_REMATCH[1]}; mm=0; ampm=${BASH_REMATCH[2]}; explicit=1
+      elif ((forced)) && [[ $tok =~ ^([0-9]{1,2})h$ ]]; then
+        # "at 14h" says which reading it wants. Without the "at", "14h" is
+        # fourteen hours from now.
+        hh=${BASH_REMATCH[1]}; mm=0
+      elif [[ $tok =~ ^([01][0-9]|2[0-3])([0-5][0-9])$ ]]; then
+        hh=${BASH_REMATCH[1]}; mm=${BASH_REMATCH[2]}; explicit=1
+      elif [[ $tok =~ ^([0-9]{1,2})$ ]]; then
+        hh=${BASH_REMATCH[1]}; mm=0
+      else
+        return 1
+      fi
+      i=$((i + 1))
+      if [[ ${ws[i]:-} =~ ^([aA][mM]|[pP][mM]|[aA]\.[mM]\.|[pP]\.[mM]\.)$ ]]; then
+        ampm="${ws[i],,}"
+        ampm="${ampm//./}"
+        explicit=1
+        i=$((i + 1))
+      fi
+      if [[ ${ws[i]:-} =~ ^([oO]\'?[cC][lL][oO][cC][kK])$ ]]; then
+        explicit=1
+        i=$((i + 1))
+      fi ;;
+    esac
+  fi
+
+  ((explicit)) || return 1
+  [[ -z $hh ]] && return 1
+  # "2.50 hours" is a count with a decimal point in it, not ten to three. The
+  # unit behind the number is what settles it.
+  unit_seconds "${ws[i]:-}" >/dev/null && return 1
+
+  case $ampm in
+  pm) ((10#$hh < 12)) && hh=$((10#$hh + 12)) ;;
+  am) ((10#$hh == 12)) && hh=0 ;;
+  esac
+  ((10#$hh > 23 || 10#$mm > 59)) && return 1
+
+  clock_hh=$((10#$hh))
+  clock_mm=$((10#$mm))
+  clock_used=$i
+  return 0
+}
+
 # ---- read the duration off the front, keep the rest as the message
 
 words=()
@@ -176,6 +387,37 @@ read -r -a words <<<"$query"
 count=${#words[@]}
 total=0
 index=0
+clock_at=""
+clock_rolled=0
+
+if parse_clock words; then
+  clock_stamp=$(date -d "${clock_day:-today} $(printf '%02d:%02d' "$clock_hh" "$clock_mm")" +%s 2>/dev/null)
+  if [[ -n $clock_stamp ]]; then
+    # A time that has already gone today is tomorrow's. Saying so is the whole
+    # point: `alarm:at 7 gym` at nine in the morning is a reminder twenty-two
+    # hours out, and a row that only printed "at 07:00" would be hiding that.
+    if ((clock_stamp <= $(date +%s))); then
+      case $clock_day in
+      "" | today)
+        clock_stamp=$(date -d "tomorrow $(printf '%02d:%02d' "$clock_hh" "$clock_mm")" +%s 2>/dev/null)
+        clock_rolled=1 ;;
+      tomorrow) : ;;
+      *)
+        # A named weekday that has already gone this week is next week's. Left
+        # alone, `alarm:monday 9am standup` on a Monday afternoon parsed a time
+        # in the past, came out negative, and answered nothing at all.
+        clock_stamp=$((clock_stamp + 604800))
+        clock_rolled=0 ;;
+      esac
+    fi
+    clock_at="$clock_stamp"
+    index=$clock_used
+    total=$((clock_at - $(date +%s)))
+    ((total < 0)) && { clock_at=""; total=0; index=0; }
+  fi
+fi
+
+if [[ -z $clock_at ]]; then
 
 # "in 20 minutes" and "for 20 minutes" are how it gets said out loud, and
 # neither word is part of the time.
@@ -186,6 +428,12 @@ while ((index < count)); do
   esac
 done
 
+# The unit the last chunk was counted in, so a fraction with no unit of its own
+# can borrow it. "an hour and a half" used to read as one hour with "half" left
+# over as the first word of the message, which set the wrong alarm and gave it
+# the wrong name.
+last_step=0
+
 while ((index < count)); do
   word=${words[index],,}
   next=${words[index + 1]:-}
@@ -195,6 +443,7 @@ while ((index < count)); do
   if [[ $word == a || $word == an ]]; then
     if step=$(unit_seconds "$next"); then
       total=$((total + step))
+      last_step=$step
       index=$((index + 2))
       continue
     fi
@@ -220,30 +469,67 @@ while ((index < count)); do
       else
         total=$((total + step / 4))
       fi
+      last_step=$step
       index=$((peek_at + 1))
+      continue
+    fi
+    # "and a half" with nothing after it: the unit is the one already counted.
+    if ((last_step > 0)); then
+      if [[ $word == half ]]; then
+        total=$((total + last_step / 2))
+      else
+        total=$((total + last_step / 4))
+      fi
+      index=$((index + 1))
       continue
     fi
   fi
 
-  if [[ $word =~ ^[0-9]+$ ]]; then
+  # A count, in digits or in words, whole or with a decimal point.
+  count_hun=""
+  if [[ $word =~ ^[0-9]+([.,][0-9]{1,2})?$ ]]; then
+    count_hun=$(hundredths "$word")
+  elif spelled=$(word_number "$word"); then
+    count_hun=$((spelled * 100))
+  fi
+
+  if [[ -n $count_hun ]]; then
+    # "two and a half hours": the fraction sits between the number and its unit,
+    # so the unit has to be looked for past it rather than at the next word.
+    if [[ ${next,,} == and && ${words[index + 2],,} == a &&
+      (${words[index + 3],,} == half || ${words[index + 3],,} == quarter) ]] &&
+      step=$(unit_seconds "${words[index + 4]:-}"); then
+      total=$((total + count_hun * step / 100))
+      if [[ ${words[index + 3],,} == half ]]; then
+        total=$((total + step / 2))
+      else
+        total=$((total + step / 4))
+      fi
+      last_step=$step
+      index=$((index + 5))
+      continue
+    fi
     if step=$(unit_seconds "$next"); then
-      total=$((total + word * step))
+      total=$((total + count_hun * step / 100))
+      last_step=$step
       index=$((index + 2))
       continue
     fi
     # A bare number is minutes, which is what `omarchy reminder` itself takes.
-    total=$((total + word * 60))
+    total=$((total + count_hun * 60 / 100))
+    last_step=60
     index=$((index + 1))
     continue
   fi
 
   if step=$(compact_seconds "$word"); then
     total=$((total + step))
+    [[ $word =~ ([a-z]+)$ ]] && last_step=$(unit_seconds "${BASH_REMATCH[1]}") || last_step=60
     index=$((index + 1))
     continue
   fi
 
-  if [[ $word == and || $word == "&" || $word == "," ]] &&
+  if [[ $word == and || $word == "&" || $word == "," || $word == plus ]] &&
     ((total > 0)) && starts_duration "$next"; then
     index=$((index + 1))
     continue
@@ -251,6 +537,7 @@ while ((index < count)); do
 
   break
 done
+fi
 
 message=""
 ((index < count)) && message="${words[*]:index}"
@@ -263,19 +550,49 @@ message=""
 # there is nothing to show and the launcher says "Nothing in Reminder" until
 # there is.
 ((total == 0)) && exit 0
-[[ -z ${message//[[:space:]]/} ]] && exit 0
 
 minutes=$(((total + 59) / 60))
 ((minutes < 1)) && minutes=1
-fire_at=$(date -d "+$minutes minutes" +%H:%M) || exit 0
 
 detail=""
-if ((minutes * 60 != total)); then
-  detail="Rounded up from $(format_span "$total")  ·  Omarchy reminders are whole minutes"
+if [[ -n $clock_at ]]; then
+  fire_at=$(date -d "@$clock_at" +%H:%M) || exit 0
+  when=$(date -d "@$clock_at" '+%A %-d %B')
+  today_stamp=$(date +%F)
+  target_day=$(date -d "@$clock_at" +%F)
+  if [[ $target_day == "$today_stamp" ]]; then
+    subtitle="Reminder at $fire_at today, in $(say_duration "$minutes")"
+  elif [[ $target_day == $(date -d tomorrow +%F) ]]; then
+    subtitle="Reminder at $fire_at tomorrow, in $(say_duration "$minutes")"
+  else
+    subtitle="Reminder at $fire_at on $when, in $(say_duration "$minutes")"
+  fi
+  # The roll to tomorrow is a decision, not a detail, so it is written out. A
+  # row that only said "at 07:00" would look identical whether it meant the
+  # seven o'clock forty minutes away or the one twenty-three hours away.
+  ((clock_rolled)) && detail="$fire_at has already gone today, so this is tomorrow"
+else
+  fire_at=$(date -d "+$minutes minutes" +%H:%M) || exit 0
+  subtitle="Reminder in $(say_duration "$minutes"), at $fire_at"
+  if ((minutes * 60 != total)); then
+    detail="Rounded up from $(format_span "$total")  ·  Omarchy reminders are whole minutes"
+  fi
+fi
+
+# A time with nothing to say at it is half a sentence, and setting it would
+# store a notification that arrives knowing nothing. It is not silence either:
+# the time was understood, and showing what was understood is how somebody sees
+# that "0730" was read as half past seven rather than as twelve hours.
+if [[ -z ${message//[[:space:]]/} ]]; then
+  jq -cn --arg s "$subtitle" \
+    '{ id: "alarm-needs-message", title: "What is the reminder for?",
+       subtitle: $s, detail: "Type what it should say",
+       exec: "", glyph: "󰢌", score: 99000, view: "hero" }'
+  list_pending
+  exit 0
 fi
 
 title="$message"
-subtitle="Reminder in $(say_duration "$minutes"), at $fire_at"
 command="omarchy reminder $minutes $(printf '%q' "$message")"
 
 jq -cn --arg t "$title" --arg s "$subtitle" --arg d "$detail" --arg e "$command" \

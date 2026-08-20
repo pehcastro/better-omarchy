@@ -2,18 +2,29 @@
 # A month, drawn as a grid by the launcher.
 #
 #   cal:                 this month, with last and next beside it
-#   cal:december         that month, this year
+#   cal:december         the next December, with the other year beside it
 #   cal:november 2027    that month, that year
 #   cal:2027             all twelve months of that year
+#   cal:2027-11          the same month, written the other way
+#   cal:christmas        December, with the 25th dotted
+#   cal:next week        this month, with the seven days of it dotted
+#   cal:q3               the three months of the quarter
 #
 # This sends the numbers and lets the view draw them. It used to send `cal`
 # output as preformatted text, which worked and looked like a terminal had
 # leaked into the launcher.
+#
+# Anything that is not a month or a year is handed to `omacast-date --iso`,
+# which is the parser `date:` already uses. Two keywords that both read English
+# dates and read it differently is a bug waiting for somebody to notice that
+# `date:easter` and `cal:easter` disagree, so there is only one reader.
 
 set -uo pipefail
 
 query="${1:-}"
 lower=${query,,}
+lower=${lower#"${lower%%[![:space:]]*}"}
+lower=${lower%"${lower##*[![:space:]]}"}
 
 today_iso=$(date +%F)
 today_year=$(date +%Y)
@@ -29,6 +40,7 @@ week_start=0
 # one, so the circle never lands on the wrong 18th.
 month_row() {
   local id="$1" year="$2" month="$3" tab="$4" score="$5"
+  local marks="${6:-[]}" note="${7:-}"
 
   local stamp
   stamp=$(date -d "$year-$month-01" +%s 2>/dev/null) || return 0
@@ -38,8 +50,11 @@ month_row() {
     mark=$today_day
   fi
 
-  local subtitle=""
-  if ((mark > 0)); then
+  # What the line beside the month name says. The dotted days are the reason the
+  # month is on screen when there are any, so they get the line; otherwise it is
+  # today's date, and only on the month today is in.
+  local subtitle="$note"
+  if [[ -z $subtitle ]] && ((mark > 0)); then
     subtitle=$(date -d "$today_iso" '+%A %-d, week %V')
   fi
 
@@ -50,11 +65,59 @@ month_row() {
     --arg a "$tab" \
     --arg e "printf %s $(printf '%q' "$(date -d "@$stamp" '+%Y-%m')") | wl-copy" \
     --argjson y "$year" --argjson m "$month" --argjson d "$mark" \
-    --argjson w "$week_start" --argjson sc "$score" \
+    --argjson w "$week_start" --argjson sc "$score" --argjson marks "$marks" \
     '{id: $id, title: $t, subtitle: $s, accessory: $a,
-      year: $y, month: $m, today: $d, weekStart: $w,
+      year: $y, month: $m, today: $d, weekStart: $w, marks: $marks,
       exec: $e, score: $sc, view: "calendar"}'
 }
+
+# The days of a span that fall inside one month, as a JSON list the view can
+# dot. A span longer than a month is not dotted at all: a whole quarter with
+# every square marked is a quarter with nothing marked.
+marks_in() {
+  local year=$1 month=$2 from=$3 to=$4 out=() cur
+  local total
+  total=$(( ( $(date -d "$to 12:00" +%s) - $(date -d "$from 12:00" +%s) ) / 86400 + 1 ))
+  if ((total > 31)); then printf '[]'; return 0; fi
+  cur="$from"
+  while [[ $cur < $to || $cur == "$to" ]]; do
+    if [[ ${cur:0:7} == $(printf '%04d-%02d' "$year" "$month") ]]; then
+      out+=("$((10#${cur:8:2}))")
+    fi
+    cur=$(date -d "$cur +1 day" +%F)
+  done
+  if ((${#out[@]} == 0)); then printf '[]'; else printf '[%s]' "$(IFS=,; printf '%s' "${out[*]}")"; fi
+}
+
+# The month names of the language this desktop is actually used in. `date -d`
+# knows the ones the locale is set to and this machine's locale is English, so
+# `cal:dezembro` was silent for the person sitting at it.
+case ${lower%% *} in
+janeiro) lower="january${lower#janeiro}" ;;
+fevereiro) lower="february${lower#fevereiro}" ;;
+março | marco) lower="march${lower#*o}" ;;
+abril) lower="april${lower#abril}" ;;
+maio) lower="may${lower#maio}" ;;
+junho) lower="june${lower#junho}" ;;
+julho) lower="july${lower#julho}" ;;
+agosto) lower="august${lower#agosto}" ;;
+setembro) lower="september${lower#setembro}" ;;
+outubro) lower="october${lower#outubro}" ;;
+novembro) lower="november${lower#novembro}" ;;
+dezembro) lower="december${lower#dezembro}" ;;
+esac
+
+# A month asked for by where it sits rather than by its name. Handled here
+# rather than passed on, because `date:next month` means this day next month and
+# a calendar asked for next month wants the month, not a day in it.
+case $lower in
+"this month" | "current month") lower=$(date +%Y-%m) ;;
+"next month" | "coming month") lower=$(date -d 'next month' +%Y-%m) ;;
+"last month" | "previous month" | "prev month") lower=$(date -d 'last month' +%Y-%m) ;;
+"this year") lower=$today_year ;;
+"next year") lower=$((today_year + 1)) ;;
+"last year") lower=$((today_year - 1)) ;;
+esac
 
 if [[ -z $lower ]]; then
   month_row now "$today_year" "$today_month" "This month" 95000
@@ -72,7 +135,85 @@ if [[ $lower =~ ^[0-9]{4}$ ]]; then
   exit 0
 fi
 
-# A month name, with or without a year. `date -d` reads "december 2027" and
-# fails on anything that is not a month, which is the gate.
-stamp=$(date -d "1 $query" +%s 2>/dev/null) || exit 0
-month_row month "$(date -d "@$stamp" +%Y)" "$(date -d "@$stamp" +%-m)" "$(date -d "@$stamp" +%b)" 95000
+# A month written as numbers: 2027-11, 11/2027, 2027/11.
+if [[ $lower =~ ^([0-9]{4})[/-](0?[1-9]|1[0-2])$ ]]; then
+  month_row month "${BASH_REMATCH[1]}" "$((10#${BASH_REMATCH[2]}))" \
+    "$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-01" +%b)" 95000
+  exit 0
+fi
+if [[ $lower =~ ^(0?[1-9]|1[0-2])/([0-9]{4})$ ]]; then
+  month_row month "${BASH_REMATCH[2]}" "$((10#${BASH_REMATCH[1]}))" \
+    "$(date -d "${BASH_REMATCH[2]}-${BASH_REMATCH[1]}-01" +%b)" 95000
+  exit 0
+fi
+
+# A bare month name. Which year it means is a real question and the answer used
+# to be "this one", so `cal:january` in August drew a January eight months gone
+# without saying so. The next one leads, matching what `date:christmas` does
+# with a name and no year, and the other year is a tab away rather than a retype.
+#
+# The gate is that it lands on the first of a month in a year nobody typed:
+# `date -d "1 sat 2000"` parses perfectly well and means a Saturday, and reading
+# the month off that would draw whichever month the parser happened to land in.
+if [[ $lower =~ ^[a-z]+$ ]] && stamp=$(date -d "1 $lower 2000" +%s 2>/dev/null) &&
+  [[ $(date -d "@$stamp" +%d) == 01 && $(date -d "@$stamp" +%Y) == 2000 ]]; then
+  month=$(date -d "@$stamp" +%-m)
+  if ((month >= 10#$today_month)); then
+    month_row m-now "$today_year" "$month" "$today_year" 95000
+    month_row m-next "$((today_year + 1))" "$month" "$((today_year + 1))" 94000
+  else
+    month_row m-next "$((today_year + 1))" "$month" "$((today_year + 1))" 95000
+    month_row m-now "$today_year" "$month" "$today_year" 94000
+  fi
+  exit 0
+fi
+
+# A month name with a year: "november 2027", "nov 2027".
+if [[ $lower =~ ^[a-z]+\ +[0-9]{4}$ ]] && stamp=$(date -d "1 $lower" +%s 2>/dev/null); then
+  month_row month "$(date -d "@$stamp" +%Y)" "$(date -d "@$stamp" +%-m)" \
+    "$(date -d "@$stamp" +%b)" 95000
+  exit 0
+fi
+
+# Everything else is whatever `date:` makes of it: a holiday, a weekday, a week
+# number, a quarter, a range, an explicit date. The days it names are dotted, and
+# a span crossing months draws one grid per month.
+#
+# `date:` refuses a bare three-letter weekday because it answers unscoped and
+# "sat" opens more searches than it opens questions. `cal:` is typed on purpose,
+# so here the same three letters are a day.
+ask=$lower
+case $ask in
+mon) ask=monday ;; tue | tues) ask=tuesday ;; wed | weds) ask=wednesday ;;
+thu | thur | thurs) ask=thursday ;; fri) ask=friday ;;
+sat) ask=saturday ;; sun) ask=sunday ;;
+esac
+
+span=$("$(dirname "$(readlink -f "$0")")/omacast-date" --iso "$ask" 2>/dev/null)
+[[ -z $span ]] && exit 0
+from=${span%% *}
+to=${span##* }
+[[ $from =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && $to =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || exit 0
+
+# One row per month the span touches, up to a screenful. Six grids is already
+# more than the tabs can carry.
+note=""
+if [[ $from == "$to" ]]; then
+  note=$(date -d "$from" '+%A %-d %B')
+else
+  note="$(date -d "$from" '+%-d %b') to $(date -d "$to" '+%-d %b')"
+fi
+
+cursor="${from:0:7}-01"
+score=95000
+drawn=0
+while ((drawn < 6)); do
+  year=$(date -d "$cursor" +%Y)
+  month=$(date -d "$cursor" +%-m)
+  month_row "cal-${cursor:0:7}" "$year" "$month" "$(date -d "$cursor" +%b)" "$score" \
+    "$(marks_in "$year" "$month" "$from" "$to")" "$note"
+  drawn=$((drawn + 1))
+  score=$((score - 100))
+  [[ ${cursor:0:7} == "${to:0:7}" ]] && break
+  cursor=$(date -d "$cursor +1 month" +%F)
+done

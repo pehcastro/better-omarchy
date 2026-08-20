@@ -54,6 +54,9 @@ query="${1:-}"
 
 [[ -f $DATA ]] || exit 0
 
+# Trimmed and collapsed, because "  thumbs   up " is one query and not three.
+query=$(sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' <<<"$query")
+
 # One line per character, newest first. Anything no longer in the data file
 # falls out on its own: the lookup below is by exact character.
 recents='[]'
@@ -69,11 +72,106 @@ DEFAULTS='["red heart","thumbs up","fire","tada","rocket","check mark button",
            "face with tears of joy","sob","smiling face with sunglasses",
            "heart_eyes","grin","ok hand","shrug"]'
 
-jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" --argjson recents "$recents" '
+# What a person types when they are after a feeling rather than a name. The
+# data is indexed by what an emoji is called, so "love" found 🏩 the love hotel,
+# "no" found 🚭 no smoking, "party" found 🎂 the birthday cake, and "brasil",
+# "congrats" and "usa" found nothing at all.
+#
+# Each entry is a list of the names to put in front of whatever the search
+# itself turns up. They resolve through the same matcher a typed search uses,
+# so this is a list of intentions and not a second copy of the data: when a
+# codepoint is renamed upstream the intention still lands on it.
+INTENTS='{
+  "love": ["red heart", "smiling face with hearts", "heart hands"],
+  "heart": ["red heart"],
+  "hearts": ["red heart"],
+  "smile": ["slightly smiling face", "grinning face with smiling eyes"],
+  "happy": ["grinning face", "smiling face with smiling eyes blush"],
+  "joy": ["face with tears of joy", "grinning face"],
+  "sad": ["crying face", "pensive"],
+  "cry": ["crying face", "loudly crying"],
+  "crying laughing": ["face with tears of joy", "rolling on the floor laughing"],
+  "laughing crying": ["face with tears of joy", "rolling on the floor laughing"],
+  "lol": ["rolling on the floor laughing", "face with tears of joy"],
+  "lmao": ["rolling on the floor laughing"],
+  "laugh": ["face with tears of joy", "grinning squinting face"],
+  "party": ["party popper", "partying face", "confetti ball"],
+  "congrats": ["party popper", "clinking glasses", "trophy"],
+  "congratulations": ["party popper", "clinking glasses", "trophy"],
+  "celebrate": ["party popper", "partying face"],
+  "celebration": ["party popper", "partying face"],
+  "thanks": ["folded hands", "pray"],
+  "thank you": ["folded hands", "pray"],
+  "ty": ["folded hands"],
+  "thx": ["folded hands"],
+  "please": ["folded hands", "pleading"],
+  "sorry": ["pleading", "folded hands"],
+  "yes": ["check mark button", "thumbs up"],
+  "no": ["cross mark", "thumbs down"],
+  "nope": ["cross mark", "thumbs down"],
+  "x": ["cross mark"],
+  "i love you": ["love-you gesture", "red heart"],
+  "ily": ["love-you gesture"],
+  "snow": ["snowflake", "snowman"],
+  "wrong": ["cross mark"],
+  "tick": ["check mark button"],
+  "done": ["check mark button"],
+  "good": ["thumbs up"],
+  "bad": ["thumbs down"],
+  "lgtm": ["thumbs up", "check mark button"],
+  "brasil": ["brazil"],
+  "usa": ["flag us united america"],
+  "america": ["flag us united america"],
+  "idea": ["light bulb"],
+  "wow": ["astonished"],
+  "shocked": ["astonished", "face screaming in fear"],
+  "surprised": ["astonished"],
+  "scared": ["fearful"],
+  "tired": ["sleepy", "yawning"],
+  "bored": ["expressionless", "unamused"],
+  "meh": ["neutral face", "unamused"],
+  "annoyed": ["unamused", "rolling eyes"],
+  "eyeroll": ["rolling eyes"],
+  "cringe": ["grimacing"],
+  "oops": ["grimacing"],
+  "angry": ["angry face", "pouting face"],
+  "mad": ["angry face", "pouting face"],
+  "cheers": ["clinking glasses", "clinking beer mugs"],
+  "hi": ["waving hand"],
+  "hello": ["waving hand"],
+  "bye": ["waving hand"],
+  "winner": ["trophy", "1st place medal"],
+  "ship": ["rocket"],
+  "shipit": ["rocket"],
+  "deploy": ["rocket"],
+  "launch": ["rocket"],
+  "lit": ["fire"],
+  "confused": ["confused face", "thinking face"],
+  "strong": ["flexed biceps"],
+  "deal": ["handshake"],
+  "agree": ["handshake", "thumbs up"],
+  "money": ["money bag", "dollar banknote"],
+  "work": ["briefcase", "laptop"],
+  "code": ["laptop", "technologist"],
+  "broken": ["collision", "hammer"],
+  "deadline": ["alarm clock"],
+  "night": ["crescent moon"],
+  "morning": ["sunrise"],
+  "food": ["fork and knife", "pizza"],
+  "drunk": ["clinking beer mugs", "beer mug"],
+  "dead": ["skull"],
+  "cool": ["smiling face with sunglasses"],
+  "nice": ["thumbs up", "ok hand"],
+  "up": ["thumbs up", "up arrow"],
+  "down": ["thumbs down", "down arrow"]
+}'
+
+jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" \
+  --argjson intents "$INTENTS" --argjson recents "$recents" '
   # A whole-word hit beats a prefix hit beats a substring hit. Inside a band an
   # earlier and shorter keyword wins, which is what puts ⭐ "star" above
   # 💫 "dizzy star" and 🔥 "fire burn" above 🚒 "fire_engine fire engine".
-  def rank($needle):
+  def rank1($needle):
     (if (.w | index($needle)) != null then 3000
      elif any(.w[]; startswith($needle)) then 2000
      elif (.k | contains($needle)) then 1000
@@ -84,15 +182,54 @@ jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" --argjson recents "$re
         | $band + (200 - ([$at, 200] | min)) + (100 - ([(.k | length), 100] | min))
       end;
 
+  # Every word has to land somewhere, not the whole phrase in one piece. The
+  # keywords for 🤣 are "rofl laughing rolling on the floor laughing lol" and
+  # the string "crying laughing" is nowhere in them, which is why searching a
+  # feeling in two words used to answer nothing at all. A phrase that does
+  # appear whole is still worth more than the same words scattered.
+  #
+  # The tokens arrive already split. Splitting inside would be 1800 splits per
+  # word searched, and the standing set alone searches thirty-eight of them.
+  def rank($ts; $needle):
+    . as $e
+    | if ($ts | length) == 1 then rank1($ts[0])
+      else
+        [ $ts[] as $t | ($e | rank1($t)) ] as $rs
+        | if any($rs[]; . == 0) then 0
+          else ($rs | add) + (if ($e.k | contains($needle)) then 1500 else 0 end)
+          end
+      end;
+
+  # Every band above needs the word to be in the keyword string somewhere: a
+  # prefix hit and a whole-word hit both contain it. So a plain substring test
+  # is a sound filter, and it throws away 99 entries in 100 before the ranking
+  # runs at all. This is the difference between a keystroke and a wait.
+  # Filtering on the first word alone is enough: an entry that ranks at all has
+  # to contain every word, so it has to contain that one.
+  def hits($all; $ts):
+    ($ts[0]) as $t | [ $all[] | select(.k | contains($t)) ];
+
+  def best($all; $needle):
+    ($needle | split(" ") | map(select(length > 0))) as $ts
+    | [ hits($all; $ts)[] | . + { r: rank($ts; $needle) } | select(.r > 0) ]
+    | max_by(.r);
+
   def row($score):
+    # The keyword string is a name followed by its aliases, and repeats words
+    # between them. Dropping the repeats leaves something that reads as a
+    # label. Only the rows that are shown need one, which is why it is built
+    # here rather than over all 1800 entries on the way in.
+    (.k | split(" ")
+     | reduce .[] as $w ([]; if index($w) then . else . + [$w] end)
+     | join(" ") | .[0:64]) as $name
     # Recording runs before the copy rather than after it: the copy is the
     # thing the user pressed Enter for, and a slow write must not sit between
     # the keypress and the clipboard.
-    ("omacast-emoji --used " + (.e | @sh)) as $used
+    | ("omacast-emoji --used " + (.e | @sh)) as $used
     | ($used + "; printf %s " + (.e | @sh) + " | wl-copy") as $copy
     | {
         id: .e,
-        title: .name,
+        title: $name,
         glyph: .e,
         # The grid writes one name under the wall, and the strip beside it is
         # the only place a row can say it is here because you used it.
@@ -104,41 +241,55 @@ jq -c --arg q "${query,,}" --argjson defaults "$DEFAULTS" --argjson recents "$re
           # The launcher closes first, so the keystrokes need a window to land
           # in by the time they are sent.
           { title: "Type It", exec: ($used + "; sleep 0.2; wtype " + (.e | @sh)) },
-          { title: "Copy Name", exec: ("printf %s " + (.name | @sh) + " | wl-copy") }
+          { title: "Copy Name", exec: ("printf %s " + ($name | @sh) + " | wl-copy") }
         ]
       };
 
-  # Lowercasing and splitting once rather than once per comparison: the default
-  # set alone asks 36 questions of every entry in the file.
+  # Lowercasing and splitting once rather than once per comparison. Underscores
+  # are a spelling of a space: 🙌 is "raised_hands hooray raising hands", and
+  # "raised hands" only finds it once the two are the same thing.
   [ .[]
-    | (.k | ascii_downcase) as $k
-    # The keyword string is a name followed by its aliases, and repeats words
-    # between them. Dropping the repeats leaves something that reads as a label.
-    | ($k | gsub("_"; " ") | split(" ")
-       | reduce .[] as $w ([]; if index($w) then . else . + [$w] end)
-       | join(" ") | .[0:64]) as $name
-    | { e: .e, k: $k, w: ($k | split(" ")), name: $name }
+    | (.k | ascii_downcase | gsub("_"; " ")) as $k
+    | { e: .e, k: $k, w: ($k | split(" ")) }
   ] as $all
+  | ($q | split(" ") | map(select(length > 0))) as $qt
   | (if $q == "" then
        # What you reached for lately, then the standing set. A character in both
        # is kept once and at the position it earned, which is why this dedupes
        # in order rather than through unique_by: unique_by sorts, and sorting
        # here would throw away the ordering that is the whole point.
        ([ $recents[] as $ch | ($all[] | select(.e == $ch) | . + { mru: true }) ]
-        + [ $defaults[]
-            | . as $needle
-            | ([ $all[] | . + { r: rank($needle) } | select(.r > 0) ] | max_by(.r))
-            | select(. != null)
-          ])
+        + [ $defaults[] | best($all; .) | select(. != null) ])
        | reduce .[] as $x ([]; if any(.[]; .e == $x.e) then . else . + [$x] end)
      else
+       # What the words mean first, then what they name. The intent list is
+       # short and the search is the rest of the answer, so a feeling leads
+       # without the ordinary hits being thrown away. "crying laughing face" is
+       # the same intention as "crying laughing" with a word on the end that
+       # names the whole category.
+       ([$q, ($q | sub(" (face|emoji|emojis|sign|symbol|icon)$"; ""))] | unique) as $keys
+       | ([ $keys[] | $intents[.] // empty | .[] | best($all; .) | select(. != null) ]
+          + ([ hits($all; $qt)[] | . + { r: rank($qt; $q) } | select(.r > 0) ]
+             | sort_by(-.r))) as $strict
+       | (if ($strict | length) > 0 then $strict
+          else
+            # Nothing matched every word. Rather than answering nothing, the
+            # words that did match are added up, which is what turns "crying
+            # laughing face" from silence into 😂 and 🤣.
+            [ $all[]
+              | . as $e
+              | ([ $qt[] as $t | ($e | rank1($t)) ]) as $rs
+              | $e + { r: ($rs | add) }
+              | select(.r > 0) ]
+            | sort_by(-.r)
+          end)
        # Sixty rather than forty: the grid shows five rows of thirteen at the
        # usual card width, so forty ended a screen short of full.
-       [ $all[] | . + { r: rank($q) } | select(.r > 0) ] | sort_by(-.r) | .[0:60]
+       | reduce .[] as $x ([]; if any(.[]; .e == $x.e) then . else . + [$x] end)
+       | .[0:60]
      end)
   | to_entries[]
   | .key as $i
   | .value
   | row(90000 - ($i * 100))' "$DATA" 2>/dev/null
-
 exit 0

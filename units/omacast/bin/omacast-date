@@ -1,73 +1,819 @@
 #!/bin/bash
 # Answers a date typed in plain words: "27 november 2027", "next friday",
-# "in 3 weeks", "2026-12-25".
+# "in 90 days", "christmas", "christmas 2028", "from 1 jan to today", "week 34".
 #
 # This one answers unscoped, so it has to be quiet unless it is confident. The
 # gate is deliberately narrow: `date -d` will happily read "may" as a month and
 # "1" as a day of the current month, which would put a date row on top of every
 # search for a file called 1. A query has to look like a date before it is
 # treated as one.
+#
+# Everything here resolves to a day, never to an instant, and the day maths is
+# done at noon rather than at midnight: a day that gains or loses an hour makes
+# (midnight - midnight) / 86400 land one short, which is what had the relative
+# count naming the wrong day either side of a clock change.
 
 set -uo pipefail
 
+# `cal:` asks this script what a phrase means rather than parsing the same
+# English a second time, so the two keywords cannot disagree about which day
+# Christmas is or which days are in week 34. Two arguments, which the launcher
+# never sends: a typed query arrives as one shell-quoted word, so `date:--iso x`
+# is read as a date and not obeyed.
+#
+#   omacast-date --iso christmas   ->  2026-12-25 2026-12-25
+#   omacast-date --iso week 34     ->  2026-08-17 2026-08-23
+#
+# Always two dates, equal when the answer is one day.
+ISO_MODE=0
+if (($# >= 2)) && [[ $1 == --iso ]]; then
+  ISO_MODE=1
+  shift
+  set -- "$*"
+fi
+
 query="${1:-}"
-[[ -z $query ]] && exit 0
+query=${query//$'\n'/ }
+# Collapse the spacing once, here, so every pattern below can be written
+# against single spaces.
+read -r -a _words <<<"${query,,}"
+q="${_words[*]:-}"
+[[ -z $q ]] && exit 0
 
-lower=${query,,}
+today_iso=$(date +%F)
+today_day=$(( $(date -d "$today_iso 12:00" +%s) / 86400 ))
+today_year=${today_iso%%-*}
 
-looks_like_date() {
-  # An explicit calendar date, in any of the usual orders.
-  [[ $lower =~ [0-9]{4}-[0-9]{1,2}-[0-9]{1,2} ]] && return 0
-  [[ $lower =~ [0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4} ]] && return 0
+# ---------------------------------------------------------------- day maths
 
-  # A month name with a number beside it.
-  if [[ $lower =~ (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec) ]]; then
-    [[ $lower =~ [0-9] ]] && return 0
-  fi
+# A day number: whole days since the epoch, taken at noon. Two of these
+# subtract to a day count that is still right across a daylight saving change.
+day_of() { echo $(( $(date -d "$1 12:00" +%s) / 86400 )); }
+iso_of() { date -d "@$(( $1 * 86400 + 43200 ))" +%F; }
 
-  # The relative forms people actually type.
-  [[ $lower =~ ^(today|tomorrow|yesterday)$ ]] && return 0
-  [[ $lower =~ ^(next|last)\ (week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)$ ]] && return 0
-  [[ $lower =~ ^in\ [0-9]+\ (day|days|week|weeks|month|months|year|years)$ ]] && return 0
-  [[ $lower =~ ^[0-9]+\ (day|days|week|weeks|month|months|year|years)\ ago$ ]] && return 0
+# Easter, anonymous Gregorian. Four of the days below hang off it (Good Friday,
+# Easter Monday, Carnival, Corpus Christi), which is why it is worth twenty
+# lines rather than a table of dates that runs out in a few years.
+easter_of() {
+  local y=$1 a b c d e f g h i k l m month day
+  a=$(( y % 19 )); b=$(( y / 100 )); c=$(( y % 100 ))
+  d=$(( b / 4 )); e=$(( b % 4 )); f=$(( (b + 8) / 25 ))
+  g=$(( (b - f + 1) / 3 )); h=$(( (19 * a + b - d - g + 15) % 30 ))
+  i=$(( c / 4 )); k=$(( c % 4 ))
+  l=$(( (32 + 2 * e + 2 * i - h - k) % 7 ))
+  m=$(( (a + 11 * h + 22 * l) / 451 ))
+  month=$(( (h + l - 7 * m + 114) / 31 ))
+  day=$(( ((h + l - 7 * m + 114) % 31) + 1 ))
+  printf '%04d-%02d-%02d' "$y" "$month" "$day"
+}
 
+# The nth given weekday of a month: Thanksgiving is the fourth Thursday of
+# November and Mother's Day the second Sunday of May, and neither has a fixed
+# date to put in the table.
+nth_weekday() {
+  local y=$1 mon=$2 n=$3 want=$4 first offset day
+  first=$(date -d "$(printf '%04d-%02d-01' "$y" "$mon")" +%u)
+  offset=$(( (want - first + 7) % 7 ))
+  day=$(( 1 + offset + 7 * (n - 1) ))
+  printf '%04d-%02d-%02d' "$y" "$mon" "$day"
+}
+
+# ------------------------------------------------------------ the named days
+#
+# name|aliases|rule, where a rule is one of
+#
+#   MM-DD          a fixed date
+#   easter+N       N days from Easter Sunday, N may be negative
+#   nth M W U [+N] the Wth U-day (1 = Monday) of month M, plus N days
+#
+# Deliberately the days a person types rather than every public holiday there
+# is. This desktop is in Brazil, so the national days are here beside the
+# international ones and "independence day" means 7 September; anything that
+# names a different date in two countries is spelled out rather than guessed,
+# which is why there is no bare "father's day" (June in the US, August here).
+read -r -d '' HOLIDAYS <<'TABLE'
+New Year's Day|new year,new years,new years day,new year day,ano novo|01-01
+Valentine's Day|valentine,valentines,valentines day,dia dos namorados|02-14
+Carnival|carnival,carnaval|easter-47
+Ash Wednesday|ash wednesday,quarta de cinzas|easter-46
+April Fools' Day|april fools,april fool,april fools day|04-01
+Good Friday|good friday,sexta santa,sexta-feira santa|easter-2
+Easter Sunday|easter,easter sunday,pascoa,páscoa|easter+0
+Easter Monday|easter monday|easter+1
+Tiradentes|tiradentes|04-21
+Labour Day|labour day,labor day,may day,dia do trabalho|05-01
+Mother's Day|mother,mothers,mothers day,dia das maes,dia das mães|nth 5 2 7
+Corpus Christi|corpus christi|easter+60
+US Independence Day|4th of july,fourth of july,july 4th,us independence day|07-04
+Brazilian Independence Day|independence day,independencia,independência,sete de setembro|09-07
+Children's Day|children,childrens day,dia das criancas,dia das crianças|10-12
+Our Lady of Aparecida|aparecida,nossa senhora aparecida|10-12
+Halloween|halloween|10-31
+All Souls' Day|all souls,all souls day,finados|11-02
+Republic Day|republic day,proclamacao da republica,proclamação da república|11-15
+Black Consciousness Day|black consciousness,consciencia negra,consciência negra|11-20
+Thanksgiving|thanksgiving|nth 11 4 4
+Black Friday|black friday|nth 11 4 4 +1
+Christmas Eve|christmas eve,xmas eve,vespera de natal|12-24
+Christmas Day|christmas,xmas,natal|12-25
+Boxing Day|boxing day|12-26
+New Year's Eve|new years eve,new year eve,nye,reveillon,réveillon|12-31
+TABLE
+
+# A rule and a year in, an ISO date out.
+holiday_date() {
+  local rule=$1 year=$2 base offset
+  case $rule in
+    easter*)
+      offset=${rule#easter}
+      base=$(easter_of "$year")
+      date -d "$base $offset days" +%F
+      ;;
+    nth\ *)
+      # shellcheck disable=SC2086
+      set -- $rule
+      base=$(nth_weekday "$year" "$2" "$3" "$4")
+      if [[ ${5:-} == +* ]]; then date -d "$base ${5#+} days" +%F; else printf '%s' "$base"; fi
+      ;;
+    *) printf '%s-%s' "$year" "$rule" ;;
+  esac
+}
+
+# Every holiday the text names, as "date|name" lines, nearest first.
+#
+# Two ways in, and the difference is what keeps this usable while you type. An
+# exact name or alias always matches, so `nye` answers. A prefix only matches
+# from four characters, so typing towards `christmas` answers at `chri` while
+# `car` stays out of the way: without the prefix rule nothing answers until the
+# last keystroke, and with it at two characters a date row lands on top of half
+# the searches in the launcher.
+#
+# $3 says a year was named. Without one the answer is the next occurrence: a
+# holiday that has gone by is almost never the one being asked about, and
+# "christmas" in January is eleven months ahead, not one behind.
+
+# Which way an undated name points. "christmas" is the one coming, "since
+# christmas" is the one gone. Set around a resolve, never left set.
+PREFER=next
+
+match_holidays() {
+  local text=$1 year=$2 year_given=${3:-} name aliases rule alias hit iso
+  while IFS='|' read -r name aliases rule; do
+    [[ -z $name ]] && continue
+    # A sort key, not a flag. 0 is a name typed in full; anything else is a name
+    # still being typed, ranked by how much of it is still missing. "christmas"
+    # is Christmas Day exactly and Christmas Eve only by accident of the Eve
+    # falling first in the year, and "chri" is four letters short of one and
+    # eight short of the other.
+    hit=""
+    [[ ${name,,} == "$text" ]] && hit=0
+    if [[ -z $hit ]]; then
+      IFS=',' read -r -a _aliases <<<"$aliases"
+      for alias in "${_aliases[@]}"; do
+        [[ $alias == "$text" ]] && { hit=0; break; }
+        if (( ${#text} >= 4 )) && [[ $alias == "$text"* ]]; then
+          hit=$(printf '1%03d' $(( ${#alias} - ${#text} ))); break
+        fi
+      done
+    fi
+    if [[ -z $hit ]] && (( ${#text} >= 4 )) && [[ ${name,,} == "$text"* ]]; then
+      hit=$(printf '1%03d' $(( ${#name} - ${#text} )))
+    fi
+    [[ -z $hit ]] && continue
+
+    iso=$(holiday_date "$rule" "$year")
+    if [[ -z $year_given && $year == "$today_year" ]]; then
+      # "since" looks backwards and everything else looks forwards. Without this
+      # `date:days since new year` resolved New Year to the one still to come
+      # and answered with a gap measured from a date in the future, printed as
+      # "from 1 January 2027 to 20 August 2026": a confident number for a
+      # question nobody asked.
+      if [[ $PREFER == past ]]; then
+        (( $(day_of "$iso") > today_day )) && iso=$(holiday_date "$rule" "$(( today_year - 1 ))")
+      else
+        (( $(day_of "$iso") < today_day )) && iso=$(holiday_date "$rule" "$(( today_year + 1 ))")
+      fi
+    fi
+    printf '%s|%s|%s\n' "$hit" "$iso" "$name"
+  done <<<"$HOLIDAYS" | sort -u | cut -d'|' -f2-
+}
+
+# --------------------------------------------------------------- resolving
+
+# The forms `date -d` does not know. "in 90 days" is the one people type most
+# and the one it refuses outright, with the result that `date:in 90 days`
+# answered nothing at all.
+normalize_relative() {
+  local t=$1
+  t=${t/#in /}
+  t=${t% from now}
+  t=${t% from today}
+  t=${t/#a /1 }
+  t=${t/#an /1 }
+  printf '%s' "$t"
+}
+
+# The words a person types that `date -d` has never heard of, rewritten into the
+# ones it has. Ordinals are the biggest of them: "3rd of march" is how a date is
+# said out loud and `date -d` reads it as nothing at all, so `date:3rd of march`
+# answered nothing.
+#
+# This runs after the named days have had their turn, because "4th of july" is a
+# holiday alias and stripping the "th" off it first would lose it.
+normalize_words() {
+  sed -E '
+    s/^[[:space:]]+//; s/[[:space:]]+$//
+    s/^(the|on)[[:space:]]+//
+    s/\b([0-9]+)(st|nd|rd|th)\b/\1/g
+    s/\b([0-9]+)[[:space:]]+of[[:space:]]+/\1 /
+    s/\b(tmr|tmrw|2moro|2mrw)\b/tomorrow/g
+    s/\byday\b/yesterday/g
+    s/\b(coming|upcoming)\b/next/g
+    s/\bmon\b/monday/g
+    s/\b(tue|tues)\b/tuesday/g
+    s/\b(wed|weds)\b/wednesday/g
+    s/\b(thu|thur|thurs)\b/thursday/g
+    s/\bfri\b/friday/g
+    s/\bsat\b/saturday/g
+    s/\bsun\b/sunday/g
+    s/\bsept\b/september/g
+  ' <<<"$1"
+}
+
+# Set when a query had more than one honest reading and one of them was picked.
+# It rides on the detail line, so the row says what it read rather than looking
+# certain about a guess. Cleared per resolve so a range does not inherit the
+# note from the end that did not need one.
+NOTE=""
+
+# d/m/y or m/d/y? A number above twelve settles it, and when both halves could
+# be a month the locale does: %x for a known date says which way round this
+# machine writes them, so a Brazilian desktop reads 25/12/2026 as Christmas
+# rather than as nothing at all.
+#
+# When neither number settles it the locale is a guess, not a fact, so the row
+# is made to say which way round it read the query and what the other reading
+# would have been. 5/6 is May the 6th here and the 5th of June to half the
+# people who might type it, and nothing else on the row would show the
+# difference.
+day_first() {
+  local a=$1 b=$2
+  (( 10#$a > 12 )) && return 0
+  (( 10#$b > 12 )) && return 1
+  [[ $(date -d 2001-02-03 +%x) == 03* ]] && return 0
   return 1
 }
 
-looks_like_date || exit 0
+slash_date() {
+  local a=$1 b=$2 c=$3
+  if day_first "$a" "$b"; then date -d "$c-$b-$a" +%F 2>/dev/null
+  else date -d "$c-$a-$b" +%F 2>/dev/null; fi
+}
 
-stamp=$(date -d "$query" +%s 2>/dev/null) || exit 0
-[[ -z $stamp ]] && exit 0
+# What a slashed date would have meant the other way round, if the other way
+# round is still on the table. Written as its own pass over the query rather
+# than as a side effect of slash_date, because slash_date is called inside a
+# command substitution and anything it sets there is thrown away with the
+# subshell.
+slash_note() {
+  local t a b c other
+  t=$(normalize_relative "$(normalize_words "${1,,}")")
+  [[ $t =~ ^([0-9]{1,2})[/.-]([0-9]{1,2})[/.-]([0-9]{2,4})$ ]] || return 0
+  a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[2]}; c=${BASH_REMATCH[3]}
+  (( 10#$a > 12 || 10#$b > 12 || 10#$a == 10#$b )) && return 0
+  if day_first "$a" "$b"; then
+    other=$(date -d "$c-$a-$b" +%F 2>/dev/null) || return 0
+    [[ -n $other ]] && printf 'read as day/month  ·  %s/%s is %s' "$b" "$a" "$(date -d "$other" '+%-d %B')"
+  else
+    other=$(date -d "$c-$b-$a" +%F 2>/dev/null) || return 0
+    [[ -n $other ]] && printf 'read as month/day  ·  %s/%s is %s' "$b" "$a" "$(date -d "$other" '+%-d %B')"
+  fi
+}
 
-full=$(date -d "@$stamp" "+%A, %-d %B %Y")
-weekday=$(date -d "@$stamp" "+%A")
-iso=$(date -d "@$stamp" "+%Y-%m-%d")
-week=$(date -d "@$stamp" "+%V")
-doy=$(date -d "@$stamp" "+%-j")
+MONTHS='jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+DAYS='monday|tuesday|wednesday|thursday|friday|saturday|sunday'
 
-today=$(date -d "$(date +%F)" +%s)
-target=$(date -d "$iso" +%s)
-days=$(( (target - today) / 86400 ))
+looks_like_date() {
+  local t=$1
+  [[ $t =~ ^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$ ]] && return 0
+  [[ $t =~ ^[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}$ ]] && return 0
+  if [[ $t =~ ($MONTHS) ]]; then
+    [[ $t =~ [0-9] ]] && return 0
+  fi
+  [[ $t =~ ^(today|now|tonight|tomorrow|yesterday)$ ]] && return 0
+  [[ $t =~ ^($DAYS)$ ]] && return 0
+  [[ $t =~ ^(next|last|this)\ (week|month|year|fortnight|$DAYS)$ ]] && return 0
+  [[ $t =~ ^[+-]?[0-9]+\ (minute|min|hour|hr|day|week|month|year|fortnight)s?(\ ago)?$ ]] && return 0
+  return 1
+}
 
-case $days in
-  0) relative="today" ;;
-  1) relative="tomorrow" ;;
-  -1) relative="yesterday" ;;
-  *) if ((days > 0)); then relative="in $days days"; else relative="$(( -days )) days ago"; fi ;;
-esac
+# One piece of text to one ISO date, or nothing. Named days go first, because
+# `date -d` reads "easter" as nothing at all and would take the query anyway.
+resolve_one() {
+  local t hit
+  # A bare three-letter weekday is refused on purpose. `date:` answers unscoped,
+  # so every query of three characters passes through here, and "sat", "sun",
+  # "mon" and "wed" are the openings of far more searches than they are
+  # questions about a day. Four letters ("tues", "thurs", "weds") and anything
+  # qualified ("next fri", "last sat") do answer.
+  [[ $1 =~ ^(mon|tue|wed|thu|fri|sat|sun)$ ]] && return 1
+  t=$(normalize_relative "$1")
 
-jq -cn \
-  --arg t "$weekday" \
-  --arg s "$full" \
-  --arg d "$relative  ·  week $week  ·  day $doy of the year" \
-  --arg e "printf %s $(printf '%q' "$iso") | wl-copy" \
-  --arg iso "$iso" \
-  --arg cal "$(date -d "@$stamp" +%m) $(date -d "@$stamp" +%Y)" \
-  '{
-     id: "date", title: $t, subtitle: $s, detail: $d,
-     exec: $e, score: 99000, view: "hero",
-     actions: [
-       { title: "Copy ISO Date", shortcut: "↵", exec: $e },
-       { title: "Copy Full Date", exec: ("printf %s " + ($s | @sh) + " | wl-copy") }
-     ]
-   }'
+  # A trailing year belongs to the name in front of it: "christmas 2028".
+  if [[ $t =~ ^(.*[^0-9])\ ([0-9]{4})$ ]]; then
+    hit=$(match_holidays "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" given | head -1)
+    [[ -n $hit ]] && { printf '%s' "${hit%%|*}"; return 0; }
+  fi
+  hit=$(match_holidays "$t" "$today_year" | head -1)
+  [[ -n $hit ]] && { printf '%s' "${hit%%|*}"; return 0; }
+
+  t=$(normalize_relative "$(normalize_words "$t")")
+
+  if [[ $t =~ ^([0-9]{1,2})[/.-]([0-9]{1,2})[/.-]([0-9]{2,4})$ ]]; then
+    slash_date "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    return
+  fi
+
+  # 20261225. Eight digits are a date only if they are one: a bare number that
+  # happens to be eight long is far more often an id, and `date -d` would read
+  # 20261301 as a time.
+  if [[ $t =~ ^([0-9]{4})(0[1-9]|1[0-2])(0[1-9]|[12][0-9]|3[01])$ ]]; then
+    date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}" +%F 2>/dev/null
+    return
+  fi
+
+  looks_like_date "$t" || return 1
+  date -d "$t" +%F 2>/dev/null
+}
+
+# ---------------------------------------------------------------- phrasing
+
+plural() { if (( $1 == 1 )); then printf '%d %s' "$1" "$2"; else printf '%d %ss' "$1" "$2"; fi; }
+
+# Years, months and days between two dates, as words. 128 days is a number;
+# "4 months and 6 days" is an answer, and the number is still on the detail
+# line for whoever came for the number.
+#
+# The months are counted by the calendar rather than divided out of the days:
+# February to March is one month whatever the day count says. `date +1 month`
+# from the 31st lands in the month after next, so the anchor is walked back
+# until it fits.
+span_words() {
+  local from=$1 to=$2 months anchor rest years to_day parts=()
+  local fy=${from%%-*} fm=${from:5:2} fd=${from:8:2}
+  local ty=${to%%-*} tm=${to:5:2} td=${to:8:2}
+
+  months=$(( (10#$ty - 10#$fy) * 12 + (10#$tm - 10#$fm) ))
+  (( 10#$td < 10#$fd )) && (( months-- ))
+  (( months < 0 )) && months=0
+  to_day=$(day_of "$to")
+  anchor=$(date -d "$from +$months months" +%F)
+  while (( months > 0 && $(day_of "$anchor") > to_day )); do
+    (( months-- ))
+    anchor=$(date -d "$from +$months months" +%F)
+  done
+  rest=$(( to_day - $(day_of "$anchor") ))
+
+  years=$(( months / 12 ))
+  months=$(( months % 12 ))
+  (( years )) && parts+=("$(plural "$years" year)")
+  (( months )) && parts+=("$(plural "$months" month)")
+  (( rest )) && parts+=("$(plural "$rest" day)")
+
+  case ${#parts[@]} in
+    0) printf '0 days' ;;
+    1) printf '%s' "${parts[0]}" ;;
+    2) printf '%s and %s' "${parts[0]}" "${parts[1]}" ;;
+    *) printf '%s, %s and %s' "${parts[0]}" "${parts[1]}" "${parts[2]}" ;;
+  esac
+}
+
+# How far away, in the words a person would use. Under a month a day count is
+# the clearest thing there is; past that it stops meaning much and the calendar
+# does the talking.
+distance_words() {
+  local iso=$1 days
+  days=$(( $(day_of "$iso") - today_day ))
+  case $days in
+    0) printf 'today'; return ;;
+    1) printf 'tomorrow'; return ;;
+    -1) printf 'yesterday'; return ;;
+  esac
+  if (( days > 0 )); then
+    if (( days <= 30 )); then printf 'in %s' "$(plural "$days" day)"
+    else printf 'in %s' "$(span_words "$today_iso" "$iso")"; fi
+  else
+    if (( days >= -30 )); then printf '%s ago' "$(plural $(( -days )) day)"
+    else printf '%s ago' "$(span_words "$iso" "$today_iso")"; fi
+  fi
+}
+
+# Monday to Friday across a half-open span, so the weekday count and the day
+# count above it are counting the same days.
+weekdays_between() {
+  local a=$1 b=$2 n dow i out
+  (( a > b )) && { n=$a; a=$b; b=$n; }
+  n=$(( b - a ))
+  out=$(( (n / 7) * 5 ))
+  dow=$(date -d "$(iso_of "$a")" +%u)
+  for (( i = 0; i < n % 7; i++ )); do
+    (( ((dow - 1 + i) % 7) + 1 <= 5 )) && (( out++ ))
+  done
+  printf '%d' "$out"
+}
+
+# Two dates as one phrase, with the year said once when once is enough. Written
+# out because "29 December to 4 January 2026" is a lie about the December: the
+# week runs from 2025 and the row has to say so.
+span_text() {
+  local from=$1 to=$2
+  if [[ ${from%%-*} != "${to%%-*}" ]]; then
+    printf '%s to %s' "$(date -d "$from" '+%-d %B %Y')" "$(date -d "$to" '+%-d %B %Y')"
+  elif [[ ${from:0:7} == "${to:0:7}" ]]; then
+    printf '%s to %s' "$(date -d "$from" '+%-d')" "$(date -d "$to" '+%-d %B %Y')"
+  else
+    printf '%s to %s' "$(date -d "$from" '+%-d %B')" "$(date -d "$to" '+%-d %B %Y')"
+  fi
+}
+
+# Where a stretch of days sits relative to now, as a sentence. A week, a
+# quarter, a month and a weekend all need the same one.
+period_phrase() {
+  local from=$1 to=$2 word=$3 phrase
+  if (( today_day >= $(day_of "$from") && today_day <= $(day_of "$to") )); then
+    printf 'the %s we are in' "$word"; return
+  fi
+  phrase=$(distance_words "$from")
+  case $phrase in
+    in\ *|tomorrow) printf 'starting %s' "$phrase" ;;
+    *) printf 'started %s' "$phrase" ;;
+  esac
+}
+
+# ------------------------------------------------------------------- rows
+
+# One date, said as a sentence. The date leads because that is the question in
+# every one of these forms, the sentence under it is why the row is on screen,
+# and the counts come last for whoever came for a count.
+date_row() {
+  local iso=$1 label=${2:-} lead=${3:-0}
+  local full weekday week doy total days subtitle copy
+
+  (( ISO_MODE )) && { printf '%s %s\n' "$iso" "$iso"; exit 0; }
+
+  full=$(date -d "$iso" '+%A, %-d %B %Y')
+  weekday=$(date -d "$iso" +%A)
+  week=$(date -d "$iso" +%V)
+  doy=$(date -d "$iso" +%-j)
+  total=$(date -d "${iso%%-*}-12-31" +%-j)
+  days=$(( $(day_of "$iso") - today_day ))
+  (( days < 0 )) && days=$(( -days ))
+
+  subtitle=$(distance_words "$iso")
+  if [[ -n $label ]]; then subtitle="$label, $subtitle"; else subtitle=${subtitle^}; fi
+  copy="printf %s $(printf '%q' "$iso") | wl-copy"
+
+  # The day count earns its place on the detail line only when the sentence
+  # above it has stopped counting days. Saying "in 2 days" and then "2 days"
+  # under it is the field dump this row is trying not to be.
+  local counts="week $((10#$week))  ·  day $doy of $total"
+  (( days > 30 )) && counts="$(plural "$days" day)  ·  $counts"
+  # A reading that was a choice says so, ahead of the counts, because the counts
+  # are only right if the reading was.
+  [[ -n $NOTE ]] && counts="$NOTE  ·  $counts"
+
+  if (( lead )); then
+    jq -cn --arg id "$iso-${label:-date}" --arg t "$full" --arg s "$subtitle" \
+      --arg d "$counts" \
+      --arg e "$copy" --arg full "$full" \
+      '{ id: $id, title: $t, subtitle: $s, detail: $d, view: "hero", score: 99000, exec: $e,
+         actions: [
+           { title: "Copy ISO Date", shortcut: "↵", exec: $e },
+           { title: "Copy Full Date", exec: ("printf %s " + ($full | @sh) + " | wl-copy") }
+         ] }'
+  else
+    jq -cn --arg id "$iso-${label:-date}" \
+      --arg t "${label:-$weekday}, $(date -d "$iso" '+%-d %B %Y')" \
+      --arg s "$(distance_words "$iso")" --arg e "$copy" \
+      '{ id: $id, title: $t, subtitle: $s, exec: $e }'
+  fi
+}
+
+# A stretch of days: a week, a quarter, a month, a weekend. The days are the
+# answer, so the days are the title, and the name of the stretch goes under it.
+period_row() {
+  local id=$1 from=$2 to=$3 name=$4 word=$5 detail=$6
+  local days wd
+
+  (( ISO_MODE )) && { printf '%s %s\n' "$from" "$to"; exit 0; }
+  days=$(( $(day_of "$to") - $(day_of "$from") + 1 ))
+  wd=$(weekdays_between "$(day_of "$from")" "$(( $(day_of "$to") + 1 ))")
+  [[ -n $detail ]] && detail="$detail  ·  "
+  detail="$detail$(plural "$days" day)"
+  # A weekend has no weekdays in it, and saying "0 weekdays" under one is the
+  # field dump this row exists to avoid.
+  (( wd > 0 )) && detail="$detail  ·  $wd weekdays"
+
+  jq -cn --arg id "$id" --arg t "$(span_text "$from" "$to")" \
+    --arg s "$name, $(period_phrase "$from" "$to" "$word")" \
+    --arg d "$detail" --arg v "$from to $to" \
+    '{ id: $id, title: $t, subtitle: $s, detail: $d, view: "hero", score: 99000,
+       exec: ("printf %s " + ($v | @sh) + " | wl-copy"),
+       actions: [ { title: "Copy Range", shortcut: "↵", exec: ("printf %s " + ($v | @sh) + " | wl-copy") } ] }'
+}
+
+# ------------------------------------------------------------------ ranges
+
+# "from 1 jan to today", "1 jan to christmas", "days until christmas". The gap
+# is the answer, so the gap is the title. Both ends have to resolve or this was
+# never a range, and the single-date path gets its turn.
+try_range() {
+  local text=$1 left right a b days weeks rest wd span detail
+  if [[ $text =~ ^(how\ many\ days|how\ many\ weeks|how\ long|countdown|days|weeks|time)\ (until|till|to|to\ go\ until)\ (.+)$ ]]; then
+    left=$today_iso; right=$(resolve_one "${BASH_REMATCH[3]}")
+  elif [[ $text =~ ^(how\ many\ days|how\ long|days|weeks|time)\ since\ (.+)$ ]]; then
+    # "since" reaches backwards, and the name in it has to reach backwards too.
+    PREFER=past; left=$(resolve_one "${BASH_REMATCH[2]}"); PREFER=next
+    right=$today_iso
+  elif [[ $text =~ ^(how\ many\ days\ )?between\ (.+)\ and\ (.+)$ ]]; then
+    left=$(resolve_one "${BASH_REMATCH[2]}"); right=$(resolve_one "${BASH_REMATCH[3]}")
+  elif [[ $text =~ ^(from\ )?(.+)\ (to|until|till|thru|through)\ (.+)$ ]]; then
+    left=$(resolve_one "${BASH_REMATCH[2]}"); right=$(resolve_one "${BASH_REMATCH[4]}")
+  elif [[ $text =~ ^(from\ )?(.+[^[:space:]])[[:space:]]+(-|--|–|—|\.\.|\.\.\.|\>|-\>)[[:space:]]+([^[:space:]].+)$ ]]; then
+    # "1 jan - 31 dec" is the same question with a dash in it. Both spaces are
+    # required so "in -5 days" is still a day and not half a range.
+    left=$(resolve_one "${BASH_REMATCH[2]}"); right=$(resolve_one "${BASH_REMATCH[4]}")
+  else
+    return 1
+  fi
+  [[ -z $left || -z $right ]] && return 1
+
+  if (( ISO_MODE )); then
+    if [[ $left < $right ]]; then printf '%s %s\n' "$left" "$right"
+    else printf '%s %s\n' "$right" "$left"; fi
+    exit 0
+  fi
+
+  a=$(day_of "$left"); b=$(day_of "$right")
+  days=$(( b - a )); (( days < 0 )) && days=$(( -days ))
+  weeks=$(( days / 7 )); rest=$(( days % 7 ))
+  wd=$(weekdays_between "$a" "$b")
+
+  if (( a <= b )); then span=$(span_words "$left" "$right"); else span=$(span_words "$right" "$left"); fi
+  if (( weeks )); then
+    if (( rest )); then detail="$(plural "$weeks" week) and $(plural "$rest" day)  ·  $wd weekdays"
+    else detail="$(plural "$weeks" week)  ·  $wd weekdays"; fi
+  else
+    detail="$wd weekdays"
+  fi
+
+  # The year is said once when both ends are in it. "from 1 January to 19 August
+  # 2026" is how the range would be read aloud.
+  local from_text to_text
+  to_text=$(date -d "$right" '+%-d %B %Y')
+  if [[ ${left%%-*} == "${right%%-*}" ]]; then from_text=$(date -d "$left" '+%-d %B')
+  else from_text=$(date -d "$left" '+%-d %B %Y'); fi
+
+  jq -cn --arg id "range-$left-$right" \
+    --arg t "$(plural "$days" day)" \
+    --arg s "$span, from $from_text to $to_text" \
+    --arg d "$detail" --arg v "$days" \
+    '{ id: $id, title: $t, subtitle: $s, detail: $d, view: "hero", score: 99000,
+       exec: ("printf %s " + ($v | @sh) + " | wl-copy"),
+       actions: [ { title: "Copy Day Count", shortcut: "↵", exec: ("printf %s " + ($v | @sh) + " | wl-copy") } ] }'
+  return 0
+}
+
+# ------------------------------------------------------------------- weeks
+
+# "week 34", "week 34 2027", "week". ISO weeks, so a week starts on Monday and
+# week 1 is the one holding 4 January.
+try_week() {
+  local text=$1 n year mon sun jan4 dow phrase span shift=""
+  # "w34", "wk 34" and "week 34 of 2027" are the same question written shorter
+  # and longer. All three were silent.
+  [[ $text =~ ^(w|wk|week)[[:space:]]*([0-9]{1,2})([[:space:]]+(of[[:space:]]+)?([0-9]{4}))?$ ]] &&
+    text="week ${BASH_REMATCH[2]}${BASH_REMATCH[5]:+ ${BASH_REMATCH[5]}}"
+  if [[ $text =~ ^(this\ |next\ |last\ )?week$ ]]; then
+    # "next week" used to answer with a single day seven days out, which is not
+    # what the words mean: a week is a range and this view can say so.
+    case ${BASH_REMATCH[1]:-} in
+      "next ") shift="+7 days" ;;
+      "last ") shift="-7 days" ;;
+      *) shift="+0 days" ;;
+    esac
+    n=$(date -d "$today_iso $shift" +%V); year=$(date -d "$today_iso $shift" +%G)
+  elif [[ $text =~ ^week\ ([0-9]{1,2})$ ]]; then
+    n=${BASH_REMATCH[1]}; year=$(date +%G)
+  elif [[ $text =~ ^week\ ([0-9]{1,2})\ ([0-9]{4})$ ]]; then
+    n=${BASH_REMATCH[1]}; year=${BASH_REMATCH[2]}
+  else
+    return 1
+  fi
+  (( 10#$n >= 1 && 10#$n <= 53 )) || return 1
+
+  jan4="$year-01-04"
+  dow=$(date -d "$jan4" +%u)
+  mon=$(date -d "$jan4 -$(( dow - 1 )) days +$(( 10#$n - 1 )) weeks" +%F)
+  sun=$(date -d "$mon +6 days" +%F)
+
+  (( ISO_MODE )) && { printf '%s %s\n' "$mon" "$sun"; exit 0; }
+
+  if (( today_day >= $(day_of "$mon") && today_day <= $(day_of "$sun") )); then
+    phrase="the week we are in"
+  else
+    phrase=$(distance_words "$mon")
+    case $phrase in
+      in\ *) phrase="starting $phrase" ;;
+      *) phrase="started $phrase" ;;
+    esac
+  fi
+
+  span=$(span_text "$mon" "$sun")
+
+  jq -cn --arg id "week-$year-$n" --arg t "$span" \
+    --arg s "Week $((10#$n)) of $year, $phrase" \
+    --arg d "$(printf '%s-W%02d' "$year" "$((10#$n))")  ·  days $(date -d "$mon" +%-j) to $(date -d "$sun" +%-j) of the year" \
+    --arg v "$mon to $sun" \
+    '{ id: $id, title: $t, subtitle: $s, detail: $d, view: "hero", score: 99000,
+       exec: ("printf %s " + ($v | @sh) + " | wl-copy"),
+       actions: [ { title: "Copy Week Range", shortcut: "↵", exec: ("printf %s " + ($v | @sh) + " | wl-copy") } ] }'
+  return 0
+}
+
+# --------------------------------------------------- edges, quarters, months
+
+# Monday of the week holding a date, ISO style.
+monday_of() { date -d "$1 -$(( $(date -d "$1" +%u) - 1 )) days" +%F; }
+
+# "end of the month", "start of next month", "last day of the year". Somebody
+# planning says these far more often than they say a date, and every one of them
+# was silent.
+try_bounds() {
+  local t=$1 edge when unit first last name shift
+  t=${t// of / }
+  t=${t// the / }
+  t=${t/#first day/start}
+  t=${t/#last day/end}
+  t=${t/#beginning/start}
+  t=${t/#finish/end}
+  [[ $t =~ ^(start|end)\ (this\ |next\ |last\ )?(week|month|year|quarter)$ ]] || return 1
+  edge=${BASH_REMATCH[1]}; when=${BASH_REMATCH[2]% }; unit=${BASH_REMATCH[3]}
+  case $when in next) shift=1 ;; last) shift=-1 ;; *) shift=0 ;; esac
+
+  case $unit in
+    week)
+      first=$(date -d "$(monday_of "$today_iso") $shift weeks" +%F)
+      last=$(date -d "$first +6 days" +%F)
+      name="$(date -d "$first" '+Week %V')" ;;
+    month)
+      first=$(date -d "${today_iso:0:7}-01 $shift months" +%F)
+      last=$(date -d "$first +1 month -1 day" +%F)
+      name=$(date -d "$first" '+%B') ;;
+    year)
+      first=$(( 10#$today_year + shift ))-01-01
+      last=$(( 10#$today_year + shift ))-12-31
+      name=$(( 10#$today_year + shift )) ;;
+    quarter)
+      first=$(quarter_start "$today_year" "$(( (10#${today_iso:5:2} - 1) / 3 + 1 + shift ))")
+      last=$(date -d "$first +3 months -1 day" +%F)
+      name="Q$(( (10#${first:5:2} - 1) / 3 + 1 )) ${first%%-*}" ;;
+  esac
+
+  if [[ $edge == start ]]; then date_row "$first" "Start of $name" 1
+  else date_row "$last" "End of $name" 1; fi
+  return 0
+}
+
+# The first day of a quarter, where the quarter number may run off either end of
+# the year: "next quarter" in Q4 is Q1 of next year, and doing that arithmetic in
+# the caller is how it gets it wrong.
+quarter_start() {
+  local y=$1 q=$2
+  while (( q > 4 )); do q=$(( q - 4 )); y=$(( y + 1 )); done
+  while (( q < 1 )); do q=$(( q + 4 )); y=$(( y - 1 )); done
+  printf '%04d-%02d-01' "$y" "$(( (q - 1) * 3 + 1 ))"
+}
+
+# "q3", "q3 2027", "3rd quarter", "this quarter". A quarter is a stretch of days
+# like a week is, so it answers like one.
+try_quarter() {
+  local t=$1 q year first last
+  t=$(normalize_words "$t")
+  if [[ $t =~ ^q([1-4])$ ]]; then q=${BASH_REMATCH[1]}; year=$today_year
+  elif [[ $t =~ ^q([1-4])\ ([0-9]{4})$ ]]; then q=${BASH_REMATCH[1]}; year=${BASH_REMATCH[2]}
+  elif [[ $t =~ ^([0-9]{4})\ q([1-4])$ ]]; then q=${BASH_REMATCH[2]}; year=${BASH_REMATCH[1]}
+  elif [[ $t =~ ^([1-4])\ quarter(\ ([0-9]{4}))?$ ]]; then
+    q=${BASH_REMATCH[1]}; year=${BASH_REMATCH[3]:-$today_year}
+  elif [[ $t =~ ^(this|next|last)\ quarter$ ]]; then
+    q=$(( (10#${today_iso:5:2} - 1) / 3 + 1 ))
+    case ${BASH_REMATCH[1]} in next) q=$(( q + 1 )) ;; last) q=$(( q - 1 )) ;; esac
+    year=$today_year
+  else
+    return 1
+  fi
+
+  first=$(quarter_start "$year" "$q")
+  last=$(date -d "$first +3 months -1 day" +%F)
+  period_row "q-$first" "$first" "$last" \
+    "Q$(( (10#${first:5:2} - 1) / 3 + 1 )) ${first%%-*}" quarter \
+    "${first%%-*}-Q$(( (10#${first:5:2} - 1) / 3 + 1 ))"
+  return 0
+}
+
+# "this weekend", "next weekend", "weekend". Saturday and Sunday, and on a
+# Sunday "this weekend" is the one being stood in rather than the one six days
+# out, which is what counting forward to the next Saturday would have said.
+try_weekend() {
+  local t=$1 dow sat sun shift=0
+  t=$(normalize_words "$t")
+  [[ $t =~ ^(this\ |next\ |last\ )?weekend$ ]] || return 1
+  case ${BASH_REMATCH[1]:-} in "next ") shift=7 ;; "last ") shift=-7 ;; esac
+
+  dow=$(date -d "$today_iso" +%u)
+  if (( dow == 7 )); then sat=$(date -d "$today_iso -1 day" +%F)
+  else sat=$(date -d "$today_iso +$(( 6 - dow )) days" +%F); fi
+  sat=$(date -d "$sat $shift days" +%F)
+  sun=$(date -d "$sat +1 day" +%F)
+
+  period_row "weekend-$sat" "$sat" "$sun" \
+    "The weekend of $(date -d "$sat" '+%-d %B')" weekend ""
+  return 0
+}
+
+# "december 2027", "2027-12", "12/2027". A month and a year is a stretch of
+# days, not a day: `date -d "december 2027"` answers with the 20th, because the
+# day of the month is missing and it fills it in from today. That is the wrong
+# kind of confident, so the whole month is the answer instead.
+#
+# A bare month name is refused. `date:` answers unscoped and "may", "march" and
+# "august" are words before they are months.
+try_month() {
+  local t=$1 first last
+  t=$(normalize_words "$t")
+  if [[ $t =~ ^([0-9]{4})[/-](0[1-9]|1[0-2])$ ]]; then
+    first="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-01"
+  elif [[ $t =~ ^(0?[1-9]|1[0-2])/([0-9]{4})$ ]]; then
+    first=$(printf '%s-%02d-01' "${BASH_REMATCH[2]}" "$(( 10#${BASH_REMATCH[1]} ))")
+  elif [[ $t =~ ^($MONTHS)[a-z]*\ ([0-9]{4})$ ]] || [[ $t =~ ^([0-9]{4})\ ($MONTHS)[a-z]*$ ]]; then
+    first=$(date -d "1 $t" +%Y-%m-01 2>/dev/null) || return 1
+  else
+    return 1
+  fi
+  [[ -z $first ]] && return 1
+  last=$(date -d "$first +1 month -1 day" +%F) || return 1
+
+  period_row "month-${first:0:7}" "$first" "$last" \
+    "$(date -d "$first" '+%B %Y')" month "${first:0:7}"
+  return 0
+}
+
+# "next friday" has two honest readings on a Thursday: tomorrow, and the Friday
+# of the week after. `date -d` picks the first one. Rather than argue with it,
+# both are on screen, the one `date -d` picked leading.
+try_next_weekday() {
+  local t=$1 first second
+  t=$(normalize_words "$t")
+  [[ $t =~ ^next\ ($DAYS)$ ]] || return 1
+  first=$(date -d "$t" +%F 2>/dev/null) || return 1
+  [[ -z $first ]] && return 1
+  second=$(date -d "$first +7 days" +%F)
+  date_row "$first" "" 1
+  date_row "$second" "The one after" 0
+  return 0
+}
+
+# ------------------------------------------------------------------- answer
+
+try_week "$q" && exit 0
+try_bounds "$q" && exit 0
+try_quarter "$q" && exit 0
+try_weekend "$q" && exit 0
+try_month "$q" && exit 0
+try_range "$q" && exit 0
+try_next_weekday "$q" && exit 0
+
+# A named day, or several: `new` is both New Year's Day and New Year's Eve, and
+# somebody halfway through typing one of them wants to see both rather than
+# whichever sorts first. The nearest leads and the rest list underneath it.
+named=""
+if [[ $q =~ ^(.*[^0-9])\ ([0-9]{4})$ ]]; then
+  named=$(match_holidays "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" given)
+fi
+[[ -z $named ]] && named=$(match_holidays "$q" "$today_year")
+
+if [[ -n $named ]]; then
+  lead=1
+  while IFS='|' read -r iso name; do
+    [[ -z $iso ]] && continue
+    date_row "$iso" "$name" "$lead"
+    lead=0
+  done <<<"$named"
+  exit 0
+fi
+
+iso=$(resolve_one "$q") || exit 0
+[[ -z $iso ]] && exit 0
+NOTE=$(slash_note "$q")
+date_row "$iso" "" 1
+exit 0

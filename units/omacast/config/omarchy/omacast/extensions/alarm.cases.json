@@ -1,0 +1,226 @@
+[
+  { "why": "the shortest way to set one still works",
+    "query": "5m tea", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "exec"],
+    "matches": { "title": "^tea$", "subtitle": "^Reminder in 5 minutes, at [0-9]{2}:[0-9]{2}$",
+                 "exec": "^omarchy reminder 5 tea$" } },
+
+  { "why": "seconds are rounded up, never down, and the row says what it rounded",
+    "query": "30 minutes and 45 seconds tea is ready", "minRows": 1,
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^tea is ready$", "subtitle": "in 31 minutes",
+                 "detail": "^Rounded up from 30m 45s" } },
+
+  { "why": "a compound compact duration",
+    "query": "1h30m standup", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^standup$", "subtitle": "in 1 hour and 30 minutes" } },
+
+  { "why": "'in' is how it gets said and is not part of the time",
+    "query": "in 2 hours call mum", "minRows": 1,
+    "fields": ["title", "exec"],
+    "matches": { "title": "^call mum$", "exec": "^omarchy reminder 120 " } },
+
+  { "why": "a fraction said out loud",
+    "query": "half an hour tea", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 30 minutes" } },
+
+  { "why": "the same fraction with the 'in' in front of it",
+    "query": "in half an hour tea", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 30 minutes" } },
+
+  { "why": "a quarter of an hour, with all the filler words between",
+    "query": "a quarter of an hour tea", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 15 minutes" } },
+
+  { "why": "'an hour and a half' set an hour and called the reminder 'half'",
+    "query": "in an hour and a half call mum", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^call mum$", "subtitle": "in 1 hour and 30 minutes" } },
+
+  { "why": "the fraction between a number and its unit",
+    "query": "two and a half hours nap", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^nap$", "subtitle": "in 2 hours and 30 minutes" } },
+
+  { "why": "a number spelled out is still a number",
+    "query": "twenty minutes coffee", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^coffee$", "subtitle": "in 20 minutes" } },
+
+  { "why": "and a small one",
+    "query": "five minutes tea", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 5 minutes" } },
+
+  { "why": "a decimal count with a point",
+    "query": "1.5h call", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 1 hour and 30 minutes" } },
+
+  { "why": "and with a comma, which is the decimal point in half the world",
+    "query": "1,5h call", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 1 hour and 30 minutes" } },
+
+  { "why": "a decimal in front of a spelled unit",
+    "query": "2.5 hours nap", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 2 hours and 30 minutes" } },
+
+  { "why": "2h30 is two and a half hours in a keyword that is about durations",
+    "query": "2h30 call", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 2 hours and 30 minutes" } },
+
+  { "why": "a bare Nh stays a duration, or `alarm:2h call` would arm for two in the morning",
+    "query": "2h call", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder in 2 hours, at " } },
+
+  { "why": "days are said as days, not as seventy-two hours",
+    "query": "in 3 days water plants", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 3 days" } },
+
+  { "why": "the compact spelling of the same",
+    "query": "3d water plants", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 3 days" } },
+
+  { "why": "seconds under a minute round up to one, and say so",
+    "query": "90s test", "minRows": 1,
+    "fields": ["subtitle", "detail"],
+    "matches": { "subtitle": "in 2 minutes", "detail": "^Rounded up from 1m 30s" } },
+
+  { "why": "'at 7' is a clock, and it used to be nothing at all",
+    "query": "at 7 wake up", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^wake up$", "subtitle": "^Reminder at 07:00 (today|tomorrow), in " } },
+
+  { "why": "am/pm attached",
+    "query": "7pm dinner", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^dinner$", "subtitle": "^Reminder at 19:00 " } },
+
+  { "why": "am/pm as its own word set a reminder in seven minutes called 'pm dinner'",
+    "query": "7 pm dinner", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^dinner$", "subtitle": "^Reminder at 19:00 " } },
+
+  { "why": "a full clock time with am/pm behind it",
+    "query": "7:00 pm dinner", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 19:00 " } },
+
+  { "why": "twenty-four hour time",
+    "query": "19:30 standup", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^standup$", "subtitle": "^Reminder at 19:30 " } },
+
+  { "why": "a colon and a dot are the same separator to a person",
+    "query": "8.30 breakfast", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 08:30 " } },
+
+  { "why": "0730 was read as seven hundred and thirty minutes and armed for a quarter to ten at night",
+    "query": "0730 gym", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^gym$", "subtitle": "^Reminder at 07:30 " } },
+
+  { "why": "19h30 past thirteen is a wall clock, which is how half the world writes one",
+    "query": "19h30 standup", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 19:30 " } },
+
+  { "why": "an 'at' says which reading a bare Nh wants",
+    "query": "at 14h gym", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 14:00 " } },
+
+  { "why": "noon is a time",
+    "query": "noon lunch", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^lunch$", "subtitle": "^Reminder at 12:00 " } },
+
+  { "why": "midnight is tomorrow's, not the one eighteen hours gone",
+    "query": "midnight sleep", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 00:00 tomorrow, in " } },
+
+  { "why": "quarter past, said the way a clock face is read",
+    "query": "quarter past 3 meeting", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^meeting$", "subtitle": "^Reminder at 03:15 " } },
+
+  { "why": "half past",
+    "query": "half past 7 gym", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 07:30 " } },
+
+  { "why": "and quarter to, which counts backwards from the hour",
+    "query": "quarter to 6 leave", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 05:45 " } },
+
+  { "why": "a day in front of the clock",
+    "query": "tomorrow at 8 gym", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^gym$", "subtitle": "^Reminder at 08:00 tomorrow, in " } },
+
+  { "why": "the same day without the 'at'",
+    "query": "tomorrow 9am meeting", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder at 09:00 tomorrow, in " } },
+
+  { "why": "a weekday that has gone this week is next week's, not a negative time",
+    "query": "monday 9am standup", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^standup$", "subtitle": "^Reminder at 09:00 (on Monday|today|tomorrow)" } },
+
+  { "why": "a time that has gone today rolls to tomorrow and says which decision it made",
+    "query": "today at 1am gym", "minRows": 1,
+    "fields": ["subtitle", "detail"],
+    "matches": { "subtitle": "^Reminder at 01:00 tomorrow", "detail": "already gone today" } },
+
+  { "why": "a duration with nothing to say at it shows what it read, and offers nothing to run",
+    "query": "5m", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "absent": ["exec"],
+    "matches": { "title": "^What is the reminder for", "subtitle": "^Reminder in 5 minutes" } },
+
+  { "why": "the same for a clock time, so a misread time is visible before it is set",
+    "query": "at 7", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "absent": ["exec"],
+    "matches": { "title": "^What is the reminder for", "subtitle": "^Reminder at 07:00" } },
+
+  { "why": "a bare number is minutes, which is what `omarchy reminder` itself takes",
+    "query": "5", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "^Reminder in 5 minutes" } },
+
+  { "why": "words with no time in them are not a reminder",
+    "query": "hello world", "maxRows": 0, "fields": [] },
+
+  { "why": "and neither is an app name",
+    "query": "firefox", "maxRows": 0, "fields": [] },
+
+  { "why": "the message is quoted into the command, so a space in it is not two arguments",
+    "query": "5m tea time", "minRows": 1,
+    "fields": ["exec"],
+    "matches": { "exec": "^omarchy reminder 5 tea\\\\ time$" } },
+
+  { "why": "'20 min' and 'in 20 mins' are the same twenty minutes",
+    "query": "in 20 mins coffee", "minRows": 1,
+    "fields": ["subtitle"],
+    "matches": { "subtitle": "in 20 minutes" } },
+
+  { "why": "setting one offers to set it, show the rest, and clear them all",
+    "query": "5m tea", "minRows": 1,
+    "fields": ["actions"],
+    "atMost": { "actions": 3 } }
+]

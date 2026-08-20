@@ -1,0 +1,268 @@
+[
+  { "why": "a duration forward answers at all, and says how far in days",
+    "query": "in 90 days", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^[A-Z][a-z]+day, [0-9]{1,2} [A-Z][a-z]+ [0-9]{4}$",
+                 "subtitle": "^In ", "detail": "^90 days" } },
+
+  { "why": "a duration back answers",
+    "query": "90 days ago", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "ago$", "detail": "^90 days" } },
+
+  { "why": "a named day leads with the day it names, not with the eve of it",
+    "query": "christmas", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "25 December", "subtitle": "^Christmas Day, " } },
+
+  { "why": "a named day with a year answers for that year",
+    "query": "christmas 2028", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^Monday, 25 December 2028$" } },
+
+  { "why": "Easter is computed, not looked up in a table that runs out",
+    "query": "easter 2028", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Sunday, 16 April 2028$" } },
+
+  { "why": "the gap between two dates is the answer, so it is the title",
+    "query": "from 1 jan to today", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^[0-9]+ days$", "subtitle": "^.+, from 1 January to ",
+                 "detail": "weekdays$" } },
+
+  { "why": "a week number answers with the days in it",
+    "query": "week 34 2027", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^23 to 29 August 2027$", "subtitle": "^Week 34 of 2027",
+                 "detail": "^2027-W34" } },
+
+  { "why": "an explicit date still answers, and reads as a sentence",
+    "query": "27 november 2027", "minRows": 1,
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^Saturday, 27 November 2027$" } },
+
+  { "why": "a day-first date is not silently dropped",
+    "query": "25/12/2026", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, 25 December 2026$" } },
+
+  { "why": "the copy action carries the ISO date",
+    "query": "christmas", "minRows": 1,
+    "fields": ["exec", "actions"],
+    "matches": { "exec": "wl-copy$" } },
+
+  { "why": "nothing that is not a date answers, because this one answers unscoped",
+    "query": "firefox", "maxRows": 0, "fields": [] },
+
+  { "why": "a bare word that is only nearly a holiday stays quiet",
+    "query": "car", "maxRows": 0, "fields": [] },
+
+  { "why": "an empty query is silent: the launcher cannot tell `date:` from no query at all",
+    "query": "", "maxRows": 0, "fields": [] },
+
+  { "why": "an ordinal is how a date is said out loud, and `date -d` reads it as nothing",
+    "query": "3rd of march 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Wednesday, 3 March 2027$" } },
+
+  { "why": "the ordinal on the other side of the month reads the same",
+    "query": "march 3rd 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Wednesday, 3 March 2027$" } },
+
+  { "why": "a leading 'the' is not part of the date",
+    "query": "the 3rd of march 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Wednesday, 3 March 2027$" } },
+
+  { "why": "an ordinal in front of an abbreviated month",
+    "query": "1st jan 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, 1 January 2027$" } },
+
+  { "why": "dots separate a date in half of Europe",
+    "query": "25.12.2026", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, 25 December 2026$" } },
+
+  { "why": "so do dashes, and neither was read at all",
+    "query": "25-12-2026", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, 25 December 2026$" } },
+
+  { "why": "a date pasted out of a filename or a log has no separators",
+    "query": "20261225", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, 25 December 2026$" } },
+
+  { "why": "eight digits that are not a date are not read as one",
+    "query": "20261325", "maxRows": 0, "fields": [] },
+
+  { "why": "a slashed date that could be read either way says which way it read it",
+    "query": "5/6/2026", "minRows": 1,
+    "fields": ["title", "detail"],
+    "matches": { "detail": "^read as (month/day|day/month)  ·  6/5 is " } },
+
+  { "why": "a slashed date that can only be read one way says nothing extra",
+    "query": "25/12/2026", "minRows": 1,
+    "fields": ["title", "detail"],
+    "absent": [],
+    "matches": { "detail": "^(?!read as)" } },
+
+  { "why": "the edges of a month are what somebody planning asks for",
+    "query": "end of the month", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^[A-Z][a-z]+day, ", "subtitle": "^End of [A-Z]" } },
+
+  { "why": "the same question without the 'the'",
+    "query": "end of month", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "^End of [A-Z]" } },
+
+  { "why": "and the other edge, of the month after this one",
+    "query": "start of next month", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^[A-Z][a-z]+day, 1 ", "subtitle": "^Start of [A-Z]" } },
+
+  { "why": "the end of the year is a date, not a month",
+    "query": "end of the year", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "31 December", "subtitle": "^End of [0-9]{4}" } },
+
+  { "why": "a quarter is a stretch of days and answers like a week does",
+    "query": "q3 2027", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^1 July to 30 September 2027$", "subtitle": "^Q3 2027",
+                 "detail": "^2027-Q3" } },
+
+  { "why": "a quarter that opens a year, so the arithmetic cannot lean on today",
+    "query": "q1 2028", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^1 January to 31 March 2028$" } },
+
+  { "why": "the quarter after this one, wherever in the year this one is",
+    "query": "next quarter", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "^Q[1-4] [0-9]{4}, " } },
+
+  { "why": "written the way a person says it rather than the way a spreadsheet does",
+    "query": "3rd quarter 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^1 July to 30 September 2027$" } },
+
+  { "why": "a weekend is two days, and nobody wants '0 weekdays' under it",
+    "query": "this weekend", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "subtitle": "^The weekend of ", "detail": "^2 days$" } },
+
+  { "why": "next weekend is a week further on, not the next Saturday to come",
+    "query": "next weekend", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "^The weekend of " } },
+
+  { "why": "a month and a year is a month, not the twentieth of it",
+    "query": "december 2027", "minRows": 1, "view": "hero",
+    "fields": ["title", "subtitle", "detail"],
+    "matches": { "title": "^1 to 31 December 2027$", "subtitle": "^December 2027, ",
+                 "detail": "^2027-12" } },
+
+  { "why": "the same month written as numbers",
+    "query": "2027-12", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^1 to 31 December 2027$" } },
+
+  { "why": "and the other way round again",
+    "query": "12/2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^1 to 31 December 2027$" } },
+
+  { "why": "a bare month name is refused: `date:` answers unscoped and may is a word",
+    "query": "may", "maxRows": 0, "fields": [] },
+
+  { "why": "and so is march",
+    "query": "march", "maxRows": 0, "fields": [] },
+
+  { "why": "a week number written the short way",
+    "query": "w34 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^23 to 29 August 2027$" } },
+
+  { "why": "and the long way, with the 'of' in it",
+    "query": "week 34 of 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^23 to 29 August 2027$" } },
+
+  { "why": "week 1 of a year starts in the year before, and the title has to say so",
+    "query": "week 1 2026", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^29 December 2025 to 4 January 2026$" } },
+
+  { "why": "'next friday' has two readings, so both are on screen rather than one guess",
+    "query": "next friday", "minRows": 2,
+    "row": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^The one after, [0-9]{1,2} " } },
+
+  { "why": "a four-letter weekday abbreviation answers",
+    "query": "tues", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Tuesday, " } },
+
+  { "why": "a three-letter one is refused on purpose: sat opens more searches than questions",
+    "query": "sat", "maxRows": 0, "fields": [] },
+
+  { "why": "and so is fri",
+    "query": "fri", "maxRows": 0, "fields": [] },
+
+  { "why": "but 'next fri' is a question, not the start of a filename",
+    "query": "next fri", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, " } },
+
+  { "why": "'since' looks backwards: it answered from a New Year still to come",
+    "query": "days since new year", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^[0-9]+ days$", "subtitle": ", from 1 January to " } },
+
+  { "why": "a dash between two dates is a range like the word 'to' is",
+    "query": "jan 1 2027 - dec 31 2027", "minRows": 1, "view": "hero",
+    "fields": ["title"],
+    "matches": { "title": "^364 days$" } },
+
+  { "why": "'between x and y' is the same question a third way",
+    "query": "between christmas 2026 and new year 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^7 days$" } },
+
+  { "why": "hours resolve to the day they land on rather than to nothing",
+    "query": "in 36 hours", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "title": "^[A-Z][a-z]+day, " } },
+
+  { "why": "the short spelling of tomorrow",
+    "query": "tmr", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "^Tomorrow$" } },
+
+  { "why": "'coming friday' is 'next friday' said differently",
+    "query": "coming friday", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^Friday, " } },
+
+  { "why": "a bare 'quarter' names no quarter and stays quiet",
+    "query": "quarter", "maxRows": 0, "fields": [] },
+
+  { "why": "zero days out is today, said as today",
+    "query": "in 0 days", "minRows": 1,
+    "fields": ["title", "subtitle"],
+    "matches": { "subtitle": "^Today$" } },
+
+  { "why": "a date that does not exist is refused rather than rolled into March",
+    "query": "feb 30 2027", "maxRows": 0, "fields": [] },
+
+  { "why": "the ISO answer `cal:` reads is two dates, always",
+    "query": "week 34 2027", "minRows": 1,
+    "fields": ["exec"],
+    "matches": { "exec": "2027-08-23 to 2027-08-29" } }
+]

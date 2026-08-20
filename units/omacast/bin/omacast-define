@@ -3,12 +3,24 @@
 #
 #   def:ephemeral     every sense, by part of speech, with synonyms
 #   def:set           the long ones too, because the pane can hold them
+#   def:ice cream     a phrase, which is one entry and not two words
+#   def:cats          the plural, answered from the entry for cat
+#   def:recieve       the misspelling, answered from the word that was meant
 #
-# There is no offline dictionary on an Omarchy box. `dict` is not installed and
-# /usr/share/dict/words is a symlink to cracklib-small, which is a spellcheck
-# wordlist with no definitions in it at all, so an offline answer would have to
-# ship a dictionary inside this unit. api.dictionaryapi.dev is keyless, wants
-# no account, and was checked with curl before this was written.
+# There is no offline dictionary on an Omarchy box. `dict` is not installed,
+# hunspell ships without a dictionary, and /usr/share/dict/words is a symlink to
+# cracklib-small, which is a spellcheck wordlist with no definitions in it at
+# all, so an offline answer would have to ship a dictionary inside this unit.
+# api.dictionaryapi.dev is keyless, wants no account, and was checked with curl
+# before this was written.
+#
+# What people type is not what the dictionary is indexed by. "cats", "running",
+# "happier" and "recieve" are four spellings of words that have entries under
+# other spellings, and all four used to answer "No definition". So a miss is not
+# the end: the word is stemmed, the phrase is tried whole and then by its first
+# word, and a spelling that no stem rescues gets one guess from Datamuse, which
+# is only shown after the guess itself has been looked up and found real.
+# Whatever answers, the row says which spelling answered it.
 #
 # The view is `split` because a definition is a paragraph. In a list every row
 # would elide at the same width and every sense of "set" would read alike; on
@@ -25,49 +37,250 @@ query="${1:-}"
 command -v curl >/dev/null || exit 0
 command -v jq >/dev/null || exit 0
 
-word="${query#"${query%%[![:space:]]*}"}"
-word="${word%"${word##*[![:space:]]}"}"
-# Only the first word: "def:ephemeral thing" is a word plus a typo, not a
-# phrase the dictionary has an entry for.
-word="${word%% *}"
-[[ ${#word} -lt 2 ]] && exit 0
+term="${query#"${query%%[![:space:]]*}"}"
+term="${term%"${term##*[![:space:]]}"}"
+# Punctuation is what a sentence ends with, not what a word is spelled with.
+term="${term%%[.,;:!?]}"
+term="${term#\"}"; term="${term%\"}"
+term=$(sed -E 's/[[:space:]]+/ /g' <<<"$term")
+[[ ${#term} -lt 2 ]] && exit 0
 
-# A word, not a path and not a query string. Anything else is either a typo in
-# progress or an attempt to build a URL out of the search box.
-[[ $word =~ ^[A-Za-z][A-Za-z\'-]*$ ]] || exit 0
+# A word or a short phrase, not a path and not a query string. Anything else is
+# either a typo in progress or an attempt to build a URL out of the search box.
+[[ $term =~ ^[[:alpha:]][[:alpha:]\'\ -]*$ ]] || exit 0
+# Four words is a sentence, and the dictionary is not indexed by sentences.
+[[ $(tr -cd ' ' <<<"$term" | wc -c) -le 2 ]] || exit 0
 
-lower="${word,,}"
+lower="${term,,}"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/define"
-cache="$cache_dir/$lower.json"
 
-body=""
 # `settings:` writes this into omacast.json and the launcher hands it over in
 # the environment. Thirty days when nobody has said otherwise: a definition does
 # not change, and the cache exists so the second lookup of a word is instant.
 cache_days="${OMACAST_CACHEDAYS:-30}"
 [[ $cache_days =~ ^[0-9]+$ ]] || cache_days=30
 
-if [[ -f $cache ]] && [[ -z $(find "$cache" -mtime +"$cache_days" -print -quit 2>/dev/null) ]]; then
-  body=$(<"$cache")
-fi
+# The most words the cache is allowed to hold. Expiry alone does not bound a
+# directory: `find -mtime` decided what to *serve* and nothing ever decided what
+# to *delete*, so every word anybody ever looked up stayed on disk forever. A
+# word is a few kilobytes and 500 is more vocabulary than a month of looking
+# things up produces, so in practice the expiry below does all the work and this
+# is only here so a bad afternoon cannot fill a disk.
+cache_max=500
 
-if [[ -z $body ]]; then
+# Called after a word is written, and only then: a run that answers from the
+# cache should cost no more than reading one file. Expired entries go first,
+# because that is the same rule the read side already applies; if the directory
+# is still over the ceiling after that, the oldest go until it is not.
+prune_cache() {
+  find "$cache_dir" -maxdepth 1 -name '*.json' -mtime +"$cache_days" -delete 2>/dev/null
+
+  local count
+  count=$(find "$cache_dir" -maxdepth 1 -name '*.json' -printf . 2>/dev/null | wc -c)
+  ((count > cache_max)) || return 0
+
+  find "$cache_dir" -maxdepth 1 -name '*.json' -printf '%T@\t%p\n' 2>/dev/null |
+    sort -n | head -n "$((count - cache_max))" | cut -f2- |
+    tr '\n' '\0' | xargs -0 -r rm -f -- 2>/dev/null
+}
+
+# A lookup, through the cache. Sets `body` and returns 0 only when the answer is
+# a real entry: the API's "no definitions found" is an object rather than an
+# array, and a timeout is nothing at all.
+#
+# `reached` tells a miss apart from an outage. A word with no entry is an answer
+# and worth saying out loud; a dictionary that could not be reached is not, and
+# the two must not print the same row.
+body=""
+reached=""
+# Every miss is a request, and a word with three stems and a spelling guess
+# behind it would be five of them on one keystroke. Four is the ceiling; the
+# cache means it is only ever paid once per word.
+budget=4
+dead=""
+lookup() {
+  local w="${1,,}" cache slug
+  slug="${w// /_}"
+  cache="$cache_dir/$slug.json"
+
+  if [[ -f $cache ]] && [[ -z $(find "$cache" -mtime +"$cache_days" -print -quit 2>/dev/null) ]]; then
+    body=$(<"$cache")
+    reached="yes"
+    jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+
+  [[ -n $dead ]] && return 1
+  ((budget-- > 0)) || return 1
   body=$(curl -sS --max-time 6 --compressed \
-    "https://api.dictionaryapi.dev/api/v2/entries/en/$lower" 2>/dev/null)
-  # Only a real answer is worth keeping. A timeout cached for a month is worse
-  # than no cache at all.
-  if [[ -n $body ]] && jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
-    mkdir -p "$cache_dir" 2>/dev/null && printf '%s' "$body" >"$cache" 2>/dev/null
+    "https://api.dictionaryapi.dev/api/v2/entries/en/${w// /%20}" 2>/dev/null)
+  # Nothing back at all is the network, not the word. Trying the next stem
+  # would be another six seconds spent finding out the same thing.
+  if [[ -z $body ]]; then
+    dead="yes"
+    return 1
+  fi
+  reached="yes"
+
+  if jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
+    # Only a real answer is worth keeping. A timeout cached for a month is
+    # worse than no cache at all.
+    if mkdir -p "$cache_dir" 2>/dev/null && printf '%s' "$body" >"$cache" 2>/dev/null; then
+      prune_cache
+    fi
+    return 0
+  fi
+  return 1
+}
+
+# The spellings a word has that the dictionary does not: plurals, tenses,
+# comparatives and adverbs, in the order they are worth trying. Every one of
+# them is checked against the dictionary before it is shown, so a stem that
+# happens to be a different word only ever appears with its own entry attached.
+stems() {
+  local w="$1" n=${#1} last
+  [[ $w == *"'s" ]] && printf '%s\n' "${w%\'s}"
+  case $w in
+    *ies) ((n > 4)) && printf '%s\n' "${w%ies}y" ;;
+    *sses | *shes | *ches | *xes | *zes) ((n > 4)) && printf '%s\n' "${w%es}" ;;
+    *ss) ;;
+    *s) ((n > 3)) && printf '%s\n' "${w%s}" ;;
+  esac
+  case $w in
+    *iest) ((n > 5)) && printf '%s\n' "${w%iest}y" ;;
+    *est) ((n > 5)) && printf '%s\n' "${w%est}" "${w%st}" ;;
+  esac
+  case $w in
+    *ier) ((n > 4)) && printf '%s\n' "${w%ier}y" ;;
+    *er) ((n > 4)) && printf '%s\n' "${w%er}" "${w%r}" ;;
+  esac
+  case $w in
+    *ing)
+      ((n > 5)) || return 0
+      printf '%s\n' "${w%ing}" "${w%ing}e"
+      # "running" is "run" with the consonant doubled to keep the vowel short.
+      last="${w:n-4:1}"
+      [[ ${w:n-5:1} == "$last" ]] && printf '%s\n' "${w:0:n-4}"
+      ;;
+  esac
+  case $w in
+    *ied) ((n > 4)) && printf '%s\n' "${w%ied}y" ;;
+    *ed)
+      ((n > 3)) || return 0
+      printf '%s\n' "${w%ed}" "${w%d}"
+      last="${w:n-3:1}"
+      [[ ${w:n-4:1} == "$last" ]] && printf '%s\n' "${w:0:n-3}"
+      ;;
+  esac
+  case $w in
+    *ily) ((n > 4)) && printf '%s\n' "${w%ily}y" ;;
+    *ly) ((n > 4)) && printf '%s\n' "${w%ly}" ;;
+  esac
+}
+
+# Which spelling answered, when it was not the one that was typed.
+shown=""
+note=""
+
+try() {
+  local w="$1"
+  lookup "$w" || return 1
+  shown="$w"
+  [[ ${w,,} != "$lower" ]] && note="No entry for “$term” — showing “$w”"
+  return 0
+}
+
+found=""
+if try "$lower"; then
+  found="yes"
+else
+  # A hyphenated phrase and a spaced one are the same phrase to a reader.
+  if [[ -z $found && $lower == *-* ]]; then
+    try "${lower//-/ }" && found="yes"
+  fi
+  if [[ -z $found ]]; then
+    while IFS= read -r s; do
+      [[ -z $s || $s == "$lower" ]] && continue
+      try "$s" && { found="yes"; break; }
+    done < <(stems "$lower")
+  fi
+  # A phrase the dictionary does not carry is still worth answering by its
+  # head word, and the row says that is what happened.
+  if [[ -z $found && $lower == *" "* ]]; then
+    head="${lower%% *}"
+    if [[ ${#head} -ge 2 ]] && try "$head"; then
+      found="yes"
+      note="No entry for “$term” — showing “$head”"
+    fi
   fi
 fi
 
-[[ -z $body ]] && exit 0
+# How far apart two spellings are. A guess at what someone meant is only worth
+# showing when it is a typo away from what they typed: "recieve" and "receive"
+# are two edits apart, and "asdfghjkl" and "oesophageal" are not a guess, they
+# are a different word Datamuse thought rhymed.
+distance() {
+  awk -v a="$1" -v b="$2" '''BEGIN {
+    la = length(a); lb = length(b)
+    for (i = 0; i <= la; i++) d[i, 0] = i
+    for (j = 0; j <= lb; j++) d[0, j] = j
+    for (i = 1; i <= la; i++)
+      for (j = 1; j <= lb; j++) {
+        c = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+        m = d[i-1, j] + 1
+        if (d[i, j-1] + 1 < m) m = d[i, j-1] + 1
+        if (d[i-1, j-1] + c < m) m = d[i-1, j-1] + c
+        d[i, j] = m
+      }
+    print d[la, lb]
+  }''' </dev/null
+}
 
-# Not an array means the API's "no definitions found" object, which is the one
-# case worth answering out loud: silence here reads as a broken keyword.
-if ! jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
-  jq -cn --arg w "$word" \
-    --arg e "xdg-open $(printf '%q' "https://www.google.com/search?q=define+$lower")" \
+near() {
+  local a="$1" b="$2" gap
+  [[ ${a:0:1} == "${b:0:1}" ]] || return 1
+  gap=$(( ${#a} - ${#b} )); ((gap < 0)) && gap=$(( -gap ))
+  ((gap <= 2)) || return 1
+  (( $(distance "$a" "$b") <= 2 ))
+}
+
+# One guess at a spelling, and only after the guess has been looked up and
+# found real. Datamuse is keyless and its first candidate is usually the word
+# itself, which is why the query is skipped over rather than trusted.
+if [[ -z $found && -n $reached && $lower != *" "* && ${#lower} -ge 4 ]]; then
+  while IFS= read -r cand; do
+    [[ -z $cand || $cand == "$lower" ]] && continue
+    near "$lower" "$cand" || continue
+    if lookup "$cand"; then
+      shown="$cand"
+      note="No entry for “$term” — did you mean “$cand”?"
+      found="yes"
+      break
+    fi
+  done < <(curl -sS --max-time 3 \
+    "https://api.datamuse.com/words?sl=${lower// /%20}&max=4" 2>/dev/null |
+    jq -r '.[]?.word // empty' 2>/dev/null | head -n 3)
+fi
+
+# The dictionary could not be reached at all. Silence here reads as a broken
+# keyword, and it is the one thing a person can act on: they know why.
+if [[ -z $found && -z $reached ]]; then
+  jq -cn --arg w "$term" \
+    '{id: "def-offline", title: "Dictionary unreachable",
+      subtitle: ("Could not look up “" + $w + "”"),
+      detail: "No network, or api.dictionaryapi.dev is down",
+      preview: ("Could not reach api.dictionaryapi.dev to look up “" + $w + "”.\n\nWords looked up before are still answered from the cache."),
+      score: 90000, view: "split", glyph: "",
+      actions: []}'
+  exit 0
+fi
+
+# No entry, under any spelling. Worth answering out loud rather than going
+# quiet: the dictionary was reached and it said no, which is a different thing
+# from the keyword not working.
+if [[ -z $found ]]; then
+  jq -cn --arg w "$term" \
+    --arg e "xdg-open $(printf '%q' "https://www.google.com/search?q=define+${lower// /+}")" \
     '{id: "def-none", title: ("No definition for \"" + $w + "\""),
       subtitle: "Dictionary", detail: "Enter searches the web instead",
       preview: ("No dictionary entry for \"" + $w + "\".\n\nEnter searches the web for it."),
@@ -76,7 +289,7 @@ if ! jq -e 'type == "array" and length > 0' <<<"$body" >/dev/null 2>&1; then
   exit 0
 fi
 
-jq -c '
+jq -c --arg note "$note" '
   # The API repeats a meaning-level synonym list on every definition under it,
   # so the two are merged and deduplicated rather than shown twice.
   def joinlist: map(select(. != null and . != "")) | unique | join(", ");
@@ -114,7 +327,8 @@ jq -c '
       | ([ .word,
            (if .ipa != "" then .ipa else empty end),
            .pos ] | join("   ")) as $head
-      | ([ $head,
+      | ([ (if $note != "" then $note + "\n" else empty end),
+           $head,
            "",
            .text,
            (if .example != "" then "\n“" + .example + "”" else empty end),
@@ -125,7 +339,11 @@ jq -c '
       | { id: ("def-" + (.pos) + "-" + ($i | tostring)),
           title: $title,
           subtitle: .text,
-          detail: (if .syn != "" then "syn. " + .syn else .pos end),
+          # The strip beside the pane is the only place a row can say it is
+          # answering a spelling other than the one that was typed.
+          detail: (if $note != "" then $note
+                   elif .syn != "" then "syn. " + .syn
+                   else .pos end),
           preview: $preview,
           exec: $copy,
           score: (95000 - $i * 100),

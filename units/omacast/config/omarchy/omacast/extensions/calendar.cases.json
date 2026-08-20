@@ -1,0 +1,148 @@
+[
+  { "why": "nothing typed is this month, with last and next a tab away",
+    "query": "", "minRows": 3, "view": "calendar",
+    "fields": ["title", "accessory", "year", "month", "weekStart", "exec"],
+    "matches": { "title": "^[A-Z][a-z]+ [0-9]{4}$", "accessory": "^This month$" } },
+
+  { "why": "the circle only lands on the month today is in",
+    "query": "", "minRows": 3, "row": 1,
+    "fields": ["title", "accessory"],
+    "matches": { "accessory": "^Next$", "today": "^0$" } },
+
+  { "why": "a month and a year draws that month",
+    "query": "december 2027", "minRows": 1, "view": "calendar",
+    "fields": ["title", "year", "month"],
+    "matches": { "title": "^December 2027$", "year": "^2027$", "month": "^12$" } },
+
+  { "why": "an abbreviated month with a year",
+    "query": "nov 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^November 2027$" } },
+
+  { "why": "the same month written as numbers, which was silent",
+    "query": "2027-11", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^November 2027$" } },
+
+  { "why": "and the other way round, which was also silent",
+    "query": "11/2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^November 2027$" } },
+
+  { "why": "a year is twelve months, one tab each",
+    "query": "2027", "minRows": 12, "view": "calendar",
+    "fields": ["title", "accessory"],
+    "matches": { "title": "^January 2027$", "accessory": "^Jan$" } },
+
+  { "why": "the last of the twelve is December, not a thirteenth month",
+    "query": "2027", "minRows": 12, "row": 11,
+    "fields": ["title"],
+    "matches": { "title": "^December 2027$" } },
+
+  { "why": "a bare month name drew a month eight months gone without saying so: the next one leads",
+    "query": "december", "minRows": 2, "view": "calendar",
+    "fields": ["title", "accessory"],
+    "matches": { "title": "^December [0-9]{4}$", "accessory": "^[0-9]{4}$" } },
+
+  { "why": "the other year is a tab rather than a retype",
+    "query": "december", "minRows": 2, "row": 1,
+    "fields": ["title", "accessory"],
+    "matches": { "title": "^December [0-9]{4}$" } },
+
+  { "why": "a holiday draws its month with the day dotted, using the reader `date:` uses",
+    "query": "christmas", "minRows": 1, "view": "calendar",
+    "fields": ["title", "marks", "subtitle"],
+    "matches": { "title": "^December [0-9]{4}$", "marks": "^\\[25\\]$",
+                 "subtitle": "25 December$" } },
+
+  { "why": "so does a computed one, in the year asked for",
+    "query": "easter 2028", "minRows": 1,
+    "fields": ["title", "marks"],
+    "matches": { "title": "^April 2028$", "marks": "^\\[16\\]$" } },
+
+  { "why": "an explicit date is a day in a month",
+    "query": "25/12/2026", "minRows": 1,
+    "fields": ["title", "marks"],
+    "matches": { "title": "^December 2026$", "marks": "^\\[25\\]$" } },
+
+  { "why": "a week is seven dots, not one",
+    "query": "week 34 2027", "minRows": 1,
+    "fields": ["title", "marks"],
+    "matches": { "title": "^August 2027$", "marks": "^\\[23(, [0-9]+){6}\\]$" } },
+
+  { "why": "next week is seven dots too, wherever in the month it falls",
+    "query": "next week", "minRows": 1,
+    "fields": ["title", "marks"],
+    "matches": { "marks": "^\\[[0-9]+(, [0-9]+){6}\\]$" } },
+
+  { "why": "a range shorter than a month dots every day of it",
+    "query": "from 1 jan 2027 to 10 jan 2027", "minRows": 1,
+    "fields": ["title", "marks"],
+    "matches": { "title": "^January 2027$", "marks": "^\\[1(, [0-9]+){9}\\]$" } },
+
+  { "why": "a quarter is three months and no dots: every square marked is nothing marked",
+    "query": "q3 2027", "minRows": 3, "view": "calendar",
+    "fields": ["title"],
+    "absent": ["marks"],
+    "matches": { "title": "^July 2027$" } },
+
+  { "why": "the third of those months is September",
+    "query": "q3 2027", "minRows": 3, "row": 2,
+    "fields": ["title"],
+    "matches": { "title": "^September 2027$" } },
+
+  { "why": "a month asked for by where it sits is the month, not a day inside it",
+    "query": "next month", "minRows": 1,
+    "fields": ["title"],
+    "absent": ["marks"],
+    "matches": { "title": "^[A-Z][a-z]+ [0-9]{4}$" } },
+
+  { "why": "the month before this one, the same way",
+    "query": "last month", "minRows": 1,
+    "fields": ["title"],
+    "absent": ["marks"] },
+
+  { "why": "a bare weekday is a day here, because `cal:` is typed on purpose",
+    "query": "sat", "minRows": 1,
+    "fields": ["title", "marks", "subtitle"],
+    "matches": { "subtitle": "^Saturday " } },
+
+  { "why": "tomorrow is one dot",
+    "query": "tomorrow", "minRows": 1,
+    "fields": ["marks"],
+    "matches": { "marks": "^\\[[0-9]+\\]$" } },
+
+  { "why": "the month names of the language this desktop is used in",
+    "query": "dezembro", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^December [0-9]{4}$" } },
+
+  { "why": "and with a year behind them",
+    "query": "setembro 2027", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^September 2027$" } },
+
+  { "why": "a month long past still draws, because a year was named",
+    "query": "march 2020", "minRows": 1,
+    "fields": ["title"],
+    "matches": { "title": "^March 2020$" } },
+
+  { "why": "the row copies the month, not the grid",
+    "query": "december 2027", "minRows": 1,
+    "fields": ["exec"],
+    "matches": { "exec": "^printf %s 2027-12 \\| wl-copy$" } },
+
+  { "why": "which day the week starts on is a locale question, and the row carries the answer",
+    "query": "december 2027", "minRows": 1,
+    "fields": ["weekStart"],
+    "matches": { "weekStart": "^[01]$" } },
+
+  { "why": "a word that is not a date is not a month",
+    "query": "firefox", "maxRows": 0, "fields": [] },
+
+  { "why": "a number that is not a year is not a year",
+    "query": "99999", "maxRows": 0, "fields": [] },
+
+  { "why": "and neither is zero",
+    "query": "0", "maxRows": 0, "fields": [] }
+]

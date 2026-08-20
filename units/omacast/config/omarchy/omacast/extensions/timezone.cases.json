@@ -150,5 +150,330 @@
     "matches": {
       "title": "No timezone matches"
     }
+  },
+  {
+    "why": "Etc/GMT+2 is two hours behind UTC: `tz:gmt+2` answered with UTC-2 under a row headed GMT+2",
+    "query": "gmt+2",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "title",
+      "detail",
+      "zoneid"
+    ],
+    "matches": {
+      "title": "^[0-9]{2}:[0-9]{2}$",
+      "detail": "^UTC\\+2"
+    }
+  },
+  {
+    "why": "an offset written with utc reads the same way",
+    "query": "utc+5",
+    "minRows": 1,
+    "fields": [
+      "detail"
+    ],
+    "matches": {
+      "detail": "^UTC\\+5"
+    }
+  },
+  {
+    "why": "and a negative one",
+    "query": "gmt-3",
+    "minRows": 1,
+    "fields": [
+      "detail"
+    ],
+    "matches": {
+      "detail": "^UTC-3"
+    }
+  },
+  {
+    "why": "zero is UTC rather than a zone named Etc/GMT-0 that does not exist",
+    "query": "utc+0",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^UTC$"
+    }
+  },
+  {
+    "why": "a half-hour offset has no Etc zone, so it says so rather than rounding to the wrong hour",
+    "query": "+05:30",
+    "minRows": 1,
+    "fields": [
+      "title",
+      "detail"
+    ],
+    "matches": {
+      "title": "^No zone is exactly",
+      "detail": "whole hours"
+    }
+  },
+  {
+    "why": "two letters inside a city name is not a match: `tz:of` answered with Sofia",
+    "query": "of",
+    "minRows": 1,
+    "fields": [
+      "title"
+    ],
+    "matches": {
+      "title": "^No timezone matches"
+    }
+  },
+  {
+    "why": "two places is a comparison, and the grid is what a comparison looks like",
+    "query": "tokyo vs london",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people",
+      "title"
+    ],
+    "matches": {
+      "people": "Tokyo"
+    }
+  },
+  {
+    "why": "'and' joins them the same way",
+    "query": "tokyo and london",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ],
+    "matches": {
+      "people": "London"
+    }
+  },
+  {
+    "why": "so does nothing at all between them",
+    "query": "tokyo london",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ],
+    "matches": {
+      "people": "London"
+    }
+  },
+  {
+    "why": "`tz:tokyo to london` showed London's clock and never mentioned Tokyo",
+    "query": "tokyo to london",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ],
+    "matches": {
+      "people": "Tokyo"
+    }
+  },
+  {
+    "why": "three places, one of them two words, still one grid",
+    "query": "london new york tokyo",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ],
+    "matches": {
+      "people": "New York"
+    }
+  },
+  {
+    "why": "'me' puts you into a comparison of places, as it does into one of people",
+    "query": "me tokyo",
+    "minRows": 1,
+    "view": "timegrid",
+    "fields": [
+      "people"
+    ],
+    "matches": {
+      "people": "Tokyo"
+    }
+  },
+  {
+    "why": "the question as it gets typed: `tz:` is reached by typing `time`",
+    "query": "what time is it in tokyo",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "with the question mark still on it",
+    "query": "what time is it in tokyo?",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "`time:in tokyo` answered 'No timezone matches time'",
+    "query": "time in tokyo",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "and the same query as the alias leaves it",
+    "query": "in tokyo",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "only wrapping and no question is not a question",
+    "query": "time",
+    "maxRows": 0,
+    "fields": []
+  },
+  {
+    "why": "the place before the time reads the same as the time before the place",
+    "query": "tokyo 3pm",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "detail"
+    ],
+    "matches": {
+      "detail": "from 15:00"
+    }
+  },
+  {
+    "why": "the ordinary order, unchanged",
+    "query": "3pm in tokyo",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "detail"
+    ],
+    "matches": {
+      "detail": "from 15:00 your time"
+    }
+  },
+  {
+    "why": "a weekday in front of a time was refused, and it is how a meeting gets asked about",
+    "query": "monday 9am in tokyo",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "detail"
+    ],
+    "matches": {
+      "detail": "from 09:00"
+    }
+  },
+  {
+    "why": "two 'in's in one sentence: the leftover joining word comes out rather than failing",
+    "query": "3pm in tokyo in london",
+    "minRows": 1,
+    "view": "hero",
+    "fields": [
+      "zoneid",
+      "detail"
+    ],
+    "matches": {
+      "zoneid": "^Europe/London$",
+      "detail": "from 15:00 in Asia/Tokyo"
+    }
+  },
+  {
+    "why": "a city the IANA list does not carry, under the name people call it",
+    "query": "bangalore",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Kolkata$"
+    }
+  },
+  {
+    "why": "a city whose name is a common word still answers, because `tz:` is typed on purpose",
+    "query": "nice",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Europe/Paris$"
+    }
+  },
+  {
+    "why": "and one abbreviated the way locals abbreviate it",
+    "query": "rio",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^America/Sao_Paulo$"
+    }
+  },
+  {
+    "why": "'us' is a country here, not the pronoun",
+    "query": "us",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^America/New_York$"
+    }
+  },
+  {
+    "why": "an abbreviation is a zone",
+    "query": "jst",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "a country resolves to the city people in it mean, still",
+    "query": "japan",
+    "minRows": 1,
+    "fields": [
+      "zoneid"
+    ],
+    "matches": {
+      "zoneid": "^Asia/Tokyo$"
+    }
+  },
+  {
+    "why": "noon is a time, and a time with no place goes to every zone",
+    "query": "noon",
+    "minRows": 2,
+    "view": "zones",
+    "fields": [
+      "clock",
+      "zoneid"
+    ],
+    "matches": {
+      "clock": "^[0-9]{2}:[0-9]{2}$"
+    }
   }
 ]

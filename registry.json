@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "776e9a764d0e77b5efab40f51351ca0f0513400c",
+  "generated_at_commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
   "units": {
     "better-workspaces": {
       "name": "better-workspaces",
@@ -30,8 +30,8 @@
       "path": "units/better-workspaces",
       "files": 6,
       "hash": "64c13bad0462fb4092162417a0ac9de16fed2dcae2d3b70b6c685b4eb5503580",
-      "commit": "3f87ceb9513fa2a8da0b74808b4932bcca61a72d",
-      "updated": "2026-08-19T03:57:40-03:00",
+      "commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
+      "updated": "2026-08-20T04:37:45-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "nkz-keys": {
@@ -57,8 +57,8 @@
       "path": "units/nkz-keys",
       "files": 5,
       "hash": "47fe8d45320e3c65bf4d25a6f9b0f8b17a8e5ba7faa3215bd1ac86b36718ca33",
-      "commit": "ffdcdb9e113952882e67ff5f1c6995b12db21834",
-      "updated": "2026-08-19T05:19:08-03:00",
+      "commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
+      "updated": "2026-08-20T04:37:45-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omacast": {
@@ -88,10 +88,10 @@
       ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 163,
-      "hash": "b2d297eacabe894d77adb55166ca2f9e477e847319a581b0c4bf807c0604afad",
-      "commit": "776e9a764d0e77b5efab40f51351ca0f0513400c",
-      "updated": "2026-08-20T04:37:28-03:00",
+      "files": 168,
+      "hash": "bdb7e3aeab5c63d159436747824a940f537d026ae8260b8216a869067b014ee7",
+      "commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
+      "updated": "2026-08-20T04:37:45-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
@@ -117,8 +117,8 @@
       "path": "units/undo-close",
       "files": 5,
       "hash": "6d29e875ca8f6f763267e3fc06e454f7f7b75c9893320bc808bd1a5408414091",
-      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
-      "updated": "2026-08-18T19:50:40-03:00",
+      "commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
+      "updated": "2026-08-20T04:37:45-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "zen-mode": {
@@ -138,8 +138,8 @@
       "path": "units/zen-mode",
       "files": 3,
       "hash": "f7dfd2989efd0dedb786e373605342d24d607abecc767e8a62418e2c27d72a14",
-      "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
-      "updated": "2026-08-18T19:50:40-03:00",
+      "commit": "896c28103ed5bfcaf0d77ce420abbe57c6c4228a",
+      "updated": "2026-08-20T04:37:45-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     }
   }
