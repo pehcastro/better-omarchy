@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits a slider row for OmaCast's `bri:` keyword: screen brightness on the
+# Emits a slider row for Omacast's `bri:` keyword: screen brightness on the
 # focused display.
 #
 #   bri:             the slider

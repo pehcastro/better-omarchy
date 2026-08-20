@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `recent:` keyword: the files you opened lately.
+# Emits JSON rows for Omacast's `recent:` keyword: the files you opened lately.
 #
 #   recent:            everything still on disk, newest first
 #   recent:invoice     the ones whose name or folder matches

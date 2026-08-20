@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `bo:` keyword: the better-omarchy marketplace,
+# Emits JSON rows for Omacast's `bo:` keyword: the better-omarchy marketplace,
 # browsable and switchable from inside the launcher.
 #
 #   bo:                  home: the marketplaces, and the units you have

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `theme:` keyword: switch theme by name.
+# Emits JSON rows for Omacast's `theme:` keyword: switch theme by name.
 #
 #   theme:            the current theme first, then the rest, one screenful
 #   theme:tokyo       the ones that match

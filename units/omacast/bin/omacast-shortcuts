@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `shortcuts:` keyword: every key that is bound on
+# Emits JSON rows for Omacast's `shortcuts:` keyword: every key that is bound on
 # this machine, drawn as a keymap rather than as a list.
 #
 #   shortcuts:              everything, grouped by modifier family
@@ -24,7 +24,7 @@
 #
 # The launcher's own keys are in neither source. Ctrl+K, Ctrl+1 to Ctrl+9 and
 # Escape live in Launcher.qml's key handler and Hyprland has never heard of
-# them. They are listed too, marked OmaCast, because somebody asking what a key
+# them. They are listed too, marked Omacast, because somebody asking what a key
 # does does not care which program owns it.
 #
 # Enter copies the combination in the form hyprland.lua wants. It does not fire
@@ -112,7 +112,7 @@ hyprctl_binds() {
 # Ctrl+1 to Ctrl+9 is nine bindings and one idea, so it is one row. Nine rows of
 # "Run result N" would be four percent of the keymap saying the same thing.
 omacast_binds() {
-  printf 'OmaCast\t%s\t%s\t%s\n' \
+  printf 'Omacast\t%s\t%s\t%s\n' \
     'CTRL'       'K'         'Actions for the selected result' \
     'CTRL'       'P'         'Pin or unpin the selected result' \
     'CTRL'       'N'         'Next result' \
@@ -284,7 +284,7 @@ omacast_binds() {
           # Nothing on a system row: a chip saying "System" on two hundred rows
           # out of two hundred and seventeen is furniture. The seventeen that
           # are not the system say so.
-          accessory: (if .scope == "OmaCast" then "OmaCast" else "" end),
+          accessory: (if .scope == "Omacast" then "Omacast" else "" end),
           view: "shortcuts",
           exec: $copyCombo,
           score: (99999 - $i),

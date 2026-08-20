@@ -20,7 +20,7 @@ import "Recents.js" as Recents
 import "Pins.js" as Pins
 import "Accent.js" as Accent
 
-// OmaCast: one box that answers with apps, arithmetic, Omarchy commands, or
+// Omacast: one box that answers with apps, arithmetic, Omarchy commands, or
 // the web.
 //
 // The shell injects `shell`, `manifest` and `omarchyPath` by name, calls

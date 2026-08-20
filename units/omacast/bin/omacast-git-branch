@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `branch:` keyword: every local branch of one
+# Emits JSON rows for Omacast's `branch:` keyword: every local branch of one
 # repo, with enough about each to pick one.
 #
 #   branch:              the repo you are in

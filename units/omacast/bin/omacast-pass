@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `pass:` keyword: your password store, or your
+# Emits JSON rows for Omacast's `pass:` keyword: your password store, or your
 # 1Password vaults, whichever is on the machine.
 #
 #   pass:            every entry

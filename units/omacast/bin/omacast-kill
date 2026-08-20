@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `kill:` keyword: find something that is
+# Emits JSON rows for Omacast's `kill:` keyword: find something that is
 # running, see what it is costing, and end it.
 #
 #   kill:           everything of yours that is running, dearest first

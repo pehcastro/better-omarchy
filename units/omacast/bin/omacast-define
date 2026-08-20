@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `def:` keyword: a dictionary and a thesaurus.
+# Emits JSON rows for Omacast's `def:` keyword: a dictionary and a thesaurus.
 #
 #   def:ephemeral     every sense, by part of speech, with synonyms
 #   def:set           the long ones too, because the pane can hold them

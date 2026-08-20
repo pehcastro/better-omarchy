@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `git:` keyword: the state of the repo you are
+# Emits JSON rows for Omacast's `git:` keyword: the state of the repo you are
 # in, without opening a terminal to ask.
 #
 #   git:            status, branch, recent commits, branches, stashes, remote

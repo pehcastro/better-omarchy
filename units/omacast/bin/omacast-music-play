@@ -49,7 +49,7 @@ open_uri() {
     sleep 1.5
 
     player_up || {
-      notify-send -u low "OmaCast" "Spotify did not start." 2>/dev/null
+      notify-send -u low "Omacast" "Spotify did not start." 2>/dev/null
       return 1
     }
   fi

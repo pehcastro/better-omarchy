@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `bt:` keyword: the devices you have paired, the
+# Emits JSON rows for Omacast's `bt:` keyword: the devices you have paired, the
 # ones the adapter can currently see, and which one you are connected to.
 #
 #   bt:              paired devices, connected first, then whatever is nearby

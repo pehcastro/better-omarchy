@@ -1,5 +1,5 @@
 #!/bin/bash
-# Music for OmaCast's `music:` keyword.
+# Music for Omacast's `music:` keyword.
 #
 #   music:                what is playing, as a player
 #   music:kind of blue    search a catalogue, then play or open the result

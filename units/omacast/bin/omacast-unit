@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `unit:` keyword: a unit conversion, through
+# Emits JSON rows for Omacast's `unit:` keyword: a unit conversion, through
 # qalc.
 #
 #   unit:20 miles in km        one answer, large

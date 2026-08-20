@@ -1,5 +1,5 @@
 #!/bin/bash
-# Internet radio for OmaCast's `radio:` keyword, from radio-browser.info.
+# Internet radio for Omacast's `radio:` keyword, from radio-browser.info.
 #
 #   radio:              what is playing, then the stations everybody votes for
 #   radio:fip           what is playing, then stations matching that name

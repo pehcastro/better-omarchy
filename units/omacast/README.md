@@ -252,7 +252,7 @@ so a stopped daemon hides the keyword instead of giving you an empty list.
 Hyprland reports an Omarchy Lua bind as dispatcher `__lua` with a number and
 reports a `code:` bind with no key at all. `hyprctl binds -j` is the fallback,
 and it can only report the binds that still carry a key. The launcher's own keys
-are in neither source, so they are listed too and marked OmaCast. Enter copies
+are in neither source, so they are listed too and marked Omacast. Enter copies
 the combination and never fires it.
 
 ### The launcher itself

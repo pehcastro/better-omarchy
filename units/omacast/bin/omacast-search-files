@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per line for OmaCast's `file:` keyword.
+# Emits one JSON row per line for Omacast's `file:` keyword.
 #
 #   file:report              anything called report
 #   file:report format:pdf   only PDFs

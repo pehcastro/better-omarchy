@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per container for OmaCast's `docker:` keyword, drawn by
+# Emits one JSON row per container for Omacast's `docker:` keyword, drawn by
 # the `docker` view rather than by the list.
 #
 #   docker:          every container, running ones first

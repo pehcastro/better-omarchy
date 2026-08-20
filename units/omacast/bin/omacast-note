@@ -1,5 +1,5 @@
 #!/bin/bash
-# Notes for OmaCast's `note:` keyword. One markdown file per note.
+# Notes for Omacast's `note:` keyword. One markdown file per note.
 #
 #   note:                       every note, newest first, with the count
 #   note:standup                notes whose title or text contains that

@@ -1,5 +1,5 @@
 #!/bin/bash
-# The record of what the calculator has already answered, for OmaCast's `calc:`
+# The record of what the calculator has already answered, for Omacast's `calc:`
 # keyword.
 #
 #   calc:            every answer you have kept, newest first

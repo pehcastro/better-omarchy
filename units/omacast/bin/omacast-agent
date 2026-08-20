@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OmaCast's `do:` keyword: a sentence in the search box, done by a local agent.
+"""Omacast's `do:` keyword: a sentence in the search box, done by a local agent.
 
     do: open a new workspace and split it into four terminals
     do: find every TODO in this repo and list them
@@ -138,7 +138,7 @@ AGENTS = [
 # what runs a sentence that has exactly one reading: the desk verbs, in the
 # order the card printed before Enter. It needs no CLI installed, so `do: open
 # four terminals` works on a machine with no agent at all.
-DIRECT = {"id": "omacast", "title": "OmaCast", "bin": "", "stream": "plan",
+DIRECT = {"id": "omacast", "title": "Omacast", "bin": "", "stream": "plan",
           "acts": True}
 
 # Pre-approved. Everything a person does at a desktop is here, including the

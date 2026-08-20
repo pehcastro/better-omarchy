@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per host in ~/.ssh/config for OmaCast's `ssh:` keyword.
+# Emits one JSON row per host in ~/.ssh/config for Omacast's `ssh:` keyword.
 #
 #   ssh:            every host you have written down
 #   ssh:prod        by alias, hostname or user

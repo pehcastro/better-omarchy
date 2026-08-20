@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `wifi:` keyword: what is in range, what you have
+# Emits JSON rows for Omacast's `wifi:` keyword: what is in range, what you have
 # saved, and which one you are on.
 #
 #   wifi:            every network in range, the active one first

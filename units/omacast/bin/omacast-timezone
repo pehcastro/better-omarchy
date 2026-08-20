@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `tz:` keyword: what time it is somewhere else,
+# Emits JSON rows for Omacast's `tz:` keyword: what time it is somewhere else,
 # and what a time here is there.
 #
 #   tz:                       every zone you configured, plus your own

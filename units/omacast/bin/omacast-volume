@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits slider rows for OmaCast's `vol:` keyword: output volume, input volume
+# Emits slider rows for Omacast's `vol:` keyword: output volume, input volume
 # and mute, dragged rather than nudged five percent at a time.
 #
 #   vol:             both sliders

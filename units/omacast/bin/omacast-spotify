@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per line for OmaCast's `sp:` keyword, from the Spotify
+# Emits one JSON row per line for Omacast's `sp:` keyword, from the Spotify
 # Web API, and runs the playback its own rows ask for.
 #
 #   sp:kind of blue                tracks first, then albums, then artists

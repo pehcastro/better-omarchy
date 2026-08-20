@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per coding agent for OmaCast's `herdr:` keyword, drawn by
+# Emits one JSON row per coding agent for Omacast's `herdr:` keyword, drawn by
 # the `herdr` view rather than by the list.
 #
 #   herdr:           every agent, the ones waiting on you first

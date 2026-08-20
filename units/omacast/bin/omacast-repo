@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per local git repository for OmaCast's `repo:` keyword.
+# Emits one JSON row per local git repository for Omacast's `repo:` keyword.
 #
 #   repo:                    every repo found, most recently touched first
 #   repo:oma                 by name or by path

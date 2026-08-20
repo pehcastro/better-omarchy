@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `alarm:` keyword: a reminder set in the
+# Emits JSON rows for Omacast's `alarm:` keyword: a reminder set in the
 # words people actually say.
 #
 #   alarm:30 minutes and 45 seconds tea is ready

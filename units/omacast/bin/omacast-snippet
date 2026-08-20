@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `snip:` keyword: text you keep retyping,
+# Emits JSON rows for Omacast's `snip:` keyword: text you keep retyping,
 # expanded into the clipboard.
 #
 #   snip:           every snippet

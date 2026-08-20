@@ -1,4 +1,4 @@
-# Writing an OmaCast extension
+# Writing an Omacast extension
 
 An extension is one JSON file in `~/.config/omarchy/omacast/extensions/`. It
 names a keyword and something that answers for it. There is no QML, nothing

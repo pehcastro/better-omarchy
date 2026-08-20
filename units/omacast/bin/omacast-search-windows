@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits one JSON row per open window for OmaCast's `win:` keyword.
+# Emits one JSON row per open window for Omacast's `win:` keyword.
 #
 #   win:            every window, grouped by the workspace it is on
 #   win:chrome      by class or title

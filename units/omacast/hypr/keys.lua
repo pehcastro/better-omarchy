@@ -1,4 +1,4 @@
--- What opens OmaCast.
+-- What opens Omacast.
 --
 -- Three presets, one line to switch. Editing this file is the whole
 -- configuration: nothing reads a setting, because a Hyprland keybinding has to
@@ -14,7 +14,7 @@
 local preset = "balanced"
 
 local function open_omacast(key)
-  o.bind(key, "OmaCast", "omarchy-shell shell toggle bo.omacast")
+  o.bind(key, "Omacast", "omarchy-shell shell toggle bo.omacast")
 end
 
 if preset == "additive" then

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `stash:` keyword: what is in this repo's
+# Emits JSON rows for Omacast's `stash:` keyword: what is in this repo's
 # stashes, without applying one to find out.
 #
 #   stash:               the repo you are in

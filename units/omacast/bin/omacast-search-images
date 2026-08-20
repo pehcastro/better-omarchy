@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows of images for OmaCast's `img:` keyword, one per line.
+# Emits JSON rows of images for Omacast's `img:` keyword, one per line.
 #
 #   img:            everything under the usual picture folders
 #   img:screenshot  by name

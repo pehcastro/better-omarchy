@@ -1,5 +1,5 @@
 #!/bin/bash
-# One time Spotify setup for OmaCast's `sp:` extension. Run it once by hand.
+# One time Spotify setup for Omacast's `sp:` extension. Run it once by hand.
 #
 #   omacast-spotify-auth                asks for the client id
 #   omacast-spotify-auth <client-id>    takes it as an argument

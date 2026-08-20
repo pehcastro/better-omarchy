@@ -1,5 +1,5 @@
 #!/bin/bash
-# Emits JSON rows for OmaCast's `emoji:` keyword: find an emoji by name and
+# Emits JSON rows for Omacast's `emoji:` keyword: find an emoji by name and
 # copy the character.
 #
 #   emoji:          a starting set worth having one keypress away

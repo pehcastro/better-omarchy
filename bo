@@ -4048,7 +4048,7 @@ TXT
 scaffold_extension_script() {
   scaffold_fill "$1" <<'SH'
 #!/bin/bash
-# Emits one JSON row per line for OmaCast's `@NAME@:` keyword.
+# Emits one JSON row per line for Omacast's `@NAME@:` keyword.
 #
 #   @NAME@:hello    one row, echoing hello back
 #   @NAME@:         the same row, with nothing typed yet
