@@ -27,6 +27,13 @@ and the real guarantee is that a person typed the sentence.
 on the card above the answer, and the next sentence continues the same session
 rather than starting a new one. `do: /new` starts over.
 
+**Some sentences never reach a model.** "open four terminals here", "go to
+workspace 3", "move this window to workspace 2": these have one reading, the
+desk verbs below do them in a fixed order, and a model in the middle turns a
+certainty into a coin flip. The card says which of the two it is and lists the
+steps before Enter, and anything that is not on that short list still goes to
+the agent.
+
 **Enter carries a token, not the sentence.** `search` writes down what it
 previewed, keyed by a hash. The row's command is `omacast-agent send <token>`,
 so no prose reaches a shell and nothing runs that was not on screen first.
@@ -35,19 +42,29 @@ so no prose reaches a shell and nothing runs that was not on screen first.
 parent of the agent process and kills the whole group, and a run whose card
 stops being asked about is killed a couple of seconds later as a backstop.
 
+**The conversation ends when you leave it.** What was said is held for as long
+as a card is asking to draw it, and a few seconds past that; then it is gone and
+`do:` opens on its examples again. Nothing is written to disk, because a list of
+old instructions on the opening screen is not history anybody asked to keep, and
+a run nothing was ever watching, such as `send` typed at a shell or these cases
+running, never enters the conversation in the first place.
+
 Subcommands:
 
     search <query>     one JSON row, for the launcher (cheap: never runs an agent)
     serve              the daemon: owns the agent process, answers the socket
     send <token>       start the instruction behind that token (called by Enter)
+    plan <token>       run that token's steps directly, with no model involved
     stop               stop whatever is running
     new                forget the conversation
     term <token>       hand the instruction to an interactive agent in a terminal
     desk <verb> ...    the desktop, with the Lua dispatchers already spelled right
 """
 
+import contextlib
 import errno
 import hashlib
+import io
 import json
 import os
 import re
@@ -71,9 +88,27 @@ PREVIEWS = os.path.join(STATE, "omacast-agent-previews.json")
 # command and the launcher runs it. This is the backstop for the launcher being
 # closed, killed, or crashing mid-run.
 GRACE = 2.5
+# How long a conversation outlives the last question about it. The card is a
+# chat while you are in it and a receipt for a few seconds after, and then it is
+# over: the launcher stops asking the moment it closes or you type a different
+# keyword, so this is what makes opening `do:` again start on the examples
+# instead of on what happened before lunch. Long enough that Escape and a
+# reopen to re-read an answer keeps it; short enough that nothing yesterday
+# survives. The agent forgets at the same moment the card does, so the sentence
+# after a break is not resuming a session with a transcript nobody can see.
+VISIT = 8.0
 # The daemon exists to hold one agent process and the conversation around it.
 # With neither, it is a few megabytes of nothing, so it leaves.
 IDLE_EXIT = 900.0
+
+# The preview store is a handshake, not a history: it holds what was drawn long
+# enough for Enter or Ctrl+K to name it, and every keystroke writes one, so an
+# entry has to be able to go stale on its own. A draft dies with the typing that
+# made it; one that was actually sent is the token behind a run and lives an
+# hour, which is longer than any card that could still be asking about it.
+PREVIEW_TTL = 600.0
+SENT_TTL = 3600.0
+PREVIEW_MAX = 16
 
 MAX_STEPS = 200
 MAX_ANSWER = 8000
@@ -98,6 +133,13 @@ AGENTS = [
     {"id": "gemini", "title": "Gemini", "bin": "gemini", "stream": "plain",
      "acts": False},
 ]
+
+# Not an agent, and named on the card so nobody mistakes it for one. This is
+# what runs a sentence that has exactly one reading: the desk verbs, in the
+# order the card printed before Enter. It needs no CLI installed, so `do: open
+# four terminals` works on a machine with no agent at all.
+DIRECT = {"id": "omacast", "title": "OmaCast", "bin": "", "stream": "plan",
+          "acts": True}
 
 # Pre-approved. Everything a person does at a desktop is here, including the
 # shell, because "open a new workspace and split it into four terminals" is a
@@ -141,6 +183,7 @@ DENIED = [
     # Itself. An agent that restarts the daemon it is streaming into loses the
     # card it was writing to, and one that starts another run makes two.
     "Bash(omacast-agent send:*)", "Bash(omacast-agent serve:*)",
+    "Bash(omacast-agent plan:*)",
     "Bash(omacast-agent stop:*)", "Bash(omacast-agent new:*)",
 ]
 
@@ -273,33 +316,67 @@ def short(text, n):
 
 # ------------------------------------------------------------ preview store
 
+def fresh(entry, now):
+    """Whether a preview is still worth honouring. A sentence typed and left
+    behind is not a standing offer to run it: an hour later the directory has
+    moved on and so has the person, and a token that still resolves is a way for
+    a stale row to start something nobody is looking at."""
+    if not isinstance(entry, dict) or not entry.get("instruction"):
+        return False
+    ttl = SENT_TTL if entry.get("sent") else PREVIEW_TTL
+    return now - float(entry.get("at") or 0) <= ttl
+
+
 def read_previews():
+    """The live tokens. Expiry happens here rather than only on write, so a
+    token that has aged out fails closed on the next `send` even if nothing has
+    been typed since."""
     try:
         with open(PREVIEWS, "r") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+    if not isinstance(data, dict):
+        return {}
+    now = time.time()
+    return {k: v for k, v in data.items() if fresh(v, now)}
 
 
-def remember_preview(token, entry):
-    """What the user has been shown, so `send <token>` can only start something
-    that was previewed. Bounded, because this is a record of the last few
-    things typed and not a history anybody asked to keep."""
-    data = read_previews()
-    if token in data:
-        return
-    data[token] = entry
-    if len(data) > 32:
-        oldest = sorted(data.items(), key=lambda kv: kv[1].get("at", 0))
-        for k, _ in oldest[:len(data) - 32]:
-            data.pop(k, None)
+def write_previews(data):
     os.makedirs(STATE, exist_ok=True)
     tmp = PREVIEWS + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(data, fh)
     os.chmod(tmp, 0o600)
     os.replace(tmp, PREVIEWS)
+
+
+def remember_preview(token, entry):
+    """What the user has been shown, so `send <token>` can only start something
+    that was previewed. Every keystroke lands here, half-typed prefixes and
+    all, so it is kept small on purpose: the expired ones are dropped on the way
+    in and only the newest sixteen survive. The one Enter needs is always the
+    one just written, so a low ceiling can never evict the row on screen."""
+    data = read_previews()
+    if token in data:
+        return
+    data[token] = entry
+    if len(data) > PREVIEW_MAX:
+        oldest = sorted(data.items(), key=lambda kv: kv[1].get("at", 0))
+        for k, _ in oldest[:len(data) - PREVIEW_MAX]:
+            data.pop(k, None)
+    write_previews(data)
+
+
+def mark_sent(token):
+    """This one became a run. Kept longer than a draft, because it is now the
+    only record of what the token behind a running card actually said."""
+    data = read_previews()
+    entry = data.get(token)
+    if not entry or entry.get("sent"):
+        return
+    entry["sent"] = int(time.time())
+    write_previews(data)
 
 
 # -------------------------------------------------------------------- rows
@@ -349,7 +426,11 @@ def missing_row(named, turns=None):
             "No agent CLI found. Install claude or codex."
     else:
         title = "No agent CLI found"
-        subtitle = "Install claude or codex and this keyword works."
+        # Not the whole truth any more: windows, workspaces, volume, brightness
+        # and themes are done here and need nothing installed. Only the
+        # sentences that have to be understood need an agent.
+        subtitle = "Windows, workspaces and settings still work. " \
+                   "Install claude or codex for the rest."
     return base_row(state="missing", title=title, subtitle=subtitle,
                     agentName=named or "", turns=turns or [])
 
@@ -372,7 +453,9 @@ def policy_row(agent, turns):
         denies=", ".join(
             sorted({re.sub(r"^Bash\(([^:]+).*$", r"\1", d) for d in DENIED})),
         hints=["Anything under 'needs a terminal' comes back refused, named,",
-               "and Ctrl+K re-runs the same sentence where you can approve it."],
+               "and Ctrl+K re-runs the same sentence where you can approve it.",
+               "Windows, workspaces and applications never reach a model:",
+               "those sentences are run here, the same way every time."],
     )
 
 
@@ -395,14 +478,19 @@ def special_row(agent, instruction, turns):
     return None
 
 
-def draft_row(agent, instruction, cwd, token, turns):
+def draft_row(agent, instruction, cwd, token, turns, plan=None):
     """What typing produces. Nothing has run: this is the sentence read back,
-    with the agent and the directory named, and Enter is what starts it."""
-    return base_row(
+    with the agent and the directory named, and Enter is what starts it.
+
+    A sentence with one certain reading says so and lists what Enter will do,
+    because "this will do exactly that" and "this will probably do that" are
+    different promises and a card that makes them look alike is lying about
+    one of them."""
+    row = base_row(
         state="draft",
         title=instruction,
-        subtitle=policy_line(agent),
-        agentName=agent["title"],
+        subtitle=policy_line(agent) if agent else "",
+        agentName=agent["title"] if agent else DIRECT["title"],
         cwd=tilde(cwd),
         draft=instruction,
         turns=turns,
@@ -421,6 +509,17 @@ def draft_row(agent, instruction, cwd, token, turns):
              "exec": "printf %s " + shlex.quote(instruction) + " | wl-copy"},
         ],
     )
+    if plan:
+        row["direct"] = True
+        row["plan"] = plan_labels(plan)
+        row["agentName"] = DIRECT["title"]
+        row["subtitle"] = "Done here, step by step, with no model involved"
+        if agent:
+            row["actions"][0]["title"] = "Hand it to the agent in a terminal"
+            row["actions"][0]["subtitle"] = "For the version of this that thinks"
+        else:
+            del row["actions"][0]
+    return row
 
 
 # ------------------------------------------------------------- one exchange
@@ -428,11 +527,15 @@ def draft_row(agent, instruction, cwd, token, turns):
 class Turn:
     """One thing the user said and everything that came back from it."""
 
-    def __init__(self, index, agent, text, cwd):
+    def __init__(self, index, agent, text, cwd, token=""):
         self.index = index
         self.agent = agent
         self.text = text
         self.cwd = cwd
+        # The token is carried so the run can be handed back the sentence
+        # without it ever being on a command line, direct or not.
+        self.token = token
+        self.direct = agent is DIRECT
         self.state = "running"
         self.steps = []
         self.answer = ""
@@ -458,7 +561,7 @@ class Turn:
             now = self.steps[-1]["text"]
             rest = self.steps[:-1]
         tail = rest[-TAIL:]
-        return {
+        seen = {
             "you": self.text,
             "state": self.state,
             "now": now,
@@ -472,6 +575,12 @@ class Turn:
             "elapsed": self.elapsed(),
             "startedAt": int(self.started),
         }
+        # Carried only when true, and the card says it in words. A run done
+        # here and a run a model did are different kinds of promise, and once
+        # the windows are up the difference is invisible.
+        if self.direct:
+            seen["direct"] = True
+        return seen
 
 
 # ------------------------------------------------------------- the run itself
@@ -489,11 +598,22 @@ class Run:
         self.pending = {}
         self.noise = []
         self.seen = time.time()
+        # Whether a card has ever asked about this run. False means it was
+        # started from a shell with no launcher attached, which happens every
+        # time the extension's own cases run, and such a run is not part of
+        # anybody's conversation: it leaves the transcript when it dies.
+        self.watched = False
 
     # ----- starting and stopping
 
     def command(self):
         a = self.agent
+        if self.turn.direct:
+            # Its own process, for the same reason an agent gets one: the
+            # daemon has to keep answering the card while windows are opening,
+            # and Escape has to be able to kill the whole group mid-plan.
+            return [sys.executable, os.path.abspath(__file__), "plan",
+                    self.turn.token]
         if a["id"] == "claude":
             # The instruction goes down stdin, not on the command line. Both
             # tool-list options are variadic, so anything after them is eaten as
@@ -527,18 +647,55 @@ class Run:
             # story: an agent forks compilers and greps, and killing the one pid
             # it told us about leaves those running.
             start_new_session=True)
+        if self.agent["id"] == "claude":
+            why = self.feed()
+            if why:
+                # Half an instruction is not a smaller version of the
+                # instruction. Whatever the agent makes of a fragment is not an
+                # answer to what was asked, and drawing it as one is how
+                # somebody reads a reply to three characters as a reply to
+                # their sentence.
+                self.kill(why)
+                self.turn.state = "failed"
+        else:
+            self.shut()
+        os.set_blocking(self.proc.stdout.fileno(), False)
+
+    def feed(self):
+        """The instruction down the pipe: all of it, or a reason it did not go.
+
+        The old spelling was `stdin.write(...)` inside a bare `except OSError:
+        pass`, with the close swallowed the same way. A buffered write reports
+        nothing at the time it is called, a flush that fails on a child that has
+        already gone reports it to the `close` nobody was listening to, and a
+        short write reports it by returning a smaller number. All three ended
+        here as a run that looked completely normal."""
+        data = self.turn.text.encode("utf-8")
+        sent = 0
         try:
-            if self.agent["id"] == "claude":
-                self.proc.stdin.write(self.turn.text.encode("utf-8"))
-        except OSError:
-            pass
-        # Closed straight away, so a CLI that reads stdin gets an instruction
-        # and an EOF rather than waiting for a terminal that is not there.
+            fd = self.proc.stdin.fileno()
+            while sent < len(data):
+                wrote = os.write(fd, data[sent:])
+                if not wrote:
+                    break
+                sent += wrote
+        except OSError as e:
+            return "only %d of %d characters of the instruction reached %s: %s" \
+                % (sent, len(data), self.agent["title"], e)
+        finally:
+            self.shut()
+        if sent < len(data):
+            return "only %d of %d characters of the instruction reached %s" \
+                % (sent, len(data), self.agent["title"])
+        return ""
+
+    def shut(self):
+        """Closed straight away, so a CLI that reads stdin gets an instruction
+        and an EOF rather than waiting for a terminal that is not there."""
         try:
             self.proc.stdin.close()
         except OSError:
             pass
-        os.set_blocking(self.proc.stdout.fileno(), False)
 
     def kill(self, why):
         if self.proc and self.proc.poll() is None:
@@ -561,6 +718,15 @@ class Run:
             self.turn.note = why
             self.turn.finished = time.time()
             self.close_open_steps()
+            # A stopped plan leaves the windows it already opened on screen, so
+            # the card says how many rather than ending on "stopped" and
+            # leaving somebody to count them.
+            if self.turn.direct and not self.turn.answer:
+                plan = plan_for(self.turn.text)
+                total = len(plan["steps"]) if plan else 0
+                done = sum(1 for e in self.turn.steps if e["state"] == "did")
+                self.turn.answer = "stopped after %d of %d steps" % (done, total) \
+                    if total else "stopped part way"
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -603,16 +769,53 @@ class Run:
             else:
                 self.turn.state = "failed"
                 if not self.turn.note:
-                    self.turn.note = " ".join(self.noise) if self.noise \
-                        else "%s exited %s" % (self.agent["title"], code)
+                    if self.noise:
+                        self.turn.note = " ".join(self.noise)
+                    elif self.turn.direct:
+                        self.turn.note = "the desktop did not take that step"
+                    else:
+                        self.turn.note = "%s exited %s" % (self.agent["title"],
+                                                           code)
             changed = True
         return changed
 
     def absorb(self, line):
-        if self.agent["stream"] == "claude":
+        if self.turn.direct:
+            self.absorb_plan(line)
+        elif self.agent["stream"] == "claude":
             self.absorb_claude(line)
         else:
             self.absorb_plain(line)
+
+    def absorb_plan(self, line):
+        """The deterministic runner's stream. Three events, because there are
+        only three things the card can say about a step: it started, it ended,
+        and here is what is now true."""
+        line = line.strip()
+        if not line:
+            return
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            self.noise.append(short(ANSI.sub("", line), 200))
+            del self.noise[:-4]
+            return
+        if not isinstance(ev, dict):
+            return
+        kind = ev.get("type")
+        if kind == "step":
+            self.turn.steps.append({"kind": "desk", "state": "doing",
+                                    "text": short(ev.get("text") or "", 90)})
+            del self.turn.steps[:-MAX_STEPS]
+        elif kind == "step_end":
+            for entry in reversed(self.turn.steps):
+                if entry["state"] == "doing":
+                    entry["state"] = "did" if ev.get("ok") else "failed"
+                    break
+            if not ev.get("ok") and ev.get("why"):
+                self.turn.note = short(ev["why"], 200)
+        elif kind == "result":
+            self.turn.answer = short(ev.get("result") or "", MAX_ANSWER)
 
     def absorb_plain(self, line):
         """No step list, because these CLIs do not publish one this can read.
@@ -764,6 +967,10 @@ class Daemon:
         self.session = ""
         self.clients = {}          # conn -> {"buf":bytes,"epoch":int,"query":str}
         self.last_touch = time.time()
+        # The last time a card asked what to draw. The socket cannot answer
+        # this: it is deliberately kept open across the launcher being closed,
+        # so a connection proves nothing and only a question does.
+        self.last_query = 0.0
         self.listener = None
         # An agent's stream is dozens of events a second, and every push makes
         # the launcher rebuild its rows. Coalesced to four a second, which is
@@ -774,6 +981,28 @@ class Daemon:
 
     def busy(self):
         return self.run is not None and self.run.turn.state == "running"
+
+    def forget(self, turn):
+        """Take a turn out of the conversation as though it had never been in
+        it. Its session goes with it: resuming from a run nobody saw is how the
+        next sentence inherits a context the card never showed."""
+        self.turns = [t for t in self.turns if t is not turn]
+        if self.run is not None and self.run.turn is turn:
+            self.run = None
+
+    def end_visit(self):
+        """A conversation lasts as long as somebody is in it. When no card has
+        asked for VISIT seconds the launcher is closed or somewhere else, and
+        what is held here stops being a chat and becomes a list of old runs on
+        the opening screen, which is the one thing this card should never be.
+        Nothing is written down: `do:` opens on its examples again."""
+        if self.busy() or not (self.turns or self.session):
+            return
+        if time.time() - self.last_query <= VISIT:
+            return
+        self.turns = []
+        self.run = None
+        self.session = ""
 
     def listen(self):
         os.makedirs(STATE, exist_ok=True)
@@ -815,10 +1044,30 @@ class Daemon:
                 # while a run is going, which must not leave an agent running
                 # with nowhere to show what it is doing.
                 if time.time() - self.run.seen > GRACE:
-                    self.run.kill("stopped: nothing was watching it")
+                    if self.run.watched:
+                        # A card was here and is gone. Worth saying, because
+                        # the answer is missing and the reason is not the
+                        # agent's: "nothing was watching it" named the
+                        # mechanism, this names what happened.
+                        self.run.kill("stopped when the launcher closed")
+                    else:
+                        # No card ever asked about this one: a `send` typed at
+                        # a shell, or the extension's own cases. It ran, it is
+                        # dead, and it never belonged to a conversation, so it
+                        # does not get to sit in one.
+                        turn = self.run.turn
+                        self.run.kill("")
+                        self.forget(turn)
                     self.dirty = True
-            elif self.run is not None and self.run.session:
-                self.session = self.run.session
+            elif self.run is not None:
+                if not self.run.watched:
+                    # It finished before the watchdog got to it. Same rule: a
+                    # run nothing ever asked about leaves nothing behind.
+                    self.forget(self.run.turn)
+                elif self.run.session:
+                    self.session = self.run.session
+
+            self.end_visit()
 
             if self.dirty and (time.time() - self.last_push >= 0.25
                                or not self.busy()):
@@ -904,14 +1153,20 @@ class Daemon:
         query = str(msg.get("query") or "")
         if not isinstance(epoch, int):
             return
+        # Asked before the heartbeat is refreshed, so a question arriving after
+        # a long silence is answered with a clean card rather than with the
+        # conversation it is about to end.
+        self.end_visit()
         state["epoch"] = epoch
         state["query"] = query
         # A question the launcher actually asked is the heartbeat. Refreshing it
         # from `rows()` instead looked identical and was not: pushing an answer
         # calls `rows()` too, so a run streaming output kept its own watchdog
         # alive and nothing ever timed out.
+        self.last_query = time.time()
         if self.run:
-            self.run.seen = time.time()
+            self.run.seen = self.last_query
+            self.run.watched = True
         self.send(conn, {"epoch": epoch, "query": query,
                          "rows": self.rows(query)})
 
@@ -921,8 +1176,12 @@ class Daemon:
     def rows(self, query):
         named, instruction = split_query(query)
         agent = pick_agent(named)
+        # A sentence with one reading is answered before the agent is, because
+        # it does not need one: naming an agent (`@codex open four terminals`)
+        # is the way to ask for the thinking version instead.
+        plan = None if named else plan_for(instruction)
 
-        if agent is None or agent.get("missing"):
+        if plan is None and (agent is None or agent.get("missing")):
             return [missing_row(named or "", self.transcript())]
 
         special = special_row(agent, instruction, self.transcript())
@@ -936,10 +1195,12 @@ class Daemon:
             return [row]
 
         cwd = workdir()
-        token = token_for(agent["id"], instruction, cwd)
-        remember_preview(token, {"agent": agent["id"], "instruction": instruction,
+        who = DIRECT["id"] if plan else agent["id"]
+        token = token_for(who, instruction, cwd)
+        remember_preview(token, {"agent": who, "instruction": instruction,
                                  "cwd": cwd, "at": int(time.time())})
-        return [draft_row(agent, instruction, cwd, token, self.transcript())]
+        return [draft_row(agent, instruction, cwd, token, self.transcript(),
+                          plan=plan)]
 
     def push(self):
         """Rows go out without being asked for, which is what makes this stream
@@ -953,12 +1214,18 @@ class Daemon:
                              "rows": self.rows(state["query"])})
 
     def start(self, token):
-        entry = read_previews().get(str(token or ""))
+        token = str(token or "")
+        entry = read_previews().get(token)
         if not entry:
             # A token nobody previewed. This is the one place the "Enter runs
             # what you were shown" promise is enforced, so it fails closed.
             return False
-        agent = pick_agent(entry.get("agent"))
+        # The preview said which of the two this is, and it is re-read rather
+        # than trusted: the plan is computed again from the sentence, so a token
+        # can only ever start the steps that sentence still means.
+        direct = entry.get("agent") == DIRECT["id"] \
+            and plan_for(entry["instruction"]) is not None
+        agent = DIRECT if direct else pick_agent(entry.get("agent"))
         if agent is None or agent.get("missing"):
             return False
         if self.run:
@@ -968,10 +1235,16 @@ class Daemon:
             if self.run.session:
                 self.session = self.run.session
 
-        turn = Turn(len(self.turns), agent, entry["instruction"], entry["cwd"])
+        mark_sent(token)
+        turn = Turn(len(self.turns), agent, entry["instruction"], entry["cwd"],
+                    token=token)
         self.turns.append(turn)
         del self.turns[:-MAX_TURNS]
         self.run = Run(turn, resume=self.session if agent["id"] == "claude" else "")
+        # Enter comes from a card that was asking a moment ago; a shell has not
+        # asked at all. That difference is the whole of whether this run is
+        # something the user is doing or something a script is doing.
+        self.run.watched = time.time() - self.last_query <= GRACE
         try:
             self.run.start()
         except OSError as e:
@@ -1037,7 +1310,8 @@ def local_rows(query):
     because there is no conversation to show when nothing has ever run."""
     named, instruction = split_query(query)
     agent = pick_agent(named)
-    if agent is None or agent.get("missing"):
+    plan = None if named else plan_for(instruction)
+    if plan is None and (agent is None or agent.get("missing")):
         return [missing_row(named or "")]
     special = special_row(agent, instruction, [])
     if special:
@@ -1045,10 +1319,11 @@ def local_rows(query):
     if not instruction:
         return [hint_row(agent, [])]
     cwd = workdir()
-    token = token_for(agent["id"], instruction, cwd)
-    remember_preview(token, {"agent": agent["id"], "instruction": instruction,
+    who = DIRECT["id"] if plan else agent["id"]
+    token = token_for(who, instruction, cwd)
+    remember_preview(token, {"agent": who, "instruction": instruction,
                              "cwd": cwd, "at": int(time.time())})
-    return [draft_row(agent, instruction, cwd, token, [])]
+    return [draft_row(agent, instruction, cwd, token, [], plan=plan)]
 
 
 def cmd_search(query):
@@ -1094,7 +1369,11 @@ def cmd_term(token):
     entry = read_previews().get(str(token or ""))
     if not entry:
         return 2
-    agent = pick_agent(entry.get("agent"))
+    # A sentence that was going to be run here goes to whichever agent is
+    # installed, because "in a terminal instead" is a request for the thinking
+    # version of it and there is nothing to think with otherwise.
+    named = entry.get("agent")
+    agent = pick_agent("" if named == DIRECT["id"] else named)
     if agent is None or agent.get("missing"):
         return 2
     inner = {
@@ -1317,11 +1596,20 @@ def desk_open(name, quiet=False):
     return 1
 
 
+def focus_biggest():
+    """Focus the pane with the most area, so the next window splits the biggest
+    thing on screen: four terminals come out two by two rather than one wide
+    column beside three stacked slivers."""
+    here = clients_on(active_workspace_id())
+    if not here:
+        return 0
+    biggest = max(here, key=lambda c: (c.get("size") or [0, 0])[0]
+                  * (c.get("size") or [0, 0])[1])
+    return dispatch('hl.dsp.focus({ window = "address:%s" })' % biggest["address"])
+
+
 def desk_tile(count, name):
-    """n windows, as square as this layout gets. Before each one after the
-    first, focus goes to the pane with the most area, so the split always cuts
-    the biggest thing on screen: four terminals come out two by two rather than
-    one wide column beside three stacked slivers."""
+    """n windows, as square as this layout gets."""
     try:
         count = int(count)
     except ValueError:
@@ -1333,15 +1621,9 @@ def desk_tile(count, name):
 
     for i in range(count):
         if i:
-            wid = active_workspace_id()
-            here = clients_on(wid)
-            if here:
-                biggest = max(here, key=lambda c: (c.get("size") or [0, 0])[0]
-                              * (c.get("size") or [0, 0])[1])
-                rc = dispatch('hl.dsp.focus({ window = "address:%s" })'
-                              % biggest["address"])
-                if rc != 0:
-                    return rc
+            rc = focus_biggest()
+            if rc != 0:
+                return rc
         rc = desk_open(name, quiet=True)
         if rc != 0:
             return rc
@@ -1405,6 +1687,418 @@ def cmd_desk(args):
     return usage("no such verb %r. `omacast-agent desk help`" % verb)
 
 
+# -------------------------------------------------- the one certain reading
+
+# Some sentences are already a command. "open four terminals here" has exactly
+# one meaning, the desk verbs above do it in a fixed order, and handing it to a
+# model turns that certainty into a coin flip: the same sentence came back as
+# four terminals one minute and as a workspace nobody asked for the next. So a
+# short list of shapes is matched here and run directly, and everything else
+# still goes to the agent.
+#
+# Three rules keep this from becoming a parser:
+#
+#   It matches whole sentences. A pattern has to consume every word. "open four
+#   terminals and run htop in each" is not "open four terminals" with something
+#   left over, it is a sentence for the agent.
+#
+#   Two readings means no match. "split this screen" could be a number of panes
+#   or a flip of the split direction, so it is not here. Nothing in this list
+#   asks the reader to guess.
+#
+#   It only names what it was told to name. Nothing here goes to a new
+#   workspace unless the sentence says so, because taking the screen away from
+#   what somebody is looking at is the loudest way to be wrong.
+
+# Nothing below reimplements anything. Every system sentence ends up calling
+# the same command the keyword for it already calls: `vol:` sets a level with
+# `omacast-volume set`, `bri:` with `omarchy-brightness-display`, `theme:` with
+# `omarchy theme set`. Those are written, tested and used every day, and a
+# second way to set the volume that is only reachable from `do:` would be a
+# second thing to keep right.
+
+NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+           "seven": 7, "eight": 8}
+COUNT = r"(?P<n>[1-8]|one|two|three|four|five|six|seven|eight)"
+# One word. An application whose name is two ("sublime text") is a sentence
+# with a space in it and a guess about where it ends, and a guess is what this
+# list exists to avoid.
+APP = r"(?P<app>[a-z0-9][a-z0-9._+-]{0,31})"
+# "here" is the only place this understands, and it is also the default. A
+# sentence that names anywhere else is not on this list.
+HERE = r"(?: here| on this workspace| in this workspace| on this screen)?"
+WS = r"(?P<ws>[1-9]|10)"
+DIRS = {"left": "l", "right": "r", "up": "u", "down": "d",
+        "above": "u", "below": "d"}
+
+_APPS = {}
+
+
+def app_known(name):
+    """Whether this word names something that starts. The whole guard on the
+    fast path for applications: if the name does not resolve to a command here,
+    the sentence is not a certainty and the agent gets it. Memoised because the
+    daemon answers this for every keystroke."""
+    key = " ".join(str(name or "").split()).lower()
+    if key not in _APPS:
+        _APPS[key] = app_command(key)
+    return _APPS[key] is not None
+
+
+def app_word(word, count):
+    """`terminals` is `terminal` when there are four of them. Only ever tried
+    when the plural does not resolve on its own, so an application whose own
+    name ends in s keeps it."""
+    word = " ".join(str(word or "").split()).lower()
+    if app_known(word):
+        return word
+    if count > 1 and word.endswith("s") and app_known(word[:-1]):
+        return word[:-1]
+    return None
+
+
+def count_of(text):
+    text = str(text or "").lower()
+    return NUMBERS.get(text, int(text) if text.isdigit() else 0)
+
+
+def normal(sentence):
+    """One space between words, no trailing punctuation, no `please`. Anything
+    more forgiving than this is the beginning of a parser."""
+    text = " ".join(str(sentence or "").split()).lower().strip()
+    text = text.rstrip(".!?")
+    text = re.sub(r"^please\s+", "", text)
+    text = re.sub(r"\s+please$", "", text)
+    return text.strip()
+
+
+def tile_steps(count, app):
+    """Opening n of something is n steps, not one. The card then names the
+    window it is on rather than sitting on `Open 4 terminals` for eight
+    seconds, and a run that dies halfway says how far it got."""
+    steps = []
+    for i in range(count):
+        steps.append({
+            "say": "Open %s%s" % (app, "" if count == 1
+                                  else " %d of %d" % (i + 1, count)),
+            "split": bool(i),
+            "app": app,
+        })
+    return steps
+
+
+def plan_for(sentence):
+    """The steps this sentence certainly means, or None. Pure: it reads the
+    application list and nothing else, so `search` can call it per keystroke
+    and the answer is the same every time it is asked."""
+    text = normal(sentence)
+    if not text:
+        return None
+
+    # open one application
+    m = re.fullmatch(r"(?:open|launch|start) (?:a |an |the )?" + APP, text)
+    if m:
+        app = app_word(m.group("app"), 1)
+        if app:
+            return {"steps": [{"say": "Open " + app, "argv": ["open", app]}],
+                    "done": app + " on workspace {ws}"}
+
+    # n of something, here, which is where you already are
+    m = re.fullmatch(r"(?:open |launch |start )?" + COUNT + r" " + APP
+                     + r"s?" + HERE, text)
+    if not m:
+        # The application is named on purpose: "split this screen into four"
+        # could be four panes of anything, and a default is a guess.
+        m = re.fullmatch(r"split (?:this|the|my) (?:screen|workspace|window) "
+                         r"(?:in|into) " + COUNT + r" " + APP + r"s?", text)
+    if m:
+        count = count_of(m.group("n"))
+        app = app_word(m.group("app"), count)
+        if app and 1 <= count <= 8:
+            return {"steps": tile_steps(count, app),
+                    "done": "%d %s%s on workspace {ws}"
+                            % (count, app, "" if count == 1 else "s")}
+
+    # a workspace with nothing on it, because that is what was asked for
+    m = re.fullmatch(r"(?:open|make|start|go to|give me) (?:a |an )?"
+                     r"(?:new |fresh |empty )+workspace", text)
+    if m:
+        return {"steps": [{"say": "Go to an empty workspace",
+                           "argv": ["empty"]}],
+                "done": "workspace {ws}, with nothing on it"}
+
+    # the example on the empty card: a new workspace, then fill it
+    m = re.fullmatch(r"(?:open|make|start) (?:a |an )?(?:new |fresh |empty )+"
+                     r"workspace and (?:split it into|open|put) " + COUNT
+                     + r" " + APP + r"s?(?: in it)?", text)
+    if m:
+        count = count_of(m.group("n"))
+        app = app_word(m.group("app"), count)
+        if app and 1 <= count <= 8:
+            return {"steps": [{"say": "Go to an empty workspace",
+                               "argv": ["empty"]}] + tile_steps(count, app),
+                    "done": "%d %s%s on workspace {ws}"
+                            % (count, app, "" if count == 1 else "s")}
+
+    # go to a numbered one
+    m = re.fullmatch(r"(?:go to|switch to|show me|open) workspace " + WS, text)
+    if m:
+        return {"steps": [{"say": "Go to workspace " + m.group("ws"),
+                           "argv": ["workspace", m.group("ws")]}],
+                "done": "workspace {ws}"}
+
+    # send this window somewhere
+    m = re.fullmatch(r"(?:move|send) (?:this|the current|the focused|"
+                     r"the active) window to workspace " + WS, text)
+    if m:
+        return {"steps": [{"say": "Move this window to workspace "
+                                  + m.group("ws"),
+                           "argv": ["move", m.group("ws")]}],
+                "done": "moved to workspace " + m.group("ws")}
+
+    # focus the neighbour
+    m = re.fullmatch(r"(?:focus|go)(?: to)? (?:the )?(?:window (?:to the |"
+                     r"on the |)?)?(?P<dir>left|right|up|down|above|below)",
+                     text)
+    if m:
+        where = m.group("dir")
+        return {"steps": [{"say": "Focus the window " + where,
+                           "argv": ["focus", DIRS[where]]}],
+                "done": "focus moved " + where}
+
+    return system_plan(text)
+
+
+def level(text):
+    """A percentage, or None. Anything outside 0 to 100 is not a level, it is a
+    sentence this list does not understand."""
+    n = int(text)
+    return n if 0 <= n <= 100 else None
+
+
+def one(say, run, done):
+    return {"steps": [{"say": say, "run": run}], "done": done}
+
+
+_THEMES = [0.0, []]
+
+
+def themes():
+    """The installed themes, from the command that installs and sets them.
+    Re-read once a minute, because a theme installed while the daemon is up
+    should not need the daemon restarted to be typeable."""
+    if time.time() - _THEMES[0] > 60:
+        try:
+            out = subprocess.run(["omarchy", "theme", "list"], timeout=4,
+                                 capture_output=True, text=True).stdout
+            _THEMES[1] = [t.strip() for t in out.splitlines() if t.strip()]
+        except Exception:
+            _THEMES[1] = []
+        _THEMES[0] = time.time()
+    return _THEMES[1]
+
+
+def theme_named(name):
+    name = " ".join(str(name or "").split()).lower()
+    for t in themes():
+        if t.lower() == name:
+            return t
+    return None
+
+
+def system_plan(text):
+    """The sentences that are not about windows: sound, screen, theme, lock.
+    Each one is a call to the script that keyword already uses."""
+
+    # sound, as a level
+    m = re.fullmatch(r"(?:set |turn |put )?(?:the )?(?P<who>mic|microphone|"
+                     r"input|volume|sound) ?(?:volume )?(?:to |at |on )?"
+                     r"(?P<n>\d{1,3})%?", text)
+    if m and which("omacast-volume"):
+        n = level(m.group("n"))
+        into = "input" if m.group("who") in ("mic", "microphone", "input") \
+            else "output"
+        if n is not None:
+            return one("Set the %s volume to %d%%"
+                       % ("microphone" if into == "input" else "speaker", n),
+                       ["omacast-volume", "set", into, str(n)],
+                       "%s volume at %d%%"
+                       % ("microphone" if into == "input" else "speaker", n))
+
+    # sound, as a step in the direction the volume keys go
+    m = re.fullmatch(r"(?:turn )?(?:the )?(?:volume|sound) (?P<way>up|down)"
+                     r"|(?P<w2>louder|quieter)", text)
+    if m and which("omarchy-audio-output-volume"):
+        way = m.group("way") or ("up" if m.group("w2") == "louder" else "down")
+        return one("Turn the volume " + way,
+                   ["omarchy-audio-output-volume",
+                    "raise" if way == "up" else "lower"],
+                   "volume " + way)
+
+    # mute is a state, not a toggle: "mute" said twice is still muted
+    m = re.fullmatch(r"(?P<un>un)?mute(?: the (?:sound|volume|speakers|audio))?",
+                     text)
+    if m and which("omarchy-audio-output-volume"):
+        want = not m.group("un")
+        return {"steps": [{"say": ("Mute" if want else "Unmute")
+                                  + " the speakers", "mute": want}],
+                "done": "speakers " + ("muted" if want else "unmuted")}
+
+    # screen brightness
+    m = re.fullmatch(r"(?:set |turn |put )?(?:the )?(?:screen |display )?"
+                     r"brightness (?:to |at |on )?(?P<n>\d{1,3})%?", text)
+    if m and which("omarchy-brightness-display"):
+        n = level(m.group("n"))
+        if n is not None:
+            return one("Set the brightness to %d%%" % n,
+                       ["omarchy-brightness-display", "%d%%" % n],
+                       "brightness at %d%%" % n)
+
+    # a screenshot, in the three shapes omarchy already takes one in
+    m = re.fullmatch(r"(?:take |grab |capture )?a? ?screenshot"
+                     r"(?: of (?:the )?(?P<what>whole screen|screen|"
+                     r"everything|this window|the active window))?", text)
+    if m and which("omarchy-capture-screenshot"):
+        what = m.group("what") or ""
+        # No argument is what the Print Screen binding on this machine runs, so
+        # a bare "take a screenshot" does the same thing the key does. Saying
+        # which part of the screen picks the shape instead.
+        how = "fullscreen" if what in ("whole screen", "screen", "everything") \
+            else "windows" if "window" in what else ""
+        return one("Take a screenshot" + (" (%s)" % how if how else ""),
+                   ["omarchy-capture-screenshot"] + ([how] if how else []),
+                   "screenshot taken")
+
+    # lock, which is the one thing here that hides the screen, so it is spelled
+    # out in full: `lock` on its own is a word with several jobs
+    if re.fullmatch(r"lock (?:the |my )?(?:screen|computer|session)", text) \
+            and which("omarchy-system-lock"):
+        return one("Lock the screen", ["omarchy-system-lock"], "locked")
+
+    # a theme, by a name this machine actually has
+    m = re.fullmatch(r"(?:switch|change|set) (?:the )?theme to (?:the )?"
+                     r"(?P<name>.{1,40}?)(?: theme)?"
+                     r"|(?:switch|change) to (?:the )?(?P<n2>.{1,40}?) theme",
+                     text)
+    if m and which("omarchy"):
+        theme = theme_named(m.group("name") or m.group("n2"))
+        if theme:
+            return one("Switch to the %s theme" % theme,
+                       ["omarchy", "theme", "set", theme],
+                       theme + " theme")
+
+    # bluetooth, on or off, which is a state and not a toggle
+    m = re.fullmatch(r"turn (?:bluetooth (?P<a>on|off)|(?P<b>on|off) bluetooth)",
+                     text)
+    if m and which("omarchy-bluetooth-power"):
+        way = m.group("a") or m.group("b")
+        return one("Turn bluetooth " + way,
+                   ["omarchy-bluetooth-power", way], "bluetooth " + way)
+
+    return None
+
+
+def plan_labels(plan):
+    return [s["say"] for s in plan["steps"]] if plan else []
+
+
+def emit(event):
+    sys.stdout.write(json.dumps(event) + "\n")
+    sys.stdout.flush()
+
+
+def muted_now():
+    """Whether the speakers are muted, read the way the volume keyword reads
+    it. None when the question cannot be answered, which makes `mute` fall back
+    to the toggle rather than guess."""
+    try:
+        sink = subprocess.run(["omarchy-audio-output-sink"], timeout=4,
+                              capture_output=True, text=True).stdout.strip()
+        if not sink:
+            return None
+        out = subprocess.run(["pactl", "get-sink-mute", sink], timeout=4,
+                             capture_output=True, text=True).stdout
+        return "yes" in out
+    except Exception:
+        return None
+
+
+def run_step(step):
+    """One step, with its own output caught. The desk verbs print for a person
+    reading a terminal; here the only thing on stdout is the event stream the
+    card is reading, so what they say is captured and reported as the step's
+    own result."""
+    if "run" in step:
+        if dry():
+            return 0, "would run: " + " ".join(step["run"]), ""
+        try:
+            p = subprocess.run(step["run"], capture_output=True, text=True,
+                               timeout=90)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 1, "", str(e)
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+
+    if "mute" in step:
+        # Said twice, this leaves the speakers where the sentence asked for
+        # them: the toggle underneath is only reached when the state is not
+        # already the one that was asked for.
+        want = bool(step["mute"])
+        if dry():
+            return 0, "would set muted=%s" % want, ""
+        now = muted_now()
+        if now is want:
+            return 0, "already", ""
+        try:
+            p = subprocess.run(["omarchy-audio-output-volume", "mute-toggle"],
+                               capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 1, "", str(e)
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if "argv" in step:
+            rc = cmd_desk(step["argv"])
+        else:
+            rc = focus_biggest() if step.get("split") else 0
+            if rc == 0:
+                rc = desk_open(step["app"], quiet=True)
+    return rc, out.getvalue().strip(), err.getvalue().strip()
+
+
+def cmd_plan(token):
+    """The deterministic half of Enter. Same token, same promise as `send`: it
+    can only run what was previewed, and what it runs is the list the card drew
+    before anybody pressed anything."""
+    entry = read_previews().get(str(token or ""))
+    if not entry:
+        return 2
+    plan = plan_for(entry["instruction"])
+    if not plan:
+        return 2
+    try:
+        os.chdir(entry.get("cwd") or os.path.expanduser("~"))
+    except OSError:
+        pass
+
+    steps = plan["steps"]
+    for i, step in enumerate(steps):
+        emit({"type": "step", "text": step["say"]})
+        rc, said, why = run_step(step)
+        emit({"type": "step_end", "ok": rc == 0, "why": short(why, 200)})
+        if rc != 0:
+            # Half a plan is still worth reporting: the windows that opened are
+            # on screen whether or not this says so, and a card that ends on
+            # "failed" with no count leaves somebody counting them by hand.
+            emit({"type": "result",
+                  "result": "stopped after %d of %d: %s"
+                            % (i, len(steps), short(why, 120) or step["say"])})
+            return 1
+    emit({"type": "result",
+          "result": plan["done"].replace("{ws}", str(active_workspace_id()))})
+    return 0
+
+
 def usage(message):
     sys.stderr.write(message + "\n")
     return 2
@@ -1443,6 +2137,8 @@ def main(argv):
         return cmd_new()
     if verb == "term":
         return cmd_term(argv[2] if len(argv) > 2 else "")
+    if verb == "plan":
+        return cmd_plan(argv[2] if len(argv) > 2 else "")
     if verb == "desk":
         return cmd_desk(argv[2:])
     if verb == "agents":

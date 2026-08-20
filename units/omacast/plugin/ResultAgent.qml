@@ -26,13 +26,29 @@ import qs.Ui
 //
 // Refusals are drawn, in red, with the reason. An agent that quietly could not
 // do the thing and then wrote a confident paragraph about it is how somebody
-// comes to believe the launcher did something it did not.
+// comes to believe the launcher did something it did not. A run that stopped or
+// failed ends in the same red, because "12s · failed" in grey beside the
+// sentence reads exactly like a run that worked.
+//
+// `turns` is this visit's conversation and nothing older. The daemon drops it a
+// few seconds after the last time this card asked for it, so opening `do:`
+// tomorrow opens on the examples rather than on a list of what was run
+// yesterday. Nothing here is a log: an instruction is on screen while it runs
+// and while its answer is still being read, and then it is over.
+//
+// Two kinds of promise, drawn differently. Most sentences go to an agent, which
+// will probably do what was asked. A few have exactly one reading and are done
+// here instead, step by step, with no model in the middle: those say so, and the
+// card lists the steps before Enter, because "this will do exactly that" and
+// "this will probably do that" should not look alike.
 //
 // The row carries:
 //   state      idle | draft | policy | missing
 //   turns[]    { you, state, now, did[], earlier, steps, answer, blocked[],
-//                note, elapsed, startedAt }
+//                note, elapsed, startedAt, direct }
 //   draft      the instruction typed but not yet sent
+//   direct     true when Enter runs the steps below rather than an agent
+//   plan[]     exactly what Enter will do, in order          (direct only)
 //   hints[]    example instructions, shown on an empty conversation
 //   allows     what it may do without asking          (state "policy")
 //   denies     what needs a terminal                  (state "policy")
@@ -54,6 +70,8 @@ Item {
   readonly property var turns: (view.row && view.row.turns) ? view.row.turns : []
   readonly property var hints: (view.row && view.row.hints) ? view.row.hints : []
   readonly property string draft: view.row ? String(view.row.draft || "") : ""
+  readonly property bool direct: view.row ? view.row.direct === true : false
+  readonly property var plan: (view.row && view.row.plan) ? view.row.plan : []
 
   readonly property var live: view.turns.length > 0
     ? view.turns[view.turns.length - 1] : null
@@ -116,6 +134,16 @@ Item {
     if (state === "stopped") bits.push("stopped")
     if (state === "failed") bits.push("failed")
     return bits.join(" · ")
+  }
+
+  // A run that did not finish says so in the same colour as everything else
+  // that went wrong on this card. Grey "12s · failed" beside the sentence read
+  // as a normal ending, and the only red on the card was a line of the CLI's
+  // own error text, which is not where anybody looks first.
+  function ended(turn) {
+    var state = String(turn.state)
+    if (state === "failed" || state === "stopped") return Color.urgent
+    return Qt.darker(view.launcher.foreground, 2.0)
   }
 
   implicitHeight: Math.min(
@@ -203,10 +231,24 @@ Item {
             Text {
               text: turnBlock.active ? view.clock(view.elapsedOf(turnBlock.modelData))
                                      : view.ending(turnBlock.modelData)
-              color: Qt.darker(view.launcher.foreground, 2.0)
+              color: turnBlock.active ? Qt.darker(view.launcher.foreground, 2.0)
+                                      : view.ended(turnBlock.modelData)
               font.family: view.launcher.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+
+          // Which of the two ran. Only ever drawn on a run that was done here,
+          // because the honest claim is the narrow one: this went step by step
+          // and nothing decided anything on the way.
+          Text {
+            visible: turnBlock.modelData.direct === true
+            text: turnBlock.active ? "◰  doing this here, no model"
+                                   : "◰  done here, no model"
+            color: Color.accent
+            font.family: view.launcher.fontFamily
+            font.pixelSize: Style.font.caption
+            opacity: turnBlock.active ? 1.0 : 0.75
           }
 
           // What scrolled off, counted rather than dropped.
@@ -469,6 +511,51 @@ Item {
         }
       }
 
+      // Exactly what Enter will do, in order, on a sentence that has one
+      // reading. A list of steps under the sentence is the whole difference
+      // between a promise and a guess, and it is drawn before anything runs so
+      // that a wrong reading is something you see rather than something you
+      // find out afterwards.
+      Column {
+        visible: view.direct && view.plan.length > 0 && view.phase === "draft"
+        width: parent.width
+        spacing: Style.space(2)
+
+        Repeater {
+          model: view.plan
+
+          Item {
+            required property var modelData
+            required property int index
+            width: body.width
+            height: Style.space(17)
+
+            Text {
+              id: planMark
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(18)
+              text: "◰"
+              color: Color.accent
+              font.family: view.launcher.fontFamily
+              font.pixelSize: Style.font.caption
+              opacity: 0.8
+            }
+
+            Text {
+              anchors.left: planMark.right
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              text: String(parent.modelData)
+              color: Qt.darker(view.launcher.foreground, 1.5)
+              font.family: view.launcher.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+          }
+        }
+      }
+
       // ------------------------------------------------------- the last line
 
       Text {
@@ -480,6 +567,8 @@ Item {
         text: {
           if (view.phase === "missing") return ""
           if (view.running) return "Esc stops it"
+          if (view.phase === "draft" && view.direct)
+            return "↵ does exactly this, here · ⌃K hands it to the agent instead"
           if (view.phase === "draft") return "↵ sends it · ⌃K to run it in a terminal instead"
           if (view.phase === "policy") return "do: /new starts the conversation over"
           if (view.turns.length > 0)

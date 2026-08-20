@@ -49,6 +49,29 @@ Item {
   property var buckets: ({})
   property var rows: []
 
+  // Enter pressed against a list that had not caught up yet. A timer rather
+  // than a hook in rebuild(): rebuild runs when a provider answers, and the
+  // provider this Enter is waiting for may be the one that has not.
+  Timer {
+    id: holdEnter
+    property int tries: 0
+    interval: 120
+    repeat: true
+    onTriggered: {
+      holdEnter.tries += 1
+      var top = root.rows.length > 0 ? (root.rows[root.selectedIndex] || root.rows[0]) : null
+      if (top && !root.rowIsStale(top) && top.pending !== true) {
+        holdEnter.stop()
+        root.activate(top)
+      } else if (holdEnter.tries > 25) {
+        // Three seconds. A provider that has not answered by now is not going
+        // to, and a keypress that fires a minute late is worse than one that
+        // is dropped.
+        holdEnter.stop()
+      }
+    }
+  }
+
   // Providers that have been asked and have not answered yet. A slow shell-out
   // otherwise looks identical to one that found nothing.
   property var waiting: ({})
@@ -341,7 +364,7 @@ Item {
     "gitrepo", "gitbranches", "gitstashes", "agent",
     "ghrepo", "ghpr", "docker", "notes", "processes", "emoji", "themes",
     "windows", "hosts", "radios", "radioplayer", "files", "repos",
-    "menutree", "snippets", "vault", "shortcuts", "loading"]
+    "menutree", "snippets", "vault", "shortcuts", "herdr", "marketplace", "marketplacehome", "marketplaceunit", "answer", "loading"]
 
   // The [menu] surface tokens, so a theme that styles the Omarchy menu styles
   // this too, with no extra work from the user.
@@ -358,12 +381,27 @@ Item {
 
   // ------------------------------------------------------------ lifecycle
 
+  // `payloadJson` is how something outside asks for a particular screen rather
+  // than the opening one: `omarchy-shell shell summon bo.omacast '{"query":"bo:"}'`.
+  // It exists because a few actions have to close this window to do their work,
+  // and the only decent way to do that is to put the user back where they were.
   function open(payloadJson) {
+    var wanted = ""
+    if (payloadJson) {
+      try {
+        var payload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson
+        if (payload && payload.query !== undefined) wanted = String(payload.query)
+      } catch (e) {
+        // A malformed payload opens the launcher empty rather than not at all.
+      }
+    }
+
     pinScreen()
     loadExtensions()
     readClipboard()
     root.opened = true
-    if (root.config.resetOnOpen !== false) root.queryText = ""
+    if (wanted !== "") root.queryText = wanted
+    else if (root.config.resetOnOpen !== false) root.queryText = ""
     root.pendingActivate = ""
     resetSelection()
     setQuery(root.queryText)
@@ -378,12 +416,21 @@ Item {
   function close() {
     root.opened = false
     calc.cancel()
+    // Both of these outlived the window. `followUpTimer` repeats four times at
+    // 900ms and each tick re-queries every provider, so Escape during that
+    // window left three rounds of shelling out running against a shut
+    // launcher. `previewDelay` applies a theme, and only `dismiss()` stopped
+    // it, while the shell calls `close()` directly: a preview could stay on
+    // the desktop for good.
+    followUpTimer.stop()
+    previewDelay.stop()
     for (var i = 0; i < root.extensionProviders.length; i++) {
       root.extensionProviders[i].cancel()
     }
     root.buckets = ({})
     root.rows = []
     root.pendingActivate = ""
+    holdEnter.stop()
     root.actionPanelOpen = false
     root.clipboardUrl = ""
     root.flowStack = []
@@ -560,6 +607,10 @@ Item {
         return
       }
     }
+
+    // An Enter that arrived while the list was still catching up. Fired once
+    // nothing is still being asked, against the row that is there now rather
+    // than the one that was there then.
   }
 
   function resetSelection() {
@@ -1341,8 +1392,44 @@ Item {
 
   // ------------------------------------------------------------ activation
 
+  // True when this row came from a provider that has not answered the query
+  // now in the box. Buckets deliberately keep their last answer while the next
+  // one is still running, so what you are looking at can be a keystroke or two
+  // behind what you typed.
+  function rowIsStale(row) {
+    var id = String((row && row.providerId) || "")
+    if (id === "") return false
+    var bucket = root.buckets[id]
+    if (!bucket) return false
+    return Number(bucket.epoch) !== root.epoch
+  }
+
+  // What Enter runs. Separate from activate() because Enter can arrive before
+  // there is anything to run: typing quickly and pressing Enter reached
+  // `activate(undefined)`, which returned without a sound, so the keypress was
+  // simply lost.
+  function activateSelected() {
+    var row = root.rows.length > 0 ? root.rows[root.selectedIndex] : null
+    if (!row || root.rowIsStale(row)) {
+      holdEnter.tries = 0
+      holdEnter.restart()
+      return
+    }
+    root.activate(row)
+  }
+
   function activate(row) {
     if (!row) return
+
+    // Enter on a stale row ran the query the row was built from rather than the
+    // one on screen. Typing `put two terminals on this screen` and pressing
+    // Enter sent the agent the letter `o`: the first keystroke, whose row was
+    // still the one being drawn. Held instead, and run when the answer arrives.
+    if (root.rowIsStale(row)) {
+      holdEnter.tries = 0
+      holdEnter.restart()
+      return
+    }
 
     // A keyword from `?`, or a query you ran before. Neither runs anything: the
     // point of picking one is to carry on typing, so this stays open.
@@ -1521,7 +1608,7 @@ Item {
     // A grid view knows its own column count. Asking it is the only way this
     // cannot drift from the arithmetic the view itself used to lay the cells
     // out, which shows up as an arrow key skipping a cell.
-    if (root.activeView === "emoji" || root.activeView === "themes") {
+    if (root.activeView === "emoji" || root.activeView === "themes" || root.activeView === "marketplace") {
       return (resultsArea.item && resultsArea.item.columns)
         ? Math.max(1, resultsArea.item.columns) : 1
     }
@@ -1687,9 +1774,9 @@ Item {
       if (calc.pendingEpoch < 0) return
       calc.inflightEpoch = calc.pendingEpoch
       calc.pendingEpoch = -1
-      // -m bounds the calculation: qalc will otherwise chew on a pathological
-      // expression for as long as it takes.
-      process.command = ["qalc", "-t", "-m", "200", "--", Calc.forQalc(calc.pendingText)]
+      // The argv is Calc's: what qalc is asked and how it writes the answer are
+      // one decision, and -m bounds a pathological expression either way.
+      process.command = Calc.command(calc.pendingText)
       process.running = true
     }
 
@@ -1932,7 +2019,18 @@ Item {
     ActionPanel {
       id: actionPanel
       launcher: root
-      visible: root.actionPanelOpen && root.rows.length > 0
+        // Faded rather than switched. `visible` alone made the panel appear and
+        // vanish between two frames, which reads as a flash rather than as a
+        // thing opening. 140ms OutCubic is what Omarchy's own PopupCard and
+        // KeyboardPanel use, so this now closes the way every other panel on
+        // the desktop closes.
+        readonly property bool shown: root.actionPanelOpen && root.rows.length > 0
+        opacity: shown ? 1 : 0
+        visible: opacity > 0.01
+
+        Behavior on opacity {
+          NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+        }
       x: card.x + card.width - width - Style.space(12)
       y: card.y + card.height + Style.space(6)
       maxHeight: panel.height - (card.y + card.height + Style.space(6)) - Style.space(12)
@@ -2086,7 +2184,8 @@ Item {
               event.accepted = true
             } else if ((root.activeView === "slider" || root.activeView === "timegrid"
                         || root.activeView === "emoji" || root.activeView === "themes"
-                        || root.activeView === "windows" || root.activeView === "menutree")
+                        || root.activeView === "windows" || root.activeView === "menutree"
+                        || root.activeView === "radioplayer")
                        && (event.key === Qt.Key_Left || event.key === Qt.Key_Right)) {
               // Left and right belong to the text cursor everywhere else, and
               // are taken back only while the thing on screen is a row of
@@ -2096,12 +2195,14 @@ Item {
               }
               event.accepted = true
             } else if ((root.activeView === "grid" || root.activeView === "dashboard"
-                        || root.activeView === "calendar" || root.activeView === "docker")
+                        || root.activeView === "calendar" || root.activeView === "docker"
+                        || root.activeView === "marketplace")
                        && event.key === Qt.Key_Right) {
               root.move(1)
               event.accepted = true
             } else if ((root.activeView === "grid" || root.activeView === "dashboard"
-                        || root.activeView === "calendar" || root.activeView === "docker")
+                        || root.activeView === "calendar" || root.activeView === "docker"
+                        || root.activeView === "marketplace")
                        && event.key === Qt.Key_Left) {
               root.move(-1)
               event.accepted = true
@@ -2130,9 +2231,9 @@ Item {
                 // which is the swap people make constantly.
                 var actions = root.currentActions()
                 if (actions.length > 1) root.runAction(actions[1])
-                else root.activate(root.rows[root.selectedIndex])
+                else root.activateSelected()
               } else {
-                root.activate(root.rows[root.selectedIndex])
+                root.activateSelected()
               }
               event.accepted = true
             }
@@ -2250,6 +2351,10 @@ Item {
           case "windows": return windowsView
           case "hosts": return hostsView
           case "shortcuts": return shortcutsView
+          case "herdr": return herdrView
+          case "marketplace": return marketplaceView
+          case "marketplacehome": return marketplaceHomeView
+          case "marketplaceunit": return marketplaceUnitView
           case "radios": return radiosView
           case "radioplayer": return radioPlayerView
           case "vault": return vaultView
@@ -2291,6 +2396,10 @@ Item {
       Component { id: windowsView;   ResultWindows   { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: hostsView;     ResultHosts     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: shortcutsView; ResultShortcuts { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: herdrView;     ResultHerdr     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: marketplaceView; ResultMarketplace { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: marketplaceHomeView; ResultMarketplaceHome { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
+      Component { id: marketplaceUnitView; ResultMarketplaceUnit { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: radiosView;    ResultRadios    { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: radioPlayerView; ResultRadioPlayer { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
       Component { id: filesView;     ResultFiles     { launcher: root; width: resultsArea.width; maxHeight: resultsArea.room } }
@@ -2321,8 +2430,16 @@ Item {
         }
 
         Text {
+          // Bounded by whatever the right of the bar is drawing, and elided.
+          // Without this the left label had no width at all, so a long first
+          // action ran underneath the right one: `do:` offers "Run in a
+          // terminal, where you answer the prompts" and it drew straight
+          // through "Ask Claude".
           anchors.left: parent.left
           anchors.leftMargin: Style.space(18)
+          anchors.right: footerRight.visible ? footerRight.left : parent.right
+          anchors.rightMargin: Style.space(12)
+          elide: Text.ElideRight
           anchors.verticalCenter: parent.verticalCenter
           text: {
             // A form's Enter is its own submit, and the row's first action is
@@ -2340,6 +2457,7 @@ Item {
         }
 
         Text {
+          id: footerRight
           anchors.right: parent.right
           anchors.rightMargin: Style.space(18)
           anchors.verticalCenter: parent.verticalCenter
