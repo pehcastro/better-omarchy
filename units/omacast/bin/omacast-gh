@@ -812,8 +812,38 @@ mode_prs() {
 
   if [[ $T_KIND == repo ]]; then
     local body
-    body=$(pull "repoprs-$(key_for "$T_SLUG")" 45 \
-      gh api graphql -f "query=$GQL_REPO_PRS" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    if [[ -n $T_TEXT ]]; then
+      # A word after the repository searches the repository, rather than
+      # filtering the thirty most recently updated. `pr:basecamp/omarchy theme`
+      # matched none of the three open pull requests with theme in the title,
+      # because all three sat outside that window. The same fault, and the same
+      # fix, as the issue path above it.
+      #
+      # `gh search prs` and not `gh search issues`: the latter adds `is:issue`,
+      # so it would return every pull request never.
+      body=$(pull "reposearchprs-$(key_for "$T_SLUG $T_TEXT")" 45 \
+        gh search prs --repo "$T_SLUG" --state open --limit 30 \
+          --json number,title,url,updatedAt,repository,author,isDraft \
+          -- "$T_TEXT") || return
+
+      # `gh search` answers a flat array and knows less than the graphql query
+      # does: no line counts, no branch, no review decision, no checks. Reshaped
+      # into the same nesting so one jq filter serves both paths, with the
+      # fields it cannot know left at values the filter already treats as absent.
+      body=$(printf '%s' "$body" | jq -c --arg slug "$T_SLUG" '
+        { data: { repository: { nameWithOwner: $slug, pullRequests: { nodes:
+          [ .[] | { number, title, url, updatedAt,
+                    isDraft: (.isDraft // false),
+                    additions: 0, deletions: 0, changedFiles: 0,
+                    repository: { nameWithOwner: $slug },
+                    headRefName: "",
+                    reviewDecision: null,
+                    author: { login: (.author.login // "") },
+                    commits: { nodes: [] } } ] } } } }' 2>/dev/null) || return
+    else
+      body=$(pull "repoprs-$(key_for "$T_SLUG")" 45 \
+        gh api graphql -f "query=$GQL_REPO_PRS" -F owner="${T_SLUG%%/*}" -F name="${T_SLUG##*/}") || return
+    fi
     printf '%s' "$body" | emit --arg slug "$T_SLUG" --arg q "${T_TEXT,,}" "$JQ$JQ_PR_ROWS"'
       def keep: select($q == ""
         or (((.title // "") + " " + (.author.login // "") + " " + (.headRefName // "")

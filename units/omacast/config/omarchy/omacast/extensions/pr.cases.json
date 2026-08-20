@@ -36,10 +36,10 @@
     }
   },
   {
-    "why": "a word after the repository searches inside it, which is the only way to reach one of thirty open items without a browser",
+    "why": "a word after the repository searches the whole repository rather than filtering the newest thirty, so a match older than that window is still reachable",
     "query": "basecamp/omarchy theme",
     "minRows": 1,
-    "maxRows": 6,
+    "maxRows": 14,
     "row": 0,
     "matches": {
       "title": "(?i)theme"
