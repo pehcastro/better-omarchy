@@ -119,6 +119,11 @@ Item {
       sourceSize.width: width * Screen.devicePixelRatio
       sourceSize.height: height * Screen.devicePixelRatio
       asynchronous: true
+
+      // Not cached, for the reason spelled out in ResultFiles.qml: Qt keeps
+      // every decoded image by URL for the life of the process, and this is
+      // one new cover per track. A day of listening retains a day of covers.
+      cache: false
     }
 
     Text {

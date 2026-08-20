@@ -88,10 +88,36 @@ stamp() {
 # this prevents, and it cost two recordings before anybody looked.
 CACHE_FORMAT=2
 
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/v$CACHE_FORMAT/git-branches"
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/omacast"
+cache_dir="$cache_root/v$CACHE_FORMAT/git-branches"
 mkdir -p "$cache_dir" 2>/dev/null
 cache_file="$cache_dir/$(printf '%s' "$repo" | md5sum | cut -c1-16)"
 want=$(stamp)
+
+# One file per repo, keyed by a hash of its path, and nothing used to remove
+# one. A repo you deleted last year still had an entry, and every bump of
+# CACHE_FORMAT left the whole previous directory behind: retiring an entry
+# meant no longer reading it, never deleting it.
+#
+# Both are fixed on the same rule and only on the slow path, where a `git
+# status` has just been paid for anyway. 300 is far more repos than anybody
+# has; it is a ceiling, not a working set.
+CACHE_KEEP=300
+prune_cache() {
+  # Every other format's copy of this cache, and only this cache: v2 also holds
+  # git-stashes, which is on its own version number.
+  local old
+  for old in "$cache_root"/v*/git-branches; do
+    [[ -d $old && $old != "$cache_dir" ]] && rm -rf -- "$old"
+  done
+
+  local count
+  count=$(find "$cache_dir" -maxdepth 1 -type f -printf . 2>/dev/null | wc -c)
+  ((count > CACHE_KEEP)) || return 0
+  find "$cache_dir" -maxdepth 1 -type f -printf '%T@\t%p\n' 2>/dev/null |
+    sort -n | head -n "$((count - CACHE_KEEP))" | cut -f2- |
+    tr '\n' '\0' | xargs -0 -r rm -f -- 2>/dev/null
+}
 
 # Line one is the stamp, line two is the header, the rest are branches.
 collect() {
@@ -151,7 +177,9 @@ if [[ -s $cache_file ]]; then
 fi
 if ((${#lines[@]} == 0)); then
   mapfile -t lines < <(collect)
-  ((${#lines[@]} > 1)) && printf '%s\n' "${lines[@]}" >"$cache_file" 2>/dev/null
+  if ((${#lines[@]} > 1)) && printf '%s\n' "${lines[@]}" >"$cache_file" 2>/dev/null; then
+    prune_cache
+  fi
 fi
 ((${#lines[@]} > 1)) || exit 0
 

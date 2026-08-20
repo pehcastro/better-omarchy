@@ -172,7 +172,14 @@ ListView {
         // one more letter stalls the launcher while a 40 megapixel photo is
         // read at full resolution to fill a square the size of a stamp.
         asynchronous: true
-        cache: true
+
+        // Not cached. Qt keeps every decoded image by URL for the life of the
+        // process, and these are thumbnails of a file you searched for once:
+        // the odds of drawing this exact file again are low and the cost of
+        // holding it is permanent. Ten queries over a home directory retained
+        // 30MB that never came back, while keywords that draw no images
+        // retained nothing at all.
+        cache: false
         sourceSize.width: view.slot * Screen.devicePixelRatio
         sourceSize.height: view.slot * Screen.devicePixelRatio
       }

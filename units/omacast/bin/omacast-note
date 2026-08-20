@@ -1,22 +1,26 @@
 #!/bin/bash
 # Notes for OmaCast's `note:` keyword. One markdown file per note.
 #
-#   note:                       every note, newest first
+#   note:                       every note, newest first, with the count
 #   note:standup                notes whose title or text contains that
 #   note:remember the video     the first row writes that down; the rest match
 #
-# Capturing and finding share one keyword on purpose. You rarely know which one
-# you meant when you start typing: the same words either find the note or become
-# one, and the list underneath tells you which.
+# `note:` is a mode, not a search that happens to return notes. Bare, it leads
+# with the notes themselves and says how many there are; the row that writes
+# only appears once there is something to name a note after. Capturing and
+# finding share the keyword on purpose: you rarely know which one you meant when
+# you start typing, so the same words either find the note or become one, and
+# the list underneath tells you which.
 #
-# The keyword also has three instructions, spelled with a leading `--` so they
+# The keyword also has four instructions, spelled with a leading `--` so they
 # can never collide with something typed. The launcher passes a query as one
 # shell-quoted argument, so `note:--save x` arrives as the single word
 # "--save x" and is searched for, not obeyed.
 #
-#   omacast-note --save "text"    write it down and say nothing
-#   omacast-note --open "text"    write it down, then open it
-#   omacast-note --trash PATH     move a note to the wastebasket
+#   omacast-note --save "text"        write it down and say nothing
+#   omacast-note --open KEY "text"    write it down, then open it in that editor
+#   omacast-note --edit KEY PATH      open a note that already exists
+#   omacast-note --trash PATH         move a note to the wastebasket
 #
 # Writing is a mode of this script rather than a shell line in the row's `exec`
 # for one reason: a row that saved by stringing `mkdir && printf > file &&
@@ -40,9 +44,28 @@ fi
 dir="${dir:-$HOME/Documents/Notes}"
 dir="${dir/#\~/$HOME}"
 
+# One clock for the whole run. `ago` used to fork `date` once per note, which is
+# a process per row for a number that cannot change while the script is running.
+now=$(date +%s)
+
 # The longest a first line may be before it stops being a title. Past this the
 # words are still the note, they are just no longer its name.
 TITLE_MAX=72
+
+# Where --save leaves a note of what it just wrote, so the list that comes up
+# afterwards can point at it. See `fresh` below for why it is a file and not an
+# argument.
+SAVED_STAMP="${XDG_RUNTIME_DIR:-/tmp}/omacast-note-saved"
+
+# How many notes are built into rows. Comfortably more than the tallest card
+# can show, so the view still decides where the list ends, and far short of a
+# folder somebody has been writing in for a year.
+ROW_LIMIT=24
+
+# How long a just-saved note keeps saying so. The launcher re-asks four times
+# over about four seconds after a save, so this only has to outlast that; the
+# rest of the window is so the answer still reads right if you glance away.
+FRESH_SECONDS=30
 
 # A slug that is safe as a filename and still readable a year later.
 slug() {
@@ -50,6 +73,162 @@ slug() {
     sed 's/[^a-z0-9]\+/-/g; s/^-\+//; s/-\+$//' |
     cut -c1-60 |
     sed 's/-\+$//'
+}
+
+# ---- editors
+#
+# Every editor on this machine that can open a note, in the order they are
+# offered. Omawrite was the only one for a while, which is the right answer for
+# exactly one person: a note is a markdown file, and everybody opens one of
+# those differently.
+#
+# Found, never assumed. An entry here is only offered if its program is actually
+# installed, because a row promising Typora on a machine without Typora is a row
+# that opens nothing and the panel is meant to be the list of ways out of this
+# note, not a catalogue of editors that exist somewhere.
+#
+# Terminal editors go through omarchy-launch-tui, which is how Omarchy itself
+# starts one: the user's own terminal, Omarchy's styling, and an app-id that
+# window rules can find. GUI editors go through `setsid uwsm-app --`, which is
+# what omarchy-launch-editor does for the same set, and which keeps a `--wait`
+# style editor from holding on to the launcher's child.
+#
+# Triples of key, label, command. `{}` is the shell-quoted path.
+EDITOR_TABLE=(
+  "omawrite" "Omawrite" "omawrite {}"
+  "nvim" "Neovim" "omarchy-launch-tui --app-id=org.omarchy.note nvim {}"
+  "vim" "Vim" "omarchy-launch-tui --app-id=org.omarchy.note vim {}"
+  "hx" "Helix" "omarchy-launch-tui --app-id=org.omarchy.note hx {}"
+  "helix" "Helix" "omarchy-launch-tui --app-id=org.omarchy.note helix {}"
+  "micro" "Micro" "omarchy-launch-tui --app-id=org.omarchy.note micro {}"
+  "nano" "Nano" "omarchy-launch-tui --app-id=org.omarchy.note nano {}"
+  "kak" "Kakoune" "omarchy-launch-tui --app-id=org.omarchy.note kak {}"
+  "emacs" "Emacs" "setsid uwsm-app -- emacs {}"
+  "zeditor" "Zed" "setsid uwsm-app -- zeditor {}"
+  "code" "VS Code" "setsid uwsm-app -- code {}"
+  "codium" "VSCodium" "setsid uwsm-app -- codium {}"
+  "cursor" "Cursor" "setsid uwsm-app -- cursor {}"
+  "sublime_text" "Sublime Text" "setsid uwsm-app -- sublime_text {}"
+  "typora" "Typora" "setsid uwsm-app -- typora {}"
+  "marktext" "Mark Text" "setsid uwsm-app -- marktext {}"
+  "apostrophe" "Apostrophe" "setsid uwsm-app -- apostrophe {}"
+  "ghostwriter" "Ghostwriter" "setsid uwsm-app -- ghostwriter {}"
+  "gnome-text-editor" "Text Editor" "setsid uwsm-app -- gnome-text-editor {}"
+  "gedit" "gedit" "setsid uwsm-app -- gedit {}"
+  "kate" "Kate" "setsid uwsm-app -- kate {}"
+  "mousepad" "Mousepad" "setsid uwsm-app -- mousepad {}"
+  "xed" "Text Editor" "setsid uwsm-app -- xed {}"
+  "pluma" "Pluma" "setsid uwsm-app -- pluma {}"
+)
+#
+# Obsidian is deliberately absent even where it is installed. It opens vaults,
+# not paths: without a vault registered over the notes directory `obsidian
+# FILE.md` lands on the vault picker, which is a row that does not open the note
+# it named. If the notes directory is ever a vault this is worth revisiting as
+# an `obsidian://open?vault=…&file=…` URI.
+
+# Start one editor on one file, by key. Used by --open and --edit, so the row
+# and the script agree on how an editor is launched by construction rather than
+# by two copies of the same string.
+open_with() {
+  local key="$1" file="$2" i
+  for ((i = 0; i < ${#EDITOR_TABLE[@]}; i += 3)); do
+    [[ ${EDITOR_TABLE[i]} == "$key" ]] || continue
+    # In the foreground, and by exec. This script is already the detached child
+    # the launcher started, so there is nothing here for the editor to get out
+    # of the way of, and backgrounding it would only make it the orphan of a
+    # shell that had already gone.
+    exec bash -c "${EDITOR_TABLE[i + 2]//\{\}/$(printf '%q' "$file")}"
+  done
+
+  # An unknown key must not cost somebody the note they just wrote.
+  # omarchy-launch-editor knows how to start whatever they set as their default,
+  # and falls back to nvim when even that is missing.
+  exec omarchy-launch-editor "$file"
+}
+
+# What the desktop and Omarchy each answer when asked to open a note. Neither is
+# an editor this script starts; both are only used to say which of the entries
+# above is somebody's declared choice, so it can be offered first and labelled.
+#
+# `omarchy default editor` is the more deliberate of the two, so it wins the
+# top slot. Its answer lives in a file omarchy-launch-editor reads directly, so
+# this reads the same file rather than forking omarchy-default-editor to be told
+# the same string.
+omarchy_editor=""
+omarchy_state="$HOME/.local/state/omarchy/defaults/editor"
+[[ -f $omarchy_state ]] && read -r omarchy_editor <"$omarchy_state"
+[[ -z $omarchy_editor ]] && omarchy_editor="nvim"
+# `omarchy default editor zed` writes "zeditor", but a hand-edited file may say
+# either, and the table is keyed by the program name.
+[[ $omarchy_editor == "zed" ]] && omarchy_editor="zeditor"
+
+# The desktop's own answer for a .md, resolved from a desktop file back to the
+# program it runs, because "dev.zed.Zed.desktop" is not something the table can
+# be keyed by and labelling a row with it would mean nothing to anyone.
+#
+# xdg-settings is not consulted: it only knows about the web browser and URL
+# scheme handlers, so it has no opinion about text files at all.
+#
+# This costs one xdg-mime fork, around 17ms, on a keyword that answers in about
+# 30. It is not cached: a cached default that is wrong is a row labelled as your
+# default that is not, and the whole point of the label is that it can be
+# trusted.
+mime_editor=""
+resolve_mime_editor() {
+  local desktop app line
+  desktop=$(xdg-mime query default text/markdown 2>/dev/null)
+  [[ -z $desktop ]] && desktop=$(xdg-mime query default text/plain 2>/dev/null)
+  [[ -z $desktop ]] && return 0
+
+  for app in "${XDG_DATA_HOME:-$HOME/.local/share}/applications/$desktop" \
+    /usr/local/share/applications/"$desktop" /usr/share/applications/"$desktop"; do
+    [[ -f $app ]] || continue
+    line=$(grep -m1 '^Exec=' "$app" 2>/dev/null)
+    line="${line#Exec=}"
+    # The first word of Exec is the program; the rest is %U and friends. A
+    # flatpak or snap wrapper resolves to "flatpak", which is not an editor and
+    # is left unmatched rather than guessed at.
+    mime_editor=$(basename "${line%% *}")
+    return 0
+  done
+}
+
+# The editors actually available, as flat triples in the order they are offered:
+# whatever Omarchy was told to use, then whatever the desktop opens a .md with,
+# then everything else that is installed. One label only appears once, so a
+# machine with both `hx` and `helix` does not offer Helix twice.
+EDITORS=()
+have_labels=""
+
+add_editor() {
+  local key="$1" note="$2" i label
+  for ((i = 0; i < ${#EDITOR_TABLE[@]}; i += 3)); do
+    [[ ${EDITOR_TABLE[i]} == "$key" ]] || continue
+    label="${EDITOR_TABLE[i + 1]}"
+    [[ $have_labels == *"|$label|"* ]] && return 0
+    command -v "$key" >/dev/null 2>&1 || return 0
+    have_labels+="|$label|"
+    [[ -n $note ]] && label="$label ($note)"
+    EDITORS+=("$key" "$label" "${EDITOR_TABLE[i + 2]}")
+    return 0
+  done
+}
+
+build_editors() {
+  local i
+  resolve_mime_editor
+
+  # Omawrite first when it is here. The keyword was built around it, it is the
+  # fastest way back out of a note, and Enter has always meant Omawrite: moving
+  # that under somebody's default would change what one keypress does.
+  add_editor omawrite ""
+  add_editor "$omarchy_editor" "Omarchy default"
+  [[ -n $mime_editor ]] && add_editor "$mime_editor" "system default"
+
+  for ((i = 0; i < ${#EDITOR_TABLE[@]}; i += 3)); do
+    add_editor "${EDITOR_TABLE[i]}" ""
+  done
 }
 
 # ---- writing
@@ -71,7 +250,9 @@ save_note() {
   # Never write over one that is already there. The row offering to create this
   # checked a moment ago, and a note overwritten in the gap between the check
   # and the keypress is somebody's writing gone. Opening it is the right answer
-  # to "this name is taken", and the row says so.
+  # to "this name is taken", and the row says so. It is not stamped as new
+  # either: nothing was written, and a badge saying otherwise would be a lie
+  # about somebody's older note.
   if [[ -e $target ]]; then
     printf '%s' "$target"
     return 0
@@ -84,6 +265,12 @@ save_note() {
   else
     printf '# %s\n\n' "$text" >"$target" 2>/dev/null || return 1
   fi
+
+  # Which note was just written, for the list that is about to come up. A file
+  # rather than something passed through the query, because the query is the
+  # text in the box and the box has to end up saying `note:` for the mode to be
+  # the mode. Its own mtime is the timestamp, so nothing has to be parsed back.
+  printf '%s' "$target" >"$SAVED_STAMP" 2>/dev/null
 
   printf '%s' "$target"
 }
@@ -101,13 +288,23 @@ trash_note() {
 
   bin="${XDG_DATA_HOME:-$HOME/.local/share}/omacast/notes-trash"
   mkdir -p "$bin" 2>/dev/null || return 1
-  mv -n -- "$file" "$bin/$(date +%s)-$(basename "$file")" 2>/dev/null
+  mv -n -- "$file" "$bin/$(date +%s)-$(basename "$file")" 2>/dev/null || return 1
+
+  # A bin that is never emptied is not a bin, it is a second copy of every note
+  # you ever deleted. This only runs when `gio trash` was unavailable, which is
+  # the path with nothing else watching it: the desktop trash has its own
+  # emptying and its own window, and this has neither.
+  #
+  # Thirty days is long enough to notice a mistake and short enough that
+  # deleting something means something. Changing your mind after a month is
+  # what a backup is for.
+  find "$bin" -maxdepth 1 -type f -mtime +30 -delete 2>/dev/null
 }
 
-# Two arguments, not one. A query reaches this script as a single shell-quoted
-# word, so `note:--save` arrives as `omacast-note --save` with nothing after it
-# and is searched for like any other text; only the row's own `exec` ever gets
-# here with a payload behind the flag.
+# Two arguments at least, and the flag says how many more it wants. A query
+# reaches this script as a single shell-quoted word, so `note:--save` arrives as
+# `omacast-note --save` with nothing behind it and is searched for like any
+# other text; only a row's own `exec` ever gets here with a payload.
 if (($# >= 2)); then
   case "$1" in
   --save)
@@ -115,13 +312,16 @@ if (($# >= 2)); then
     exit 0
     ;;
   --open)
-    target=$(save_note "$2") || exit 0
+    # --open KEY TEXT. Save first, then hand the path to the editor: if the
+    # editor is missing or refuses to start, the note is already on disk.
+    (($# >= 3)) || exit 0
+    target=$(save_note "$3") || exit 0
     [[ -n $target ]] || exit 0
-    # In the foreground, and by exec. This script is already the detached child
-    # the launcher started, so there is nothing here for the editor to get out
-    # of the way of, and backgrounding it would only make it the orphan of a
-    # shell that had already gone.
-    exec omawrite "$target" >/dev/null 2>&1
+    open_with "$2" "$target"
+    ;;
+  --edit)
+    (($# >= 3)) || exit 0
+    open_with "$2" "$3"
     ;;
   --trash)
     trash_note "$2"
@@ -142,8 +342,7 @@ query="${query%"${query##*[![:space:]]}"}"
 # is on the row too; this is the half that answers "is this the one I wrote this
 # morning" without arithmetic.
 ago() {
-  local then="$1" now diff
-  now=$(date +%s)
+  local then="$1" diff
   diff=$((now - then))
   ((diff < 0)) && diff=0
   if ((diff < 3600)); then
@@ -159,6 +358,19 @@ ago() {
   fi
 }
 
+# The note --save wrote a moment ago, if it was recent enough to still be the
+# answer to "did that work". Only ever one, and only ever the one this run of
+# the launcher just asked for.
+fresh_path=""
+if [[ -f $SAVED_STAMP ]]; then
+  stamped=$(stat -c %Y "$SAVED_STAMP" 2>/dev/null || printf 0)
+  if ((now - stamped >= 0 && now - stamped <= FRESH_SECONDS)); then
+    fresh_path=$(<"$SAVED_STAMP")
+  fi
+fi
+
+build_editors
+
 # Named arguments, not positional ones. `jq --args` still reads a leading `--`
 # as one of its own options, so `note:--save` reached jq as an unknown flag and
 # the whole answer came back as an error on stderr and nothing on stdout.
@@ -166,16 +378,73 @@ row() {
   jq -cn \
     --arg id "$1" --arg title "$2" --arg subtitle "$3" --arg detail "$4" \
     --arg excerpt "$5" --arg kind "$7" --arg exec "$8" \
-    --argjson words "$6" --argjson score "$9" --argjson actions "${10}" '
+    --argjson words "$6" --argjson score "$9" --argjson actions "${10}" \
+    --argjson fresh "${11:-false}" '
     { id: $id, title: $title, subtitle: $subtitle, detail: $detail,
       excerpt: $excerpt, preview: $excerpt, words: $words,
       kind: $kind, exec: $exec, score: $score, view: "notes",
-      actions: $actions }'
+      fresh: $fresh, actions: $actions }'
 }
 
-# The row that writes. First whenever there is anything to name a note after,
-# and it says which of the two things it is about to do, because "New note" over
-# a name that already exists would be a lie the moment it ran.
+# Every way out of one note that already exists: each installed editor, then the
+# things you do with a note without opening it. One jq call, because this runs
+# once per row per keystroke and a fork per editor would be a dozen processes to
+# draw a list of six files.
+note_actions() {
+  local quoted
+  quoted=$(printf '%q' "$1")
+  jq -cn --arg q "$quoted" --args '
+    ( [ range(0; ($ARGS.positional | length); 3) as $i
+        | { title: ("Open in " + $ARGS.positional[$i + 1]),
+            exec: ($ARGS.positional[$i + 2] | gsub("\\{\\}"; $q)) } ]
+      | if length > 0 then (.[0].shortcut = "↵") else . end )
+    + [ { title: "Copy Contents", exec: ("wl-copy < " + $q) },
+        { title: "Copy Path", exec: ("printf %s " + $q + " | wl-copy") },
+        { title: "Reveal in Files", exec: ("nautilus --select " + $q) },
+        { title: "Move to Wastebasket", exec: ("omacast-note --trash " + $q) } ]
+  ' "${EDITORS[@]}"
+}
+
+# The same list for text that is not a note yet: save, then save and open in
+# each editor.
+#
+# Enter saves and stays here. That is the whole of the first fix: saving used to
+# close the launcher, so you typed a thought, the window went away, and nothing
+# on screen said whether anything had been written. The `query` on the first
+# action is what the launcher reads to mean "run this, then ask me again with
+# this text in the box": it re-enters `note:` mode, and the note that was just
+# written is at the top of it, saying so.
+new_actions() {
+  local quoted
+  quoted=$(printf '%q' "$1")
+  jq -cn --arg q "$quoted" --args '
+    [ { title: "Save Note", shortcut: "↵",
+        exec: ("omacast-note --save " + $q), query: "note:" } ]
+    + [ range(0; ($ARGS.positional | length); 3) as $i
+        | { title: ("Save and Open in " + $ARGS.positional[$i + 1]),
+            exec: ("omacast-note --open " + $ARGS.positional[$i] + " " + $q) } ]
+    + [ { title: "Copy Text", exec: ("printf %s " + $q + " | wl-copy") } ]
+  ' "${EDITORS[@]}"
+}
+
+# Rows are held rather than printed as they are found, because the line at the
+# top of the mode counts them and the count is only known once the last one has
+# been looked at. It goes on the first row, which is the only one the view
+# reads it from.
+out=()
+
+# ---- the row that writes
+#
+# First whenever there is anything to name a note after, and it says which of
+# the two things it is about to do, because "New note" over a name that already
+# exists would be a lie the moment it ran.
+#
+# It stays at the top rather than moving under the notes, even in mode. Where it
+# sits decides what Enter does, and Enter has to mean the same thing every time:
+# a write row that sank below the matches would turn "type the thought, press
+# Enter" into "type the thought, press Enter, open whichever old note happened
+# to match". A bare `note:` has nothing to write, so there is no row at all and
+# the notes lead on their own.
 name=""
 [[ -n $query ]] && name=$(slug "$query")
 
@@ -186,84 +455,145 @@ if [[ -n $name ]]; then
   target="$dir/$name.md"
 
   if [[ -f $target ]]; then
-    kind="open"
-    label="Open “$query”"
-    hint="This note already exists"
-    primary="omawrite $(printf '%q' "$target")"
-    acts=$(jq -cn --arg e "$primary" --arg p "$target" \
-      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
-        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")}]')
+    acts=$(note_actions "$target")
+    out+=("$(row "new:$name" "Open “$query”" "This note already exists" \
+      "$name.md" "" 0 "open" \
+      "$(jq -r '.[0].exec // ""' <<<"$acts")" 99000 "$acts")")
   else
-    kind="new"
-    label="$query"
-    hint="Save as a new note"
-    primary="omacast-note --save $(printf '%q' "$query")"
-    # Enter saves and gets out of the way, because that is what typing a thought
-    # into a launcher is for. Opening the editor is the second action rather
-    # than the first: it is the slower half, and it used to be the half that
-    # decided whether anything was saved at all.
-    acts=$(jq -cn --arg e "$primary" --arg o "omacast-note --open $(printf '%q' "$query")" \
-      --arg q "$query" \
-      '[{title: "Save Note", shortcut: "↵", exec: $e},
-        {title: "Save and Open in Omawrite", exec: $o},
-        {title: "Copy Text", exec: ("printf %s " + ($q | @sh) + " | wl-copy")}]')
+    acts=$(new_actions "$query")
+    out+=("$(row "new:$name" "$query" "Save as a new note" \
+      "$name.md" "" 0 "new" \
+      "omacast-note --save $(printf '%q' "$query")" 99000 "$acts")")
   fi
-
-  row "new:$name" "$label" "$hint" "$name.md" "" 0 "$kind" "$primary" 99000 "$acts"
 fi
 
-[[ -d $dir ]] || exit 0
+# ---- the notes themselves
 
-# Existing notes, newest first, because the note you want is nearly always one
-# you touched recently. A match on the title outranks a match buried in the
-# text: you remember what you called it more often than you remember a phrase
-# halfway down it.
-index=0
-while IFS=$'\t' read -r -d '' modified file; do
-  modified=${modified%%.*}
-  base=$(basename "$file" .md)
+total=0
+matched=0
+fresh_seen=0
 
-  title=$(grep -m1 '^#\+ ' "$file" 2>/dev/null | sed 's/^#\+ *//')
-  [[ -z $title ]] && title="$base"
+if [[ -d $dir ]]; then
+  # One find, read into an array, so the total is known before the first row is
+  # built. Newest first, because the note you want is nearly always one you
+  # touched recently.
+  mapfile -d '' -t entries < <(
+    find "$dir" -maxdepth 2 -name '*.md' -type f -printf '%T@\t%p\0' 2>/dev/null |
+      sort -z -rn
+  )
 
-  # Everything that is not the title line, with the blank lines squeezed out, so
-  # the excerpt on the card starts at the first real sentence rather than at the
-  # gap under the heading.
-  body=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -c 2000)
+  for entry in "${entries[@]}"; do
+    [[ -n $entry ]] || continue
+    modified=${entry%%$'\t'*}
+    file=${entry#*$'\t'}
+    modified=${modified%%.*}
+    total=$((total + 1))
 
-  if [[ -n $query ]]; then
-    if [[ ${title,,} == *"${query,,}"* || ${base,,} == *"${query,,}"* ]]; then
-      base_score=88000
-    elif [[ ${body,,} == *"${query,,}"* ]]; then
-      base_score=80000
+    base=$(basename "$file" .md)
+
+    title=$(grep -m1 '^#\+ ' "$file" 2>/dev/null | sed 's/^#\+ *//')
+    [[ -z $title ]] && title="$base"
+
+    # Everything that is not the title line, with the blank lines squeezed out,
+    # so the excerpt on the card starts at the first real sentence rather than
+    # at the gap under the heading.
+    body=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -c 2000)
+
+    # A match on the title outranks a match buried in the text: you remember
+    # what you called it more often than you remember a phrase halfway down it.
+    if [[ -n $query ]]; then
+      if [[ ${title,,} == *"${query,,}"* || ${base,,} == *"${query,,}"* ]]; then
+        base_score=88000
+      elif [[ ${body,,} == *"${query,,}"* ]]; then
+        base_score=80000
+      else
+        continue
+      fi
     else
-      continue
+      base_score=88000
     fi
+
+    matched=$((matched + 1))
+
+    # Past what the card could ever draw, a match is only worth counting. Every
+    # row costs two jq calls and two other forks, and a folder of two hundred
+    # notes would spend all of them building rows the view discards before it
+    # measures anything. The count above the list still says how many there are.
+    ((matched > ROW_LIMIT)) && continue
+
+    # The body's words, not the file's. A capture that is only a title is zero
+    # words long, and saying "13 words" about it would make an empty note look
+    # like one somebody had written in.
+    words=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | wc -w)
+    words=${words:-0}
+
+    # The one that was just saved says so where the date goes, and the view
+    # gives it the accent. Newest first already puts it at the top; this is what
+    # makes it recognisable as the thing that just happened rather than as the
+    # note that happens to be first today.
+    if [[ $file == "$fresh_path" ]]; then
+      stamp="Saved just now"
+      fresh=true
+      fresh_seen=1
+    else
+      stamp=$(ago "$modified")
+      fresh=false
+    fi
+
+    acts=$(note_actions "$file")
+
+    out+=("$(row "$file" "$title" "$stamp" \
+      "$(date -d "@$modified" '+%-d %b %Y' 2>/dev/null)" \
+      "${body:0:400}" "$words" "note" \
+      "$(jq -r '.[0].exec // ""' <<<"$acts")" \
+      "$((base_score - matched))" "$acts" "$fresh")")
+  done
+fi
+
+# ---- the line at the top of the mode
+#
+# What mode you are in and how much is in it, in one line above the first card.
+# `note:` with nothing typed used to be indistinguishable from `note:` that had
+# found nothing, and there was no way to tell six notes from six matches out of
+# sixty.
+if ((total == 1)); then
+  tally="1 note"
+else
+  tally="$total notes"
+fi
+if [[ -n $query ]] && ((matched != total)); then
+  # "0 of 7 notes" is arithmetic about an empty list. While you are typing
+  # something to capture, nothing matching is the normal case and the useful
+  # half of the line is how many notes there are to come back to.
+  if ((matched == 0)); then
+    tally="Nothing matches · $tally"
   else
-    base_score=88000
+    tally="$matched of $total notes"
   fi
+fi
+((fresh_seen == 1)) && tally="$tally · 1 new"
 
-  # The body's words, not the file's. A capture that is only a title is zero
-  # words long, and saying "13 words" about it would make an empty note look
-  # like one somebody had written in.
-  words=$(sed '0,/^#\+ /{/^#\+ /d}' "$file" 2>/dev/null | wc -w)
-  words=${words:-0}
+# Nothing at all: no notes on disk and nothing typed to make one from. A mode
+# that answers with a blank card reads as broken, so it says what it is and
+# offers the only thing there is to do here.
+if ((${#out[@]} == 0)); then
+  ((total > 0)) && exit 0
+  quoted_dir=$(printf '%q' "$dir")
+  # The subtitle is drawn hard against the right edge where a date would be, so
+  # it has to be short: anything longer than a date elides to nothing useful.
+  out+=("$(row "empty" "No notes yet" "Type to write one" \
+    "$dir" "" 0 "empty" "nautilus $quoted_dir" 99000 \
+    "$(jq -cn --arg d "$quoted_dir" \
+      '[{title: "Open Notes Folder", shortcut: "↵", exec: ("nautilus " + $d)}]')")")
+  tally=""
+fi
 
-  open="omawrite $(printf '%q' "$file")"
+# The count rides on the first row because that is the one the view draws the
+# line above. Added here rather than threaded through `row`, so nothing above
+# has to know a total it could not have finished counting yet.
+if [[ -n $tally ]]; then
+  out[0]=$(jq -c --arg t "$tally" '.tally = $t' <<<"${out[0]}")
+fi
 
-  row "$file" "$title" "$(ago "$modified")" \
-    "$(date -d "@$modified" '+%-d %b %Y' 2>/dev/null)" \
-    "${body:0:400}" "$words" "note" "$open" "$((base_score - index))" \
-    "$(jq -cn --arg e "$open" --arg p "$file" \
-      '[{title: "Open in Omawrite", shortcut: "↵", exec: $e},
-        {title: "Copy Contents", exec: ("wl-copy < " + ($p | @sh))},
-        {title: "Copy Path", exec: ("printf %s " + ($p | @sh) + " | wl-copy")},
-        {title: "Reveal in Files", exec: ("nautilus --select " + ($p | @sh))},
-        {title: "Move to Wastebasket",
-         exec: ("omacast-note --trash " + ($p | @sh))}]')"
-
-  index=$((index + 1))
-done < <(find "$dir" -maxdepth 2 -name '*.md' -type f -printf '%T@\t%p\0' 2>/dev/null |
-  sort -z -rn)
-
+printf '%s\n' "${out[@]}"
 exit 0

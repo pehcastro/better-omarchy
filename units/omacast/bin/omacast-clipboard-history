@@ -15,29 +15,66 @@ HISTORY="$HOME/.local/state/omarchy/clipboard-history.json"
 
 [[ -f $HISTORY ]] || exit 0
 
-jq -c --arg q "${query,,}" '
-  [ .[]?
-    | select((.text // "") != "" or (.path // "") != "")
-    | select($q == "" or ((.text // "") | ascii_downcase | contains($q)))
-  ]
-  | to_entries[]
+# Three caps, because one entry can be enormous and this runs on every
+# keystroke. The overlay that writes the file stores whatever was copied, and a
+# single 1.2MB paste made `ch:the` cost 537ms of jq per keystroke: 33 times the
+# whole rest of the answer. None of these caps change which entries exist, only
+# how much of one entry is read, drawn, or carried on a command line.
+#
+# SCAN: how far into an entry a query is matched. Searching a copied file is
+# looking for something you recognise near the start of it, not word 200,000.
+SCAN=32768
+# PREVIEW: how much of an entry reaches the preview pane. Every row's preview
+# is held in memory by the launcher for as long as the rows are on screen, and
+# nobody reads a megabyte in a side panel.
+PREVIEW=4000
+# INLINE: the largest entry still pasted by putting it on a command line.
+# Anything bigger is re-read from the file by index instead: ARG_MAX is about
+# 2MB and a `printf %s <1.2MB> | wl-copy` is a failure waiting for a slightly
+# longer paste.
+INLINE=65536
+
+# The jq program the oversized branch below writes into a shell command. It
+# travels as an argument because it contains the single quotes that would
+# otherwise end the program you are reading.
+PICK='.[$i].text // ""'
+
+jq -c --arg q "${query,,}" --arg hist "$HISTORY" --arg pick "$PICK" \
+  --argjson scan "$SCAN" --argjson prev "$PREVIEW" --argjson inline "$INLINE" '
+  # to_entries first, so $i is the entry position in the history and not in
+  # whatever the query happened to match. That is what makes the re-read below
+  # point at the right entry, and it keeps the score meaning "how recent".
+  to_entries[]
   | .key as $i
   | .value as $v
   | ($v.text // "") as $text
+  | select($text != "" or ($v.path // "") != "")
+  | select($q == "" or (($text[0:$scan]) | ascii_downcase | contains($q)))
   | (($v.mime // "") | startswith("image/")) as $isImage
+  | ($text[0:$prev]) as $short
   | {
       id: ($v.path // ($text[0:64] + ($i | tostring))),
       # An entry that is an image has no useful text, so it is named by its
       # kind and shown in the preview pane instead.
       title: (if $isImage
               then "Image  ·  " + (($v.path // "") | split("/") | last)
-              else ($text | gsub("\\s+"; " ") | .[0:70])
+              else ($short | gsub("\\s+"; " ") | .[0:70])
               end),
       subtitle: "",
-      preview: (if $isImage then "" else $text end),
+      preview: (if $isImage then ""
+                elif ($text | length) > $prev
+                then $short + "\n\n… " + (($text | length) - $prev | tostring)
+                     + " more characters. Enter copies all of it."
+                else $text
+                end),
       art: (if $isImage then ("file://" + ($v.path // "")) else "" end),
       exec: (if $isImage
              then ("omarchy-clipboard-paste-file --copy-only " + (($v.mime // "") | @sh) + " " + (($v.path // "") | @sh))
+             elif ($text | length) > $inline
+             # Read back out of the file rather than carried here. The whole
+             # entry still reaches the clipboard; it just never travels as an
+             # argument.
+             then ("jq -j --argjson i " + ($i | tostring) + " " + ($pick | @sh) + " " + ($hist | @sh) + " | wl-copy")
              else ("printf %s " + ($text | @sh) + " | wl-copy")
              end),
       score: (95000 - ($i * 100))

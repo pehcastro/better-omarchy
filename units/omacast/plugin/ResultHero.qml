@@ -62,8 +62,14 @@ Column {
       anchors.leftMargin: Style.space(24)
       anchors.verticalCenter: parent.verticalCenter
 
-      layer.enabled: true
-      layer.effect: null
+      // Off the main thread, or a hero with a large picture stalls the frame
+      // that was meant to show it.
+      asynchronous: true
+
+      // Not cached, for the reason spelled out in ResultFiles.qml: Qt keeps
+      // every decoded image by URL for the life of the process, and the hero
+      // draws a different picture for every answer that has one.
+      cache: false
     }
 
     Column {

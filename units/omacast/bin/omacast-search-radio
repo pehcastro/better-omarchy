@@ -281,16 +281,13 @@ now_playing() {
        id: "now",
        kind: "player",
        view: "radioplayer",
-       # The ceiling of a row's own score, not a comfortable margin above the
+       # The ceiling of what a row can score for itself, not a margin above the
        # stations. `local` is clamped to 99999 and never crosses a tier, so this
        # is the highest a row in this answer can rank and the player cannot be
        # pushed down the list by a station the ranker happens to like. The view
        # no longer depends on that, but a player that is not first is still
        # wrong, and this is where it is cheapest to say so.
        score: 99999,
-       # Where an action lands afterwards. The view rewrites the first action to
-       # whichever control is armed and needs to keep this on it.
-       followUp: $followUp,
        title: $t,
        subtitle: $s,
        station: $station,
@@ -352,7 +349,17 @@ stations() {
   [[ -s $file ]] && age=$(( $(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0) ))
   if [[ ! -s $file ]] || (( age >= LIST_TTL )); then
     body=$(curl -sf --max-time 6 -H "User-Agent: $AGENT" "$url" 2>/dev/null)
-    [[ -n $body ]] && printf '%s' "$body" >"$file"
+    if [[ -n $body ]] && printf '%s' "$body" >"$file"; then
+      # One file per distinct search, and nothing ever removed one. The TTL
+      # above only decided what to serve: typing `radio:jazz` and then
+      # `radio:jazzy` left two files on disk forever, and a year of idle
+      # curiosity left a year of them. Anything past ten minutes is already
+      # refetched on sight, so deleting it costs nothing that was going to be
+      # used. Done here rather than on read, so answering from the cache stays
+      # one `stat` and one `jq`.
+      find "$CACHEDIR" -maxdepth 1 -name 'radio-*.json' \
+        -mmin +"$(( LIST_TTL / 60 + 1 ))" -delete 2>/dev/null
+    fi
   fi
 
   # Nothing cached and nothing fetched: no rows, no noise, no error. A launcher

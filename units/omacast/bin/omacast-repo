@@ -486,8 +486,41 @@ CACHE_FORMAT=3
 # to be migrated.
 SEP=$'\x1f'
 
-state_cache="${XDG_CACHE_HOME:-$HOME/.cache}/omacast/v$CACHE_FORMAT/repo-state"
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/omacast"
+state_cache="$cache_root/v$CACHE_FORMAT/repo-state"
 mkdir -p "$state_cache" 2>/dev/null
+
+# One file per repo, keyed by a hash of its path. The loop below rewrites an
+# entry on every hit so its mtime says when it was last wanted, which was
+# always the intent; what was missing is anything that reads those mtimes. A
+# repo you deleted last year still had an entry, and every bump of CACHE_FORMAT
+# left the whole previous directory behind.
+#
+# Once per run, before the loop: this walks the directory and the loop does not.
+# 300 is far more repos than anybody has; it is a ceiling, not a working set.
+CACHE_KEEP=300
+prune_state_cache() {
+  # Every other format's copy of this cache, and only this cache: the same
+  # version directory also holds git-branches and git-stashes, which are on
+  # their own version numbers.
+  local old
+  for old in "$cache_root"/v*/repo-state; do
+    [[ -d $old && $old != "$state_cache" ]] && rm -rf -- "$old"
+  done
+
+  # Counted with a glob and not with `find`, because this runs on every
+  # keystroke and the common answer is "nothing to do". A glob costs no
+  # process; the walk below only happens on the run that goes over.
+  local entries=("$state_cache"/*)
+  [[ -e ${entries[0]:-} ]] || return 0
+  local count=${#entries[@]}
+  ((count > CACHE_KEEP)) || return 0
+
+  find "$state_cache" -maxdepth 1 -type f -printf '%T@\t%p\n' 2>/dev/null |
+    sort -n | head -n "$((count - CACHE_KEEP))" | cut -f2- |
+    tr '\n' '\0' | xargs -0 -r rm -f -- 2>/dev/null
+}
+prune_state_cache
 
 repo_stamp() {
   local gitdir="$1" newest=0 f t

@@ -119,9 +119,38 @@ auth_fingerprint() {
 FP=$(auth_fingerprint)
 mkdir -p "$CACHE_DIR" 2>/dev/null
 
+# A fingerprint change retires every entry written under the old one. It does
+# not bound anything under the current one, and there is one entry per
+# repository per view: `pr:` and `issue:` and `ci:` across a year of work is a
+# directory that only grows. This walk is already happening, so counting during
+# it is free and the eviction below only runs on the walk that goes over.
+#
+# 200 is far more repositories than anybody has open questions about. Entries
+# are a few kilobytes and the oldest go first, so the cost of being evicted is
+# one request the next time that repo is typed.
+CACHE_KEEP=200
+kept=0
 for stale in "$CACHE_DIR"/*.json; do
   [[ -e $stale ]] || continue
-  [[ ${stale##*/} == "$FP-"* ]] || rm -f -- "$stale" "$stale.lock"
+  if [[ ${stale##*/} == "$FP-"* ]]; then
+    kept=$((kept + 1))
+  else
+    rm -f -- "$stale" "$stale.lock"
+  fi
+done
+
+if ((kept > CACHE_KEEP)); then
+  find "$CACHE_DIR" -maxdepth 1 -name "$FP-*.json" -printf '%T@\t%p\n' 2>/dev/null |
+    sort -n | head -n "$((kept - CACHE_KEEP))" | cut -f2- |
+    while IFS= read -r drop; do rm -f -- "$drop" "$drop.lock"; done
+fi
+
+# `warm` opens a lock beside every file it writes and nothing closes the file
+# out. One left without its answer is a request that failed and was never
+# retried into existence, and it stays as a zero-byte file forever.
+for orphan in "$CACHE_DIR"/*.json.lock; do
+  [[ -e $orphan ]] || continue
+  [[ -e ${orphan%.lock} ]] || rm -f -- "$orphan"
 done
 
 key_for() { printf '%s' "$*" | md5sum | cut -c1-16; }

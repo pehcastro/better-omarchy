@@ -71,6 +71,11 @@ ListView {
         sourceSize.width: width * Screen.devicePixelRatio
         sourceSize.height: height * Screen.devicePixelRatio
         asynchronous: true
+
+        // Not cached, for the reason spelled out in ResultFiles.qml: Qt keeps
+        // every decoded image by URL for the life of the process, and a card's
+        // art is whatever the extension pointed at for this one query.
+        cache: false
       }
 
       // Shown while the art loads, and left in place when there is none.

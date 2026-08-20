@@ -103,6 +103,19 @@ Item {
       horizontalAlignment: Image.AlignLeft
       verticalAlignment: Image.AlignTop
       asynchronous: true
+
+      // Without this, Qt decodes the file at its own resolution and keeps it
+      // there: a 4000 pixel photograph costs about 48MB of memory to draw in a
+      // preview pane a few hundred pixels wide. Every other view in here caps
+      // its decode; this one did not.
+      sourceSize.width: Math.max(1, Math.round(width * Screen.devicePixelRatio))
+      sourceSize.height: Math.max(1, Math.round(height * Screen.devicePixelRatio))
+
+      // Not cached, for the reason spelled out in ResultFiles.qml: Qt keeps
+      // every decoded image by URL for the life of the process, and the
+      // preview pane draws one new URL per row the selection passes over.
+      // Arrowing down a clipboard history of screenshots retained all of them.
+      cache: false
     }
 
     Text {

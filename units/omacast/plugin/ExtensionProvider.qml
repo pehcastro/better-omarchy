@@ -5,6 +5,7 @@ import "Query.js" as Query
 import "Rank.js" as Rank
 import "Extensions.js" as Extensions
 import "Cache.js" as Cache
+import "Availability.js" as Availability
 
 // One instance per extension. It owns a Process, a debounce timer, and the
 // epoch bookkeeping that keeps a slow answer from arriving after the question
@@ -25,10 +26,12 @@ Item {
   // So a failed check is re-run when you actually type the keyword, at most
   // every fifteen seconds. A passing check is never re-run: software rarely goes
   // away mid-session, and the cost of being wrong there is one empty answer.
+  //
+  // Both of those rules now live in Availability.js rather than here, because
+  // this object is destroyed and rebuilt on every launcher open and the answer
+  // is not. See the header of that file.
   property bool available: true
   property bool checked: false
-  property double lastCheck: 0
-  readonly property int recheckMs: 15000
 
   property int inflightEpoch: -1
   property int pendingEpoch: -1
@@ -80,10 +83,11 @@ Item {
     if (!prov.available) {
       // Only a query that names this keyword pays for a re-check, so an
       // unavailable extension still costs nothing while you type anything else.
+      // Availability.get returning null is the library saying the last failure
+      // is old enough to be worth asking about again.
       if (ext.when !== "" && claims(q) && !availability.running
-          && Date.now() - prov.lastCheck > prov.recheckMs) {
+          && Availability.get(ext.when, Date.now()) === null) {
         prov.recheckQuery = q
-        prov.lastCheck = Date.now()
         availability.command = ["bash", "-lc", ext.when]
         availability.running = true
       }
@@ -251,6 +255,12 @@ Item {
   // The one place an answer becomes rows on screen, so the cache write and the
   // refresh arming cannot be forgotten by one of the three callers.
   function deliver(parsed) {
+    // Trimmed before it is cached, not only when it is drawn. `maxRows` is the
+    // only thing bounding how big one answer is, and a script that prints five
+    // thousand rows had all five thousand held in the library cache for the
+    // life of the shell while only the first `maxRows` were ever shown.
+    if (parsed.length > ext.maxRows) parsed = parsed.slice(0, ext.maxRows)
+
     Cache.put(prov.id, prov.inflightKey, parsed, ext.cacheMs, Date.now())
     prov.liveKey = prov.inflightKey
     prov.liveCommand = prov.inflightCommand
@@ -342,9 +352,28 @@ Item {
       prov.checked = true
       return
     }
-    prov.lastCheck = Date.now()
+
+    // Asked once per distinct check per session, not once per provider per
+    // summon. Without this the launcher forked one login shell per extension
+    // with a `when` every single time it opened.
+    var known = Availability.get(ext.when, Date.now())
+    if (known !== null) {
+      prov.available = known
+      prov.checked = true
+      return
+    }
+
     availability.command = ["bash", "-lc", ext.when]
     availability.running = true
+  }
+
+  // The socket, the process and the timers all belong to this object, and this
+  // object is destroyed on every launcher open. Closing the connection here
+  // rather than leaving it to collection means the daemon on the other end
+  // sees the hangup at a moment we chose.
+  Component.onDestruction: {
+    prov.cancel()
+    if (pipe.connected) pipe.connected = false
   }
 
   Process {
@@ -352,6 +381,7 @@ Item {
     onExited: function (code) {
       prov.available = code === 0
       prov.checked = true
+      Availability.put(ext ? ext.when : "", prov.available, Date.now())
 
       var replay = prov.recheckQuery
       prov.recheckQuery = null
