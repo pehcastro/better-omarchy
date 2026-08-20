@@ -1,9 +1,10 @@
 name     = "undo-close"
 summary  = "Reopen the window you closed last"
-version  = "0.1.0"
+version  = "0.2.0"
 category = "Productivity"
 tags     = ["hyprland","windows"]
 author   = "pehcastro"
 kind     = "hypr"
 needs    = ["hyprctl", "socat", "jq"]
 keys     = ["SUPER+Z"]
+touches  = ["displaced:command:omarchy-window-reopen", "displaced:command:omarchy-window-history-daemon", "rebound:key:SUPER+Z", "keeps:file:~/.local/state/omarchy/closed-windows"]

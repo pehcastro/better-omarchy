@@ -1,6 +1,6 @@
 name     = "omacast"
-summary  = "A launcher: apps, maths, files, music, notes and the web in one box"
-version  = "0.3.0"
+summary  = "A launcher with 41 keywords: repos, containers, processes, timezones, music, files and the web"
+version  = "0.4.0"
 category = "Productivity"
 tags     = ["launcher", "overlay", "quickshell"]
 author   = "pehcastro"
@@ -8,3 +8,24 @@ kind     = "plugin"
 id       = "bo.omacast"
 needs    = ["qalc", "jq", "curl", "fd", "busctl", "mpv", "python3"]
 keys     = ["SUPER+K", "SUPER+H"]
+
+# Everything here is yours and survives `bo remove`. Caches are deliberately
+# absent: ~/.cache/omacast and ~/.local/state/omarchy/omacast-gh and
+# omacast-repos.list are all rebuilt on demand and each bounds itself, so
+# naming them would only promise to keep something that was never worth
+# keeping. What is named is what you cannot get back by asking again: your
+# settings, your snippets, your ranking, your pins and recent queries, your
+# calculations, the faces you reach for, your Spotify credentials, and the
+# repository you pinned.
+touches = [
+  "rebound:key:SUPER+K",
+  "rebound:key:SUPER+H",
+  "keeps:file:~/.config/omarchy/omacast.json",
+  "keeps:file:~/.config/omarchy/omacast-snippets.json",
+  "keeps:file:~/.local/state/omarchy/omacast-frecency.json",
+  "keeps:file:~/.local/state/omarchy/omacast-state.json",
+  "keeps:file:~/.local/state/omarchy/omacast-calc-history.json",
+  "keeps:file:~/.local/state/omarchy/omacast-emoji-recent",
+  "keeps:file:~/.local/state/omarchy/omacast-spotify.json",
+  "keeps:file:~/.local/state/omarchy/omacast-repo",
+]

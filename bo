@@ -13,6 +13,7 @@ set -uo pipefail
 
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/better-omarchy"
 MARKETS_DIR="$DATA_DIR/marketplaces"
+LOCAL_FILE="$DATA_DIR/local"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/better-omarchy"
 LINKED_FILE="$STATE_DIR/linked"
 INSTALLED="$STATE_DIR/installed.json"
@@ -145,6 +146,425 @@ with open(os.path.join(root, "registry.json"), "w") as handle:
     handle.write("\n")
 '
 
+# Writes the bare record a unit gets when it declares a `replaces` and nothing
+# was found in that slot at install time.
+
+SNAPSHOT_PY='
+import hashlib, json, os, sys, time
+
+MODE = os.environ["BO_SNAP_MODE"]
+REF = os.environ["BO_SNAP_REF"]
+ROOT = os.environ["BO_SNAP_DIR"]
+CONFIG = os.environ.get("BO_SNAP_SHELL", "")
+
+MANIFEST = os.path.join(ROOT, "manifest.json")
+VALUES = os.path.join(ROOT, "values")
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def read_shell():
+    try:
+        with open(CONFIG) as handle:
+            return json.load(handle)
+    except Exception:
+        return None
+
+
+def write_shell(shell):
+    with open(CONFIG, "w") as handle:
+        json.dump(shell, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+# ------------------------------------------------------------------ reading
+#
+# One reader per kind. Each answers with a value that says "absent" as loudly as
+# it says anything else, because absent is the case the bar widget bug was made
+# of: something was there before and nothing was after, and a restore that only
+# knows how to put files back cannot express that.
+
+def read_file(path, slot):
+    path = os.path.expanduser(path)
+    if os.path.islink(path):
+        return {"present": True, "type": "link", "target": os.readlink(path)}
+    if not os.path.exists(path):
+        return {"present": False}
+    try:
+        with open(path, "rb") as handle:
+            body = handle.read()
+    except OSError:
+        return {"present": False}
+    if slot is not None:
+        os.makedirs(VALUES, exist_ok=True)
+        with open(os.path.join(VALUES, slot), "wb") as handle:
+            handle.write(body)
+    return {"present": True, "type": "file", "hash": digest(body),
+            "file": slot, "mode": oct(os.stat(path).st_mode & 0o777)}
+
+
+def read_barwidget(wid, _slot):
+    shell = read_shell()
+    if shell is None:
+        return {"present": False}
+    layout = shell.get("bar", {}).get("layout", {})
+    for section, widgets in layout.items():
+        for index, widget in enumerate(widgets):
+            if isinstance(widget, dict) and widget.get("id") == wid:
+                body = json.dumps(widget, sort_keys=True).encode()
+                return {"present": True, "type": "barwidget", "value": widget,
+                        "section": section, "index": index, "hash": digest(body)}
+    return {"present": False}
+
+
+def read_shelljson(dotted, _slot):
+    shell = read_shell()
+    if shell is None:
+        return {"present": False}
+    node = shell
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return {"present": False}
+        node = node[part]
+    body = json.dumps(node, sort_keys=True).encode()
+    return {"present": True, "type": "shelljson", "value": node, "hash": digest(body)}
+
+
+def read_command(name, _slot):
+    for folder in os.environ.get("PATH", "").split(":"):
+        candidate = os.path.join(folder, name)
+        if os.path.islink(candidate):
+            return {"present": True, "type": "link", "target": os.readlink(candidate),
+                    "at": candidate}
+        if os.path.exists(candidate):
+            return {"present": True, "type": "file", "at": candidate,
+                    "hash": digest(open(candidate, "rb").read())}
+    return {"present": False}
+
+
+
+MODMASK = {"SHIFT": 1, "CAPS": 2, "CTRL": 4, "ALT": 8, "MOD2": 16,
+           "MOD3": 32, "SUPER": 64, "MOD5": 128}
+
+
+def read_key(spec, _slot):
+    # The compositor is asked rather than a config file parsed: a binding can
+    # come from any of several files and only Hyprland knows which one won. The
+    # value is what the key does, which is the thing somebody has in their
+    # fingers and the only thing worth comparing across months.
+    import subprocess
+    parts = [p.strip().upper() for p in spec.replace("-", "+").split("+") if p.strip()]
+    if not parts:
+        return {"present": False}
+    want_key, mods = parts[-1], parts[:-1]
+    mask = 0
+    for mod in mods:
+        mask |= MODMASK.get(mod, 0)
+    try:
+        out = subprocess.run(["hyprctl", "binds", "-j"], capture_output=True,
+                             text=True, timeout=5).stdout
+        binds = json.loads(out)
+    except Exception:
+        return {"present": False}
+    for bind in binds:
+        if bind.get("modmask") != mask:
+            continue
+        if str(bind.get("key", "")).upper() != want_key:
+            continue
+        what = bind.get("description") or ""
+        body = json.dumps({"d": bind.get("dispatcher"), "a": bind.get("arg"),
+                           "w": what}, sort_keys=True).encode()
+        return {"present": True, "type": "key", "hash": digest(body),
+                "what": what or (str(bind.get("dispatcher")) + " " + str(bind.get("arg"))),
+                "dispatcher": bind.get("dispatcher"), "arg": bind.get("arg")}
+    return {"present": False}
+
+
+def put_key(_spec, _value):
+    # Deliberately not written. A binding lives in whichever of somebody hypr
+    # files they keep their own in, and bo guessing at that is how a config
+    # gets a line nobody asked for. The proposal prints what to paste instead.
+    return "manual"
+
+READERS = {"file": read_file, "key": read_key, "barwidget": read_barwidget,
+           "shelljson": read_shelljson, "command": read_command}
+
+
+# ------------------------------------------------------------------ writing
+
+def put_file(path, value):
+    path = os.path.expanduser(path)
+    if not value.get("present"):
+        if os.path.islink(path) or os.path.exists(path):
+            os.remove(path)
+        return "removed"
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    if os.path.islink(path) or os.path.exists(path):
+        os.remove(path)
+    if value.get("type") == "link":
+        os.symlink(value["target"], path)
+        return "relinked"
+    body = open(os.path.join(VALUES, value["file"]), "rb").read()
+    if digest(body) != value.get("hash"):
+        return "refused"
+    with open(path, "wb") as handle:
+        handle.write(body)
+    if value.get("mode"):
+        os.chmod(path, int(value["mode"], 8))
+    return "restored"
+
+
+def put_barwidget(wid, value):
+    shell = read_shell()
+    if shell is None:
+        return "skipped"
+    layout = shell.setdefault("bar", {}).setdefault("layout", {})
+
+    for section in layout:
+        layout[section] = [w for w in layout[section]
+                           if not (isinstance(w, dict) and w.get("id") == wid)]
+
+    if not value.get("present"):
+        write_shell(shell)
+        return "removed"
+
+    section = value.get("section") or ""
+    if value.get("assumed") and os.environ.get("BO_SNAP_STANDIN"):
+        for name, widgets in layout.items():
+            for at, widget in enumerate(widgets):
+                if isinstance(widget, dict) and widget.get("id") == os.environ["BO_SNAP_STANDIN"]:
+                    section, value = name, dict(value, index=at)
+                    break
+            if section:
+                break
+    if section not in layout:
+        section = "left" if "left" in layout else next(iter(layout), "")
+    if not section:
+        return "skipped"
+    index = value.get("index", -1)
+    if index is None or index < 0 or index > len(layout[section]):
+        index = len(layout[section])
+    layout[section].insert(index, value["value"])
+    write_shell(shell)
+    return "restored"
+
+
+def put_shelljson(dotted, value):
+    shell = read_shell()
+    if shell is None:
+        return "skipped"
+    parts = dotted.split(".")
+    node = shell
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    if not value.get("present"):
+        node.pop(parts[-1], None)
+        write_shell(shell)
+        return "removed"
+    node[parts[-1]] = value["value"]
+    write_shell(shell)
+    return "restored"
+
+
+def put_command(name, value):
+    if not value.get("present"):
+        return "skipped"
+    at = value.get("at")
+    if not at:
+        return "skipped"
+    return put_file(at, value)
+
+
+PUTTERS = {"file": put_file, "key": put_key, "barwidget": put_barwidget,
+           "shelljson": put_shelljson, "command": put_command}
+
+
+def load():
+    with open(MANIFEST) as handle:
+        return json.load(handle)
+
+
+def save(data):
+    os.makedirs(ROOT, exist_ok=True)
+    with open(MANIFEST, "w") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+def same(a, b):
+    if not a.get("present") and not b.get("present"):
+        return True
+    if a.get("present") != b.get("present"):
+        return False
+    if a.get("type") != b.get("type"):
+        return False
+    if a.get("type") == "link":
+        return a.get("target") == b.get("target")
+    return a.get("hash") == b.get("hash")
+
+
+def describe(value):
+    if not value.get("present"):
+        return "absent"
+    kind = value.get("type")
+    if kind == "link":
+        return "-> " + value.get("target", "")
+    if kind == "key":
+        return value.get("what", "")[:34]
+    if kind == "barwidget":
+        return "%s[%s]" % (value.get("section"), value.get("index"))
+    if kind == "shelljson":
+        return json.dumps(value.get("value"))[:40]
+    return (value.get("hash") or "")[:12]
+
+
+# --------------------------------------------------------------------- modes
+
+if MODE == "before":
+    # First snapshot wins. A second one taken while the first is unrestored
+    # would capture what this unit already put there as the thing to go back to,
+    # which is how an original is lost for good.
+    if os.path.exists(MANIFEST):
+        print("kept")
+        raise SystemExit(0)
+
+    items = []
+    for n, line in enumerate(sys.stdin.read().split("\n")):
+        line = line.strip()
+        if not line or "\t" not in line:
+            continue
+        klass, kind, key = "", "", ""
+        parts = line.split("\t")
+        if len(parts) == 3:
+            klass, kind, key = parts
+        else:
+            kind, key = parts[0], parts[1]
+        reader = READERS.get(kind)
+        if reader is None:
+            continue
+        if klass == "keeps":
+            items.append({"kind": kind, "key": key, "class": "keeps",
+                          "before": {"present": False}})
+            continue
+        value = reader(key, "b%d" % n)
+        if not klass:
+            # Nothing declared, so the value says which it is: something was
+            # there and this is taking its place, or nothing was and this is an
+            # addition. That is not a guess, it is a reading, which is why the
+            # automatic half needs no declaration and the declared half does.
+            klass = "displaced" if value.get("present") else "added"
+        if (kind == "barwidget" and not value.get("present")
+                and os.environ.get("BO_SNAP_STANDIN")):
+            value = {"present": True, "type": "barwidget", "assumed": True,
+                     "value": {"id": key}, "section": "", "index": -1,
+                     "hash": digest(json.dumps({"id": key}, sort_keys=True).encode())}
+        # Displacement is a two-sided class: recording that something was in
+        # the slot is only half of it, and the other half is taking the slot,
+        # or the machine ends up with both. Bar widgets are the case where bo
+        # can do that itself; the others are the unit own doing.
+        if klass == "displaced" and kind == "barwidget" and value.get("present") \
+                and not value.get("assumed"):
+            put_barwidget(key, {"present": False})
+
+        items.append({"kind": kind, "key": key, "class": klass, "before": value})
+
+    save({"schema": 1, "ref": REF, "taken": time.strftime("%Y-%m-%dT%H:%M:%S"),
+          "version": os.environ.get("BO_SNAP_VERSION", ""), "items": items})
+    print("took %d" % len(items))
+
+elif MODE == "after":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    data = load()
+    for n, item in enumerate(data["items"]):
+        reader = READERS.get(item["kind"])
+        if reader:
+            item["after"] = reader(item["key"], "a%d" % n)
+    save(data)
+
+elif MODE == "restore":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    data = load()
+    for item in data["items"]:
+        kind, key = item["kind"], item["key"]
+        before = item.get("before", {})
+        after = item.get("after")
+        reader, putter = READERS.get(kind), PUTTERS.get(kind)
+        if reader is None or putter is None:
+            continue
+
+        now = reader(key, None)
+
+        # Nothing to do when the unit never changed it.
+        if after is not None and same(before, after):
+            continue
+
+        # Changed since the unit put it there, so it now belongs to the user.
+        if after is not None and not same(now, after):
+            print("kept\t%s\t%s" % (kind, key))
+            continue
+
+        result = putter(key, before)
+        print("%s\t%s\t%s" % (result, kind, key))
+
+elif MODE == "putone":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    data = load()
+    want = (os.environ.get("BO_SNAP_ONE_KIND"), os.environ.get("BO_SNAP_ONE_KEY"))
+    for item in data["items"]:
+        if (item["kind"], item["key"]) == want:
+            putter = PUTTERS.get(item["kind"])
+            if putter:
+                print(putter(item["key"], item.get("before", {})))
+
+elif MODE == "diff":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    data = load()
+    print("taken\t%s" % data.get("taken", ""))
+    for item in data["items"]:
+        reader = READERS.get(item["kind"])
+        if reader is None:
+            continue
+        now = reader(item["key"], None)
+        after = item.get("after", {})
+        state = "same" if same(now, after) else "drifted"
+        print("%s\t%s\t%s\t%s\t%s\t%s" % (
+            state, item.get("class", "?"), item["key"],
+            describe(item.get("before", {})), describe(after), describe(now)))
+
+elif MODE == "drift":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    data = load()
+    for item in data["items"]:
+        reader = READERS.get(item["kind"])
+        if reader is None or item.get("after") is None:
+            continue
+        now = reader(item["key"], None)
+        if not same(now, item["after"]):
+            print("%s\t%s" % (item["kind"], item["key"]))
+
+elif MODE == "keys":
+    if not os.path.exists(MANIFEST):
+        raise SystemExit(0)
+    for item in load()["items"]:
+        print("%s\t%s" % (item["kind"], item["key"]))
+'
+
+
+# Hands the slot back. Called on remove, before anything else touches the
+# layout, because where the unit sits now is what decides where the widget it
+# replaced goes back: somebody who moved the widget after installing it meant to
+# move that slot, not to pin the old one to where it used to be.
+
+
 # Drops one id from shell.json's plugins list. Written back with the same two
 # space indent the shell writes, so a later diff is about the change and not
 # about formatting.
@@ -193,6 +613,24 @@ market_roots() {
     seen=$(market_name "$SELF_ROOT")$'\n'
   fi
 
+  # Working trees somebody pointed bo at with `bo market link`. They are not
+  # under MARKETS_DIR and bo never wrote them, which is exactly what makes them
+  # local: nothing here can be fetched, and editing the checkout changes what
+  # the marketplace offers with no update step in between.
+  if [[ -f $LOCAL_FILE ]]; then
+    while read -r dir; do
+      [[ -z $dir || ! -f "$dir/registry.json" ]] && continue
+      [[ $(readlink -f "$dir") == "$(readlink -f "$SELF_ROOT")" ]] && continue
+
+      local lname
+      lname=$(market_name "$dir")
+      printf '%s\n' "$seen" | grep -qxF "$lname" && continue
+      seen+="$lname"$'\n'
+
+      printf '%s\n' "$dir"
+    done < <(grep -v '^[[:space:]]*$' "$LOCAL_FILE" 2>/dev/null)
+  fi
+
   for dir in "$MARKETS_DIR"/*/; do
     [[ -f "$dir/registry.json" ]] || continue
     dir="${dir%/}"
@@ -211,6 +649,43 @@ market_name() {
   local root="$1" name
   name=$(json_get "$root/registry.json" name)
   printf '%s' "${name:-$(basename "$root")}"
+}
+
+# local or remote, and it is derivable rather than recorded because bo already
+# decides it by where it puts things. Everything `bo market add` clones lands
+# under MARKETS_DIR; everything else is a checkout on this machine that bo was
+# pointed at and cannot fetch. The distinction a developer cares about is which
+# of those they are running against, and this is that question exactly.
+market_kind() {
+  local real markets
+  real=$(readlink -f "$1" 2>/dev/null) || real="$1"
+  markets=$(readlink -f "$MARKETS_DIR" 2>/dev/null) || markets="$MARKETS_DIR"
+  case "$real" in
+  "$markets"/*) printf remote ;;
+  *) printf local ;;
+  esac
+}
+
+# Where it came from, in the terms of its kind: a remote one names the URL it
+# was cloned from, a local one names the tree it is.
+market_source() {
+  local root="$1"
+  if [[ $(market_kind "$root") == remote ]]; then
+    git -C "$root" remote get-url origin 2>/dev/null && return 0
+    printf '%s' "$root"
+    return 0
+  fi
+  printf '%s' "${root/#$HOME/\~}"
+}
+
+# How many commits the last fetch left it behind by. Never fetches: `bo market
+# update` does that, and a list that pauses on the network is a list nobody
+# runs.
+market_behind() {
+  local root="$1" branch
+  [[ $(market_kind "$root") == remote ]] || return 0
+  branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
+  git -C "$root" rev-list --count "HEAD..origin/$branch" 2>/dev/null || return 0
 }
 
 market_root() {
@@ -406,6 +881,234 @@ except Exception:
 PY
 }
 
+# ---------------------------------------------------------------- snapshots
+#
+# The contract a unit keeps with the machine it is installed on: everything it
+# changes is written down before it changes it, and removing it puts that back.
+#
+# Two halves, because two different people know two different things.
+#
+#   What bo can see, bo records without being told. Every path a unit will link
+#   into place is read first: its bytes, or the fact that nothing was there.
+#   A unit that only links files needs to declare nothing and is still fully
+#   reversible.
+#
+#   What only the author knows is declared, in `touches`, one line of
+#   `kind:key` entries. That covers the things bo cannot infer by looking at the
+#   unit directory: a bar widget this unit stands in for, a value in shell.json,
+#   a command on PATH it shadows.
+#
+#   touches = ["barwidget:omarchy.workspaces", "shelljson:bar.position"]
+#
+# Both are read again after the install finishes, so the manifest holds a
+# `before` and an `after` for every item. That pair is what makes removal safe:
+# if what is there now matches what the unit left, the unit still owns it and
+# the `before` goes back; if it does not, somebody changed it on purpose since,
+# and it is left alone and said so.
+#
+# Absent is a value. A file that did not exist before is recorded as absent and
+# restoring deletes it. A bar widget that was on the bar before and gone after
+# is put back where it was, which is the whole of the workspaces bug in its
+# general form.
+#
+# Every captured value carries a sha256, checked on the way back out, so a
+# snapshot somebody edited by hand or a truncated copy is refused rather than
+# replayed over a working machine.
+#
+# A unit whose changes cannot be written down this way ships snapshot.sh and
+# restore.sh. Each is handed a directory of its own and may put anything in it.
+# Same contract, arbitrary content, and `bo info` says which of the three a unit
+# is using.
+#
+# See docs/CONTRACT.md for the version a third party reads.
+
+# What a unit promises about putting things back, said before it goes on and
+# again in `bo info`. Three answers, and the third is the one worth reading.
+snapshot_promise() {
+  local ref="$1" dir
+  dir=$(ref_dir "$ref") || return 0
+
+  if [[ -x "$dir/snapshot.sh" && -x "$dir/restore.sh" ]]; then
+    printf '  %s %s\n' "$(green "$(printf '%-6s' puts)")" \
+      "everything back through its own snapshot.sh and restore.sh"
+    return 0
+  fi
+  if [[ -n $(meta_list "$ref" touches) ]]; then
+    printf '  %s %s\n' "$(green "$(printf '%-6s' puts)")" \
+      "back what it links, and $(meta_list "$ref" touches | join_lines)"
+    return 0
+  fi
+  printf '  %s %s\n' "$(green "$(printf '%-6s' puts)")" \
+    "back every file it links. It declares nothing else, so anything it changes at runtime is its own to undo"
+  return 0
+}
+
+snapshot_dir() { printf '%s/snapshots/%s/%s' "$STATE_DIR" "$(ref_market "$1")" "$(ref_unit "$1")"; }
+has_snapshot() { [[ -f "$(snapshot_dir "$1")/manifest.json" ]]; }
+
+# Everything bo will put its hands on, one `kind<TAB>key` per line. The links it
+# is about to make, then whatever the unit declared on top.
+snapshot_plan() {
+  local ref="$1" dir file rel id
+  dir=$(ref_dir "$ref") || return 0
+
+  shopt -s nullglob
+  for file in "$dir"/bin/*; do
+    printf 'file\t%s\n' "$BIN_DIR/$(basename "$file")"
+  done
+  for file in "$dir"/hypr/*.lua; do
+    printf 'file\t%s\n' "$HYPR_MODULES/$(hypr_link_name "$ref" "$file")"
+    [[ $(basename "$file") == "monitors.lua" ]] &&
+      printf 'file\t%s\n' "$HYPR_DIR/monitors.lua"
+  done
+  shopt -u nullglob
+
+  while read -r rel; do
+    [[ -n $rel ]] && printf 'file\t%s\n' "$CONFIG_HOME/$rel"
+  done < <(config_files "$ref")
+
+  if [[ $(meta "$ref" kind) == plugin ]]; then
+    id=$(meta "$ref" id)
+    [[ -n $id ]] && printf 'file\t%s\n' "$PLUGINS_DIR/$id"
+  fi
+
+  # `class:kind:key`. The class is the author decision and bo never guesses it:
+  # a keybinding that exists before and after with a different meaning looks
+  # identical to bo and is the one thing it must not get wrong.
+  local item rest
+  while read -r item; do
+    [[ -z $item || $item != *:*:* ]] && continue
+    rest="${item#*:}"
+    printf '%s\t%s\t%s\n' "${item%%:*}" "${rest%%:*}" "${rest#*:}"
+  done < <(meta_list "$ref" touches)
+}
+
+snapshot_run() {
+  local ref="$1" mode="$2"
+  BO_SNAP_MODE="$mode" BO_SNAP_REF="$ref" BO_SNAP_DIR="$(snapshot_dir "$ref")" \
+    BO_SNAP_SHELL="$CONFIG_HOME/omarchy/shell.json" \
+    BO_SNAP_VERSION="$(meta "$ref" version)" \
+    BO_SNAP_STANDIN="$(meta "$ref" id)" \
+    python3 -c "$SNAPSHOT_PY" 2>/dev/null
+}
+
+# Before anything is linked. Silent when a snapshot is already there, which is
+# the install-twice case: the first one is the one that knows what the machine
+# looked like.
+snapshot_before() {
+  local ref="$1" dir out
+  dir=$(snapshot_dir "$ref")
+  mkdir -p "$dir"
+  out=$(snapshot_plan "$ref" | BO_SNAP_MODE=before BO_SNAP_REF="$ref" \
+    BO_SNAP_DIR="$dir" BO_SNAP_SHELL="$CONFIG_HOME/omarchy/shell.json" \
+    BO_SNAP_VERSION="$(meta "$ref" version)" \
+    BO_SNAP_STANDIN="$(meta "$ref" id)" python3 -c "$SNAPSHOT_PY" 2>/dev/null)
+
+  [[ $out == kept ]] && {
+    say "  $(dim 'keeping the snapshot taken when this first went on')"
+    return 0
+  }
+  [[ -n $out ]] && say "  $(dim "snapshot ${out#took } thing(s) this will touch")"
+
+  # The escape hatch, for a unit whose changes are not any of the kinds above.
+  local script="$(ref_dir "$ref")/snapshot.sh"
+  [[ -x $script ]] && {
+    mkdir -p "$dir/own"
+    "$script" "$dir/own" >/dev/null 2>&1 ||
+      warn "$ref snapshot.sh failed, so removing it may not put everything back"
+  }
+  return 0
+}
+
+snapshot_after() { snapshot_run "$1" after >/dev/null; return 0; }
+
+# The other side. Anything the unit still owns goes back to what it displaced;
+# anything changed since is left where it is and named.
+# A rebinding, at the moment of removal. The old value is a stale opinion and
+# the value in somebody fingers is the one the unit installed, so this is a
+# question rather than a rollback: the user example is going back to a keybinding
+# from four months ago and being lost.
+#
+# Three answers, and how long ago it was, because age is what tells you whether
+# the old value still means anything.
+rebound_choice() {
+  local ref="$1" kind="$2" key="$3" before="$4" after="$5" taken="$6" age="" pick=""
+  [[ -n $taken ]] && age=$(days_since "$taken")
+
+  say ""
+  say "  $(bold "$key") $(dim "changed by $(ref_unit "$ref")")"
+  say "    was      $before"
+  say "    is now   $after $(dim "${age:+since $age}")"
+
+  if ((ASSUME_YES)) || ! interactive; then
+    # Nobody to ask. Keeping what the machine does today loses nothing somebody
+    # is currently relying on, and the old value is written down in the snapshot
+    # for as long as they want it, so this is the answer that discards least.
+    say "    $(green keeping) $(dim 'what it does now. bo diff shows what it was.')"
+    return 0
+  fi
+
+  say ""
+  say "    1  put back  $before"
+  say "    2  keep      $after $(dim '(as it is now)')"
+  say "    3  unbind it"
+  printf '    choose [2] ' >/dev/tty
+  read -r pick </dev/tty || pick=2
+  case "${pick:-2}" in
+  1) snapshot_put_one "$ref" "$kind" "$key" && say "    $(green 'put back') $before" ;;
+  3) say "    $(dim 'left unbound')" ;;
+  *) say "    $(green kept) $after" ;;
+  esac
+  return 0
+}
+
+snapshot_put_one() {
+  BO_SNAP_ONE_KIND="$2" BO_SNAP_ONE_KEY="$3" snapshot_run "$1" putone >/dev/null
+}
+
+days_since() {
+  local when="$1" then now days
+  then=$(date -d "$when" +%s 2>/dev/null) || return 0
+  now=$(date +%s)
+  days=$(((now - then) / 86400))
+  ((days < 1)) && { printf 'today'; return 0; }
+  ((days == 1)) && { printf 'yesterday'; return 0; }
+  ((days < 60)) && { printf '%s days ago' "$days"; return 0; }
+  printf '%s months ago' "$((days / 30))"
+}
+
+snapshot_restore() {
+  local ref="$1" dir line what kind key kept=0
+  dir=$(snapshot_dir "$ref")
+  has_snapshot "$ref" || return 0
+
+  local script="$(ref_dir "$ref")/restore.sh"
+  [[ -x $script && -d "$dir/own" ]] && {
+    "$script" "$dir/own" >/dev/null 2>&1 ||
+      warn "$ref restore.sh failed; $dir/own is left for you to look at"
+  }
+
+  local before after taken
+  while IFS=$'\t' read -r what kind key before after taken; do
+    case "$what" in
+    restored | relinked) say "  $(green 'put back') $(dim "${key/#$HOME/~}")" ;;
+    removed) say "  $(dim "took back ${key/#$HOME/~}")" ;;
+    held)
+      say "  $(yellow held) ${key/#$HOME/~} $(dim 'changed since this went on, so it is yours now')"
+      ;;
+    keeps)
+      say "  $(cyan keeps) ${key/#$HOME/~} $(dim 'your own data, left alone; delete it yourself if you want to')"
+      ;;
+    refused) warn "the snapshot of $key does not match its hash, so it was not restored" ;;
+    propose) rebound_choice "$ref" "$kind" "$key" "$before" "$after" "$taken" ;;
+    esac
+  done < <(snapshot_run "$ref" restore)
+
+  rm -rf "$dir"
+  rmdir "$(dirname "$dir")" 2>/dev/null
+  return 0
+}
+
 # ---------------------------------------------------------------- link helpers
 
 link_path() {
@@ -451,9 +1154,21 @@ unlink_path() {
 # Nothing used to bring those back, so a remove left the path empty and the old
 # file orphaned next to it. Put the newest one back instead.
 restore_backup() {
-  local dst="$1" newest
+  local dst="$1" newest had_nullglob=0
   [[ -e $dst || -L $dst ]] && return 0
-  newest=$(ls -1dt "$dst".before-bo.* 2>/dev/null | head -1)
+
+  # Collected into an array rather than passed to `ls` as a glob. With nullglob
+  # on, a pattern that matches nothing disappears entirely, `ls -1dt` is left
+  # with no operand at all, and `-d` makes it answer `.`. That turned "there is
+  # no backup" into `mv . <dst>`, which is how removing a unit printed
+  # "cannot move '.': Device or resource busy" twice and left nothing restored.
+  shopt -q nullglob && had_nullglob=1
+  shopt -s nullglob
+  local -a found=("$dst".before-bo.*)
+  ((had_nullglob)) || shopt -u nullglob
+
+  ((${#found[@]})) || return 0
+  newest=$(ls -1dt "${found[@]}" 2>/dev/null | head -1)
   [[ -n $newest && -e $newest ]] || return 0
   mv "$newest" "$dst" && say "  $(dim "put your own $(basename "$dst") back")"
 }
@@ -510,6 +1225,19 @@ backup_shell_json() {
   [[ -f $config ]] || return 0
   copy="$config.before-bo.$(date +%s)"
   [[ -e $copy ]] || cp -p "$config" "$copy"
+
+  # Three, newest first. One copy per layout write piles up fast now that a unit
+  # standing in for a stock widget writes on both add and remove, and a
+  # directory of forty identical shell.json copies is its own kind of leftover.
+  local -a old=()
+  shopt -s nullglob
+  old=("$config".before-bo.*)
+  shopt -u nullglob
+  ((${#old[@]} > 3)) &&
+    printf '%s\n' "${old[@]}" | sort -r | tail -n +4 | while read -r stale; do
+      rm -f "$stale"
+    done
+
   printf '%s' "$copy"
 }
 
@@ -540,6 +1268,9 @@ PY
   return 0
 }
 
+# Takes the bar slot a unit declares it stands in for, recording verbatim what
+# was in it. Prints `placed` when it put the unit's own widget in that slot.
+# Hands the slot back on the way out.
 link_plugin() {
   local ref="$1" dir id
   dir=$(ref_dir "$ref")
@@ -557,11 +1288,17 @@ link_plugin() {
   # only enable one the layout has never seen.
   if plugin_in_layout "$id"; then
     say "  $(dim "$id keeps its bar position and settings")"
+    reload_shell_config
     return 0
   fi
 
   omarchy plugin enable "$id" >/dev/null 2>&1 ||
     warn "linked $id but could not enable it; run: omarchy plugin enable $id"
+}
+
+reload_shell_config() {
+  shell_running && omarchy-shell shell reloadConfig >/dev/null 2>&1
+  return 0
 }
 
 unlink_plugin() {
@@ -581,8 +1318,10 @@ unlink_plugin() {
   # are gone. A service plugin is the case that bites, since it has no layout
   # entry to notice and can leave the desktop in whatever state it last set.
   forget_plugin_enabled "$id"
+
   purge_plugin_layout "$ref"
   rescan_plugins
+  reload_shell_config
 }
 
 # The one thing `bo remove` keeps that `omarchy plugin remove` would take. The
@@ -684,7 +1423,54 @@ unlink_hypr() {
     ((found++))
   done
   shopt -u nullglob
-  ((found > 0)) && reload_hypr
+  ((found > 0)) && {
+    forget_modules_loader
+    reload_hypr
+  }
+  return 0
+}
+
+# The other half of ensure_modules_loader. That function appends one require to
+# hyprland.lua and writes a modules.lua beside it, and until now neither ever
+# came back out: a machine that had tried better-omarchy and removed every unit
+# still carried both, forever, with an empty modules.d underneath them.
+#
+# Only when the last linked lua is gone, and only what bo itself wrote. A
+# modules.lua somebody has edited is left alone and said so.
+forget_modules_loader() {
+  local loader="$HYPR_DIR/modules.lua" main="$HYPR_DIR/hyprland.lua" tmp
+
+  shopt -s nullglob
+  local -a still=("$HYPR_MODULES"/*.lua)
+  shopt -u nullglob
+  ((${#still[@]} > 0)) && return 0
+
+  rmdir "$HYPR_MODULES" 2>/dev/null
+
+  if [[ -f $loader ]]; then
+    if grep -q "Managed by better-omarchy" "$loader"; then
+      rm -f "$loader"
+    else
+      warn "$loader has been edited, so it is left as it is"
+      return 0
+    fi
+  fi
+
+  [[ -f $main ]] || return 0
+  grep -q 'require("hypr.modules")' "$main" || return 0
+
+  # sed rather than a python pass, because the whole edit is two known lines:
+  # the comment ensure_modules_loader wrote and the require under it. A file
+  # where somebody added the require by hand loses only the require.
+  if grep -q '^-- better-omarchy: load every linked unit' "$main"; then
+    sed -i '/^-- better-omarchy: load every linked unit/,+1d' "$main"
+  else
+    sed -i '/^require("hypr\.modules")$/d' "$main"
+  fi
+
+  # Whatever blank lines that left at the end, back to one newline.
+  printf '%s\n' "$(cat "$main")" >"$main.bo.tmp" && mv "$main.bo.tmp" "$main"
+  say "  $(dim 'took the better-omarchy loader back out of hyprland.lua')"
   return 0
 }
 
@@ -913,6 +1699,7 @@ link_unit() {
   # leaves a record of what it was allowed to run.
   if unit_executes "$ref"; then
     unit_plan "$ref"
+    snapshot_promise "$ref"
     ((ASSUME_YES)) || {
       say "  $(dim 'none of this is sandboxed. Read the code if you have not.')"
       confirm "Turn on $(ref_unit "$ref")?" || {
@@ -923,6 +1710,10 @@ link_unit() {
   fi
 
   check_requires "$ref"
+
+  # Before anything is touched. Every path this is about to link is read first,
+  # and so is whatever the unit declared in `touches`.
+  snapshot_before "$ref"
 
   # Every unit may carry hypr/ and bin/, whatever its kind: a bar widget that
   # also wants a keybinding is normal. kind only decides the extra step.
@@ -939,6 +1730,10 @@ link_unit() {
   link_config "$ref"
   mark_linked "$ref"
   record_installed "$ref"
+
+  # And again now it is on, so removal can tell what this unit left behind from
+  # what somebody changed afterwards.
+  snapshot_after "$ref"
   say "$(green on) $ref $(dim "$(meta "$ref" version)")"
 }
 
@@ -967,6 +1762,11 @@ unlink_unit() {
   unlink_hypr "$ref"
   unlink_bin "$ref"
   unlink_config "$ref"
+
+  # Last, so the links are gone before what they displaced goes back.
+  snapshot_restore "$ref"
+  reload_shell_config
+
   mark_unlinked "$ref"
   forget_installed "$ref"
   say "$(dim off) $ref"
@@ -974,8 +1774,138 @@ unlink_unit() {
 
 # ---------------------------------------------------------------- browsing
 
+# `bo list --json`: the same units `bo list` prints, for a program instead of a
+# person. Everything here is already known to bo; nothing is re-derived.
+#
+# Three fields exist only in this form, because they are the ones a caller
+# cannot work out on its own without reimplementing half of this file:
+#
+#   missing    the `needs` commands that are not on this machine. `bo doctor`
+#              applies the same rule, but only to units that are already on,
+#              because that is the question a person asks in a terminal. A
+#              caller drawing units it might offer to turn on has to ask it of
+#              every unit, and asking it here keeps one answer to one question.
+#   blockedBy  a linked unit this one `conflicts` with, resolved to a real ref
+#              rather than the bare name unit.toml carries.
+#   restarts   whether turning this on or off reloads the shell. It is true for
+#              exactly the plugin kind, because link_plugin calls rescanPlugins
+#              and nothing else does. A caller that lives inside the shell has
+#              to know which toggles will destroy it before it offers them.
+#
+# `available` is the two-field summary those first two add up to: false means
+# `bo add` would fail, so do not offer it.
+cmd_list_json() {
+  local ref toml refs need other resolved missing blocked
+  local US=$'\037'
+  local -A KIND_OF=() SOURCE_OF=() BEHIND_OF=()
+
+  # Every conflict has to be resolved against every ref, and `bo list` already
+  # costs half a second walking marketplaces through python. Reading all_refs
+  # once here rather than once per conflict is the difference between a command
+  # a launcher can run on a keystroke and one it cannot.
+  refs=$(all_refs)
+
+  {
+    while read -r ref; do
+      # ref_dir goes through market_root, which reads a registry.json through
+      # python. Once per unit, not once per field: meta and meta_list would
+      # each pay it again, and eleven fields is eleven python starts a unit.
+      toml="$(ref_dir "$ref")/unit.toml"
+
+      missing=""
+      while read -r need; do
+        [[ -z $need ]] && continue
+        command -v "$need" >/dev/null 2>&1 && continue
+        missing+="$need$US"
+      done < <(toml_list "$toml" needs)
+
+      blocked=""
+      while read -r other; do
+        [[ -z $other ]] && continue
+        resolved=$(printf '%s\n' "$refs" | awk -F/ -v u="$other" '$NF == u' | head -1)
+        [[ -n $resolved ]] || continue
+        is_linked "$resolved" && blocked+="$resolved$US"
+      done < <(toml_list "$toml" conflicts)
+
+      # Kind, source and how far behind belong to the marketplace, not the unit,
+      # so they are worked out once per marketplace and carried on every unit
+      # of it. A caller drawing a unit has to be able to say where it came from
+      # without a second pass over the marketplaces.
+      local market
+      market=$(ref_market "$ref")
+      if [[ -z ${KIND_OF[$market]:-} ]]; then
+        local mroot
+        mroot=$(market_root "$market") || mroot=""
+        KIND_OF[$market]=$([[ -n $mroot ]] && market_kind "$mroot" || printf unknown)
+        SOURCE_OF[$market]=$([[ -n $mroot ]] && market_source "$mroot" || printf '')
+        BEHIND_OF[$market]=$([[ -n $mroot ]] && market_behind "$mroot" || printf 0)
+      fi
+
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$ref" "${toml%/unit.toml}" "$(ref_market "$ref")" \
+        "${KIND_OF[$market]}" "${SOURCE_OF[$market]}" "${BEHIND_OF[$market]:-0}" \
+        "$(ref_unit "$ref")" \
+        "$(toml_get "$toml" summary)" "$(toml_get "$toml" version)" \
+        "$(toml_get "$toml" kind)" "$(toml_get "$toml" category)" \
+        "$(toml_get "$toml" id)" "$(toml_get "$toml" author)" \
+        "$(toml_list "$toml" tags | tr '\n' "$US")" \
+        "$(toml_list "$toml" needs | tr '\n' "$US")" "$missing" \
+        "$(toml_list "$toml" keys | tr '\n' "$US")" \
+        "$(toml_list "$toml" requires | tr '\n' "$US")" \
+        "$(toml_list "$toml" conflicts | tr '\n' "$US")" "$blocked" \
+        "$(is_linked "$ref" && printf 1 || printf 0)" \
+        "$(unit_executes "$ref" && printf 1 || printf 0)"
+    done <<<"$refs"
+  } | python3 -c "$LIST_JSON_PY"
+  return 0
+}
+
+# Kept in a variable rather than a heredoc: this one is on the right of a pipe,
+# and a heredoc would take over the stdin the pipe is feeding it.
+LIST_JSON_PY='
+import json, sys
+
+FIELDS = ("ref", "path", "marketplace", "marketplaceKind", "marketplaceSource",
+          "marketplaceBehind", "unit", "summary", "version", "kind", "category",
+          "id", "author", "tags", "needs", "missing", "keys", "requires",
+          "conflicts", "blockedBy", "on", "runs")
+LISTS = {"tags", "needs", "missing", "keys", "requires", "conflicts", "blockedBy"}
+
+out = []
+for line in sys.stdin.read().split("\n"):
+    if not line.strip():
+        continue
+    parts = line.split("\t")
+    if len(parts) < len(FIELDS):
+        continue
+    unit = {}
+    for name, raw in zip(FIELDS, parts):
+        if name in LISTS:
+            unit[name] = [x for x in raw.split("\x1f") if x]
+        elif name in ("on", "runs"):
+            unit[name] = raw == "1"
+        elif name == "marketplaceBehind":
+            try:
+                unit[name] = int(raw or 0)
+            except ValueError:
+                unit[name] = 0
+        else:
+            unit[name] = raw
+    unit["restarts"] = unit["kind"] == "plugin"
+    unit["available"] = not unit["missing"] and not unit["blockedBy"]
+    out.append(unit)
+
+json.dump(out, sys.stdout, indent=2)
+sys.stdout.write("\n")
+'
+
 cmd_list() {
   local ref state multi
+
+  if [[ ${1:-} == "--json" ]]; then
+    cmd_list_json
+    return 0
+  fi
 
   # `--plain` drops the colour and the header, so something piping this into a
   # picker can read the unit name off the front of a line rather than stripping
@@ -1009,6 +1939,16 @@ cmd_list() {
 
   ((any_runs)) &&
     say "$(yellow '!') $(dim 'runs code on this machine. bo info <unit> says exactly what, and bo add asks first.')"
+
+  # Which of these are trees on this machine rather than clones bo can fetch.
+  # It is the first thing a developer wants to know and the list said nothing
+  # about it, so a checkout being edited looked identical to a pinned clone.
+  local root locals=""
+  while read -r root; do
+    [[ $(market_kind "$root") == local ]] && locals+="$(market_name "$root") "
+  done < <(market_roots)
+  [[ -n $locals ]] &&
+    say "$(cyan local) $(dim "${locals% } $([[ $(printf '%s' "$locals" | wc -w) -gt 1 ]] && printf 'are trees' || printf 'is a tree') on this machine. bo market list says where.")"
   return 0
 }
 
@@ -1032,7 +1972,11 @@ cmd_info() {
 
   printf '%s %s\n' "$(bold "$ref")" "$(dim "$(meta "$ref" version)")"
   printf '  %s\n\n' "$(meta "$ref" summary)"
-  printf '  %-11s %s\n' marketplace "$(ref_market "$ref")"
+  local unit_root unit_kind
+  unit_root=$(market_root "$(ref_market "$ref")") || unit_root=""
+  unit_kind=$([[ -n $unit_root ]] && market_kind "$unit_root" || printf '')
+  printf '  %-11s %s %s\n' marketplace "$(ref_market "$ref")" \
+    "$([[ $unit_kind == local ]] && cyan '(local)' || { [[ -n $unit_kind ]] && dim '(remote)'; })"
   printf '  %-11s %s\n' kind "$(meta "$ref" kind)"
   printf '  %-11s %s\n' category "$(meta "$ref" category)"
   printf '  %-11s %s\n' tags "$(meta_list "$ref" tags | join_lines)"
@@ -1044,6 +1988,8 @@ cmd_info() {
     printf '  %-11s %s\n' requires "$(meta_list "$ref" requires | join_lines)"
   [[ -n $(meta_list "$ref" conflicts) ]] &&
     printf '  %-11s %s\n' conflicts "$(meta_list "$ref" conflicts | join_lines)"
+  [[ -n $(meta_list "$ref" touches) ]] &&
+    printf '  %-11s %s\n' touches "$(meta_list "$ref" touches | join_lines)"
 
   local updated
   updated=$(reg "$ref" updated)
@@ -1121,6 +2067,21 @@ cmd_doctor() {
   done < <(linked_refs)
 
   ((missing == 0)) && say "$(green 'All dependencies present.')"
+
+  # What has changed since a unit went on. Not a fault: it is what removal will
+  # decline to touch, and knowing that before you remove is the point.
+  local kind key drifted=0
+  while read -r ref; do
+    ref_exists "$ref" || continue
+    has_snapshot "$ref" || continue
+    while IFS=$'\t' read -r kind key; do
+      [[ -z $kind ]] && continue
+      ((drifted == 0)) && say ""
+      say "$(yellow changed) ${key/#$HOME/\~} $(dim "since $ref went on; bo remove will leave it alone")"
+      drifted=1
+    done < <(snapshot_run "$ref" drift)
+  done < <(linked_refs)
+
   return $missing
 }
 
@@ -1196,23 +2157,46 @@ market_usage() {
   cat <<'TXT'
   bo market list                  every marketplace bo knows
   bo market add <git-url> [name]  clone one and start offering its units
-  bo market remove <name>         drop it (refuses while its units are on)
+  bo market link <path> [name]    point at a checkout here, without copying it
+  bo market remove <name>         drop a cloned one (refuses while units are on)
+  bo market unlink <name>         stop pointing at a linked checkout
   bo market update [name]         fetch and fast-forward
   bo market info <name>           where it came from and what it holds
 TXT
 }
 
 cmd_market_list() {
-  local root name url count
-  printf '%-22s %-7s %s\n' MARKETPLACE UNITS SOURCE
+  local root name kind count behind mark any_local=0
+
+  # Kind is the second column because it is the one that changes what a line
+  # means: the same repo pointed at locally and cloned from git are different
+  # things to be running against, and a URL in the source column looked the
+  # same either way.
+  printf '%-22s %-7s %-7s %s\n' MARKETPLACE KIND UNITS SOURCE
   while read -r root; do
     name=$(market_name "$root")
+    kind=$(market_kind "$root")
     count=$(find "$root/units" "$root/.bo/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)
-    url=$(git -C "$root" remote get-url origin 2>/dev/null || printf 'local')
-    printf '%-22s %-7s %s\n' "$name" "$count" "$url"
+
+    if [[ $kind == local ]]; then
+      mark=$(cyan "$(printf '%-7s' local)")
+      any_local=1
+    else
+      mark=$(dim "$(printf '%-7s' remote)")
+    fi
+
+    behind=$(market_behind "$root")
+    printf '%-22s %s %-7s %s' "$name" "$mark" "$count" "$(market_source "$root")"
+    [[ -n $behind && $behind != 0 ]] && printf ' %s' "$(yellow "($behind behind)")"
+    printf '\n'
+
     [[ $(readlink -f "$root") == "$(readlink -f "$SELF_ROOT")" ]] &&
-      printf '%s\n' "$(dim "  (this checkout, where bo itself lives: $root)")"
+      printf '%s\n' "$(dim "  the checkout bo itself runs from")"
   done < <(market_roots)
+
+  ((any_local)) &&
+    say "$(cyan local) $(dim 'is a tree on this machine: editing it changes what is offered, and there is nothing to fetch.')"
+  return 0
 }
 
 # Turn a cloned Omarchy plugin repo into a marketplace holding one unit.
@@ -1319,6 +2303,61 @@ cmd_market_add() {
   say "your PATH and QML into your shell. Read what you turn on."
 }
 
+# Point at a checkout instead of cloning one. The path is recorded and nothing
+# is copied, so the marketplace is the working tree: edit a unit and the next
+# `bo list` says so. This is the half of "local" that did not exist, since the
+# only local marketplace used to be whichever checkout bo happened to run from.
+cmd_market_link() {
+  (($# > 0)) || die "usage: bo market link <path> [name]"
+  local path="$1" name="${2:-}"
+
+  path=$(readlink -f "$path" 2>/dev/null) || die "no such path: $1"
+  [[ -d $path ]] || die "no such directory: $1"
+  [[ -f "$path/registry.json" ]] ||
+    die "$path has no registry.json at its root, so it is not a marketplace. Run: bo registry"
+
+  [[ -n $name ]] || name=$(json_get "$path/registry.json" name)
+  [[ -n $name ]] || die "its registry.json has no \"name\", so pass one: bo market link <path> <name>"
+
+  if market_root "$name" >/dev/null; then
+    die "a marketplace named '$name' is already here. Run: bo market list"
+  fi
+
+  mkdir -p "$DATA_DIR"
+  touch "$LOCAL_FILE"
+  grep -qxF "$path" "$LOCAL_FILE" || printf '%s\n' "$path" >>"$LOCAL_FILE"
+
+  say "$(green linked) $name $(cyan local) $(dim "$path")"
+  say "$(find "$path/units" "$path/.bo/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l) units. Run: bo list"
+  say ""
+  say "$(yellow 'This is a tree you can edit.') Its units link into your PATH and your"
+  say "shell from where they sit, so a change here is live the next time one runs."
+}
+
+cmd_market_unlink() {
+  (($# > 0)) || die "usage: bo market unlink <name>"
+  local name="$1" root ref on=0 tmp
+  root=$(market_root "$name") || die "no marketplace named '$name'"
+
+  [[ $(market_kind "$root") == local ]] ||
+    die "'$name' was cloned by bo, so it is removed rather than unlinked: bo market remove $name"
+  [[ $(readlink -f "$root") == "$(readlink -f "$SELF_ROOT")" ]] &&
+    die "'$name' is the checkout bo itself runs from; it is registered by being where bo lives"
+
+  while read -r ref; do
+    [[ $(ref_market "$ref") == "$name" ]] && {
+      say "  still on: $ref"
+      on=1
+    }
+  done < <(linked_refs)
+  ((on == 1)) && die "turn those off first: bo remove <unit>"
+
+  tmp=$(mktemp)
+  grep -vxF "$(readlink -f "$root")" "$LOCAL_FILE" 2>/dev/null >"$tmp"
+  mv "$tmp" "$LOCAL_FILE"
+  say "$(dim unlinked) $name $(dim "the tree at $root is untouched")"
+}
+
 cmd_market_remove() {
   (($# > 0)) || die "usage: bo market remove <name>"
   local name="$1" root ref on=0
@@ -1337,7 +2376,7 @@ cmd_market_remove() {
 
   case "$(readlink -f "$root")" in
   "$(readlink -f "$MARKETS_DIR")"/*) ;;
-  *) die "'$name' lives outside $MARKETS_DIR; delete it yourself" ;;
+  *) die "'$name' is a tree bo never copied. Stop pointing at it with: bo market unlink $name" ;;
   esac
 
   rm -rf "$root"
@@ -1349,10 +2388,18 @@ cmd_market_info() {
   local root
   root=$(market_root "$1") || die "no marketplace named '$1'"
 
+  local kind behind
+  kind=$(market_kind "$root")
+  behind=$(market_behind "$root")
+
   printf '%s\n' "$(bold "$(market_name "$root")")"
+  printf '  %-11s %s\n' kind \
+    "$([[ $kind == local ]] && cyan local || dim remote)"
   printf '  %-11s %s\n' homepage "$(json_get "$root/registry.json" homepage)"
-  printf '  %-11s %s\n' source "$(git -C "$root" remote get-url origin 2>/dev/null || echo local)"
+  printf '  %-11s %s\n' source "$(market_source "$root")"
   printf '  %-11s %s\n' path "$root"
+  [[ -n $behind && $behind != 0 ]] &&
+    printf '  %-11s %s\n' behind "$(yellow "$behind commit(s). Run: bo market update $1")"
   printf '  %-11s %s\n' commit "$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo '-')"
   printf '  %-11s %s\n' units "$(find "$root/units" -maxdepth 2 -name unit.toml 2>/dev/null | wc -l)"
 }
@@ -1513,6 +2560,8 @@ cmd_market() {
   case "$sub" in
   list | ls) cmd_market_list ;;
   add) cmd_market_add "$@" ;;
+  link) cmd_market_link "$@" ;;
+  unlink) cmd_market_unlink "$@" ;;
   remove | rm) cmd_market_remove "$@" ;;
   update) cmd_market_update "$@" ;;
   info) cmd_market_info "$@" ;;
@@ -1635,6 +2684,152 @@ check_self_stale() {
   return 0
 }
 
+# What a unit changed, against the snapshot taken when it went on. Three columns
+# because three values are the whole story: what was there, what the unit left,
+# and what is there now. A `drifted` line is something changed since, which is
+# also the thing removal will leave alone.
+cmd_diff() {
+  (($# > 0)) || die "usage: bo diff <unit>"
+  local ref state kind key before after now first=1
+  ref=$(resolve_ref "$1")
+
+  has_snapshot "$ref" || {
+    say "No snapshot for $ref. It was installed before bo took them, or it is off."
+    return 0
+  }
+
+  while IFS=$'\t' read -r state kind key before after now; do
+    [[ $state == taken ]] && {
+      printf '%s %s\n\n' "$(bold "$ref")" "$(dim "snapshot taken $kind")"
+      continue
+    }
+    ((first)) && {
+      printf '%-9s %-10s %-42s %-18s %-18s %s\n' STATE KIND WHAT BEFORE INSTALLED NOW
+      first=0
+    }
+    printf '%s %-10s %-42s %-18s %-18s %s\n' \
+      "$([[ $state == same ]] && dim "$(printf '%-9s' same)" || yellow "$(printf '%-9s' drifted)")" \
+      "$kind" "${key/#$HOME/\~}" "$before" "$after" "$now"
+  done < <(snapshot_run "$ref" diff)
+  return 0
+}
+
+# Replays a snapshot without needing the unit. A marketplace that disappears
+# must not strand a machine, and the snapshot is self-contained on purpose.
+cmd_restore() {
+  (($# > 0)) || die "usage: bo restore <unit>"
+  local ref="$1" dir
+  ref_exists "$ref" && ref=$(resolve_ref "$1")
+
+  dir=$(snapshot_dir "$ref")
+  [[ -f "$dir/manifest.json" ]] || die "no snapshot for '$ref'. Run: bo snapshots"
+
+  say "$(bold "$ref")"
+  snapshot_restore "$ref"
+  is_linked "$ref" && {
+    mark_unlinked "$ref"
+    forget_installed "$ref"
+  }
+  reload_shell_config
+  say "$(dim done)"
+  return 0
+}
+
+# Every snapshot on this machine, including ones whose unit is gone.
+cmd_snapshots() {
+  local base="$STATE_DIR/snapshots" market unit ref
+  [[ -d $base ]] || {
+    say "No snapshots yet."
+    return 0
+  }
+  printf '%-34s %-9s %s\n' UNIT UNIT-HERE TAKEN
+  for market in "$base"/*/; do
+    [[ -d $market ]] || continue
+    for unit in "$market"*/; do
+      [[ -f "$unit/manifest.json" ]] || continue
+      ref="$(basename "$market")/$(basename "$unit")"
+      printf '%-34s %-9s %s\n' "$ref" \
+        "$(ref_exists "$ref" && green yes || red no)" \
+        "$(json_get "$unit/manifest.json" taken)"
+    done
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------- leaving
+#
+# The whole point of recording what a unit displaced is that somebody can decide
+# against all of this and get their machine back. That needs one command, and
+# until now there was not one: `bo uninstall` was an alias for `bo remove`, so
+# leaving meant remembering every unit by hand and then finding bo's own state
+# directory, its clones and its bin link yourself.
+#
+# Order matters. Units come off first, one at a time and through the same path a
+# single `bo remove` takes, so every widget slot is handed back and every
+# displaced file is restored before the state that records them is deleted.
+cmd_uninstall() {
+  parse_flags "$@"
+
+  local ref count=0
+  count=$(linked_refs | grep -c . || true)
+
+  say "$(bold 'Leaving better-omarchy')"
+  say ""
+  ((count > 0)) && say "  turns off $count unit(s), putting back whatever each displaced"
+  say "  removes   $STATE_DIR"
+  say "  removes   $DATA_DIR"
+  say "  removes   $BIN_DIR/bo"
+  say ""
+  say "  $(dim 'A marketplace you linked with `bo market link` is a tree of your own')"
+  say "  $(dim 'and is never deleted. Neither is this checkout.')"
+  say ""
+
+  ((ASSUME_YES)) || confirm "Go ahead?" || {
+    say "$(dim 'left as it is')"
+    return 1
+  }
+
+  # Reverse order, so a unit that another one requires goes last.
+  local -a refs=()
+  while read -r ref; do [[ -n $ref ]] && refs=("$ref" "${refs[@]}"); done < <(linked_refs)
+  for ref in ${refs[@]+"${refs[@]}"}; do
+    ref_exists "$ref" || {
+      mark_unlinked "$ref"
+      forget_installed "$ref"
+      continue
+    }
+    unlink_unit "$ref"
+  done
+
+  rm -rf "$STATE_DIR"
+
+  # Only the clones. A linked tree is somebody's working copy and the file that
+  # points at it goes with DATA_DIR, which is bo's own bookkeeping.
+  rm -rf "$MARKETS_DIR"
+  rm -rf "$DATA_DIR"
+
+  if [[ -L "$BIN_DIR/bo" ]]; then
+    rm -f "$BIN_DIR/bo"
+    restore_backup "$BIN_DIR/bo"
+  fi
+
+  # Anything bo moved aside and could not put back, named rather than left for
+  # somebody to find. This is empty on a clean leave.
+  local -a left=()
+  shopt -s nullglob globstar
+  left=("$CONFIG_HOME"/**/*.before-bo.* "$BIN_DIR"/*.before-bo.*)
+  shopt -u nullglob globstar
+  ((${#left[@]} > 0)) && {
+    say ""
+    say "$(yellow 'Still here'), files bo moved aside and did not put back:"
+    printf '  %s\n' "${left[@]}"
+  }
+
+  say ""
+  say "$(green gone) $(dim 'this checkout is still here; delete it if you want to.')"
+  return 0
+}
+
 # ---------------------------------------------------------------- author tools
 
 cmd_registry() {
@@ -1671,6 +2866,8 @@ kinds_left_out() {
     wants_kind "$kind" || printf '%s ' "$kind"
   done
 }
+# Unquoted on purpose: the kinds arrive as one space-separated word and want
+# splitting into the lines join_lines reads.
 kinds_as_list() { printf '%s\n' $1 | join_lines; }
 
 # ok, skipped and fail line up in one column, so one failure in a long run is
@@ -1921,10 +3118,14 @@ test_extension() {
     return 1
   }
 
-  # Nothing below this line runs without running the extension, so a manifest
-  # run stops here and says the file itself is sound.
-  if ! wants_kind answer && ! wants_kind actions && ! wants_kind cases; then
+  # Everything above read the file; everything below runs it. With `answer` in
+  # the run the row count vouches for the file too, so only one of the two
+  # lines is ever printed.
+  if wants_kind manifest && ! wants_kind answer; then
     test_line ok "$name" "reads as an extension"
+  fi
+
+  if ! wants_kind answer && ! wants_kind actions && ! wants_kind cases; then
     return 0
   fi
 
@@ -2285,9 +3486,13 @@ test_unit_toml() {
 # Every extension JSON a unit ships. `<name>.cases.json` belongs to the
 # extension beside it and is checked as part of it, never loaded as one of its
 # own.
+#
+# It takes the directory rather than the ref, because ref_dir reads a
+# registry.json through python and a run that called it once per extension
+# spent more time finding the files than checking them.
 ext_files() {
-  local dir file
-  dir=$(ref_dir "$1") || return 0
+  local dir="$1" file
+  [[ -n $dir ]] || return 0
   shopt -s nullglob
   for file in "$dir"/config/omarchy/omacast/extensions/*.json; do
     [[ $file == *.cases.json ]] && continue
@@ -2332,7 +3537,7 @@ PY
 # read as marketplace/unit first, because that is what the rest of bo calls it,
 # and only falls through to unit/extension when no such unit exists.
 test_target() {
-  local q="$1" ref="" want="" file hit=0
+  local q="$1" ref="" want="" file dir hit=0
   local -a files=()
 
   case "$q" in
@@ -2362,10 +3567,11 @@ test_target() {
     local r
     while read -r r; do
       [[ -z $r ]] && continue
-      mapfile -t files < <(ext_files "$r")
+      dir=$(ref_dir "$r") || continue
+      mapfile -t files < <(ext_files "$dir")
       while read -r file; do
         [[ -z $file ]] && continue
-        printf '%s\t%s\n' "$r" "$file"
+        printf '%s\t%s\t%s\n' "$r" "$dir" "$file"
         hit=1
       done < <(ext_named "$q" ${files[@]+"${files[@]}"})
     done < <(all_refs)
@@ -2378,18 +3584,19 @@ test_target() {
 
   [[ -n $ref ]] || return 0
   ref_exists "$ref" || return 0
-  mapfile -t files < <(ext_files "$ref")
+  dir=$(ref_dir "$ref") || return 0
+  mapfile -t files < <(ext_files "$dir")
 
   if [[ -z $want ]]; then
-    printf '%s\t\n' "$ref"
+    printf '%s\t%s\t\n' "$ref" "$dir"
     for file in ${files[@]+"${files[@]}"}; do
-      printf '%s\t%s\n' "$ref" "$file"
+      printf '%s\t%s\t%s\n' "$ref" "$dir" "$file"
     done
     return 0
   fi
 
   while read -r file; do
-    [[ -n $file ]] && printf '%s\t%s\n' "$ref" "$file"
+    [[ -n $file ]] && printf '%s\t%s\t%s\n' "$ref" "$dir" "$file"
   done < <(ext_named "$want" ${files[@]+"${files[@]}"})
 }
 
@@ -2408,11 +3615,11 @@ test_jobs_default() {
 # here prints where anyone can see it: cmd_test replays the files in order, so
 # a parallel run reads exactly like a serial one.
 test_item() {
-  local ref="$1" file="$2"
+  local ref="$1" dir="$2" file="$3"
   if [[ -z $file ]]; then
     test_unit_toml "$ref"
   else
-    test_extension "$file" "$(ref_dir "$ref")"
+    test_extension "$file" "$dir"
   fi
 }
 
@@ -2443,7 +3650,7 @@ TXT
 
 cmd_test() {
   local arg jobs="" quiet=0 only="" tmp i=0 rc line
-  local ref file failed=0 shown=0 last=""
+  local ref dir file failed=0 shown=0 last=""
   local -a queue=() targets=()
 
   while (($# > 0)); do
@@ -2492,10 +3699,11 @@ cmd_test() {
   else
     while read -r ref; do
       [[ -z $ref ]] && continue
-      queue+=("$ref"$'\t')
+      dir=$(ref_dir "$ref") || continue
+      queue+=("$ref"$'\t'"$dir"$'\t')
       while read -r file; do
-        [[ -n $file ]] && queue+=("$ref"$'\t'"$file")
-      done < <(ext_files "$ref")
+        [[ -n $file ]] && queue+=("$ref"$'\t'"$dir"$'\t'"$file")
+      done < <(ext_files "$dir")
     done < <(all_refs)
   fi
 
@@ -2504,7 +3712,7 @@ cmd_test() {
   if ! wants_kind manifest; then
     local -a kept=()
     for line in "${queue[@]}"; do
-      [[ ${line#*$'\t'} == "" ]] || kept+=("$line")
+      [[ ${line##*$'\t'} == "" ]] || kept+=("$line")
     done
     queue=(${kept[@]+"${kept[@]}"})
   fi
@@ -2524,7 +3732,8 @@ cmd_test() {
   for ((i = 0; i < ${#queue[@]}; i++)); do
     while (($(jobs -rp | wc -l) >= jobs)); do wait -n; done
     (
-      test_item "${queue[i]%%$'\t'*}" "${queue[i]#*$'\t'}" >"$tmp/$i.out" 2>&1
+      IFS=$'\t' read -r ref dir file <<<"${queue[i]}"
+      test_item "$ref" "$dir" "$file" >"$tmp/$i.out" 2>&1
       printf '%s' "$?" >"$tmp/$i.rc"
     ) &
   done
@@ -3215,9 +4424,15 @@ usage() {
 bo - Omarchy customizations, from any marketplace
 
   bo list                 every unit available, and whether it is on
+  bo list --json          the same, for a program: adds what is missing,
+                          what a conflict blocks, and which toggles reload
+                          the shell
   bo search <term>        find a unit by name, summary, category or tag
   bo info <unit>          everything known about one unit
   bo status               what is on, plus keybinding conflicts
+  bo diff <unit>          what it changed, against the snapshot from install
+  bo snapshots            every snapshot here, including orphaned ones
+  bo restore <unit>       replay a snapshot, even if the unit is gone
 
   bo add [unit...]        turn units on (no argument opens a picker)
   bo remove [unit...]     turn units off (no argument opens a picker)
@@ -3232,6 +4447,7 @@ bo - Omarchy customizations, from any marketplace
 
   bo market ...           add, remove and inspect marketplaces
   bo doctor               check every linked unit's dependencies exist
+  bo uninstall            turn everything off and take bo off this machine
   bo test [target...]     run launcher extensions and check what they print
   bo test --fast          only the checks that run nothing (under a second)
   bo validate             run omarchy plugin validate on every plugin unit
@@ -3261,12 +4477,18 @@ TXT
 }
 
 case "${1:-}" in
-list | ls) check_self_stale; shift; cmd_list "$@" ;;
+# The stale check forks a git fetch and writes a stamp. That is right once a day
+# in a terminal and wrong on a keystroke, and `--json` is only ever a keystroke.
+list | ls) [[ ${2:-} == --json ]] || check_self_stale; shift; cmd_list "$@" ;;
+diff) shift; cmd_diff "$@" ;;
+restore) shift; cmd_restore "$@" ;;
+snapshots) shift; cmd_snapshots "$@" ;;
 search | find) shift; cmd_search "$@" ;;
 info | show) shift; cmd_info "$@" ;;
 status) check_self_stale; cmd_status ;;
 add | install) shift; cmd_add "$@" ;;
-remove | rm | uninstall) shift; cmd_remove "$@" ;;
+remove | rm) shift; cmd_remove "$@" ;;
+uninstall) shift; cmd_uninstall "$@" ;;
 new | create) shift; cmd_new "$@" ;;
 update | upgrade) shift; cmd_update "$@" ;;
 outdated) cmd_outdated ;;

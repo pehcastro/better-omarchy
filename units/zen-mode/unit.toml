@@ -1,9 +1,10 @@
 name     = "zen-mode"
 summary  = "A lone window fills the screen, no gaps or border"
-version  = "0.1.0"
+version  = "0.2.0"
 category = "Appearance"
 tags     = ["hyprland","layout"]
 author   = "pehcastro"
 kind     = "hypr"
 needs    = []
 keys     = []
+touches  = []

@@ -1,9 +1,10 @@
 name     = "nkz-keys"
 summary  = "My keys: Alt+F4 closes, Super+E files, Super+B browser"
-version  = "0.1.0"
+version  = "0.2.0"
 category = "Productivity"
 tags     = ["hyprland","keybindings"]
 author   = "pehcastro"
 kind     = "hypr"
 needs    = []
 keys     = ["ALT+F4", "SUPER+E", "SUPER+B", "SUPER+R", "SUPER+grave"]
+touches  = ["rebound:key:ALT+F4", "rebound:key:SUPER+E", "rebound:key:SUPER+B", "rebound:key:SUPER+R", "rebound:key:SUPER+grave"]
