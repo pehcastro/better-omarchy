@@ -37,10 +37,20 @@ bo new unit my-setting --kind setting  apply.sh and revert.sh
 bo new extension weather               one launcher keyword
 ```
 
-That writes the folder below, filled in, and refuses to touch one that already
-exists. Everything it writes is valid as it stands: `bo add` links it without an
-edit, and a scaffolded extension answers its keyword the moment the launcher
-reloads. It ends by printing the commands to run next.
+Everything it writes is valid as it stands: `bo add` links it without an edit,
+and a scaffolded extension answers its keyword the moment the launcher reloads.
+It refuses to touch a folder that already exists, and it ends by printing the
+commands to run next.
+
+It writes into `units/` in the checkout `bo` itself runs from, not into the
+directory you are standing in. The name has to be lowercase letters, digits and
+hyphens. `--kind plugin` and `bo new extension` both need `jq`.
+
+`bo new unit` writes `unit.toml`, `README.md` and `hypr/<name>.lua`, plus
+`plugin/manifest.json` and `plugin/Widget.qml` for `--kind plugin`, or
+`apply.sh` and `revert.sh` for `--kind setting`. `bo new extension` writes
+`unit.toml`, `README.md`, the script under `bin/`, and the extension JSON and
+its cases under `config/`. A unit may hold all of these whatever it started as:
 
 ```
 units/undo-close/
@@ -86,6 +96,7 @@ dependency.
 | `keys` | list | no | Every keybinding the unit claims, written the way you would say it. `bo status` uses them to catch two linked units fighting over one binding. Nothing binds them; this is a declaration, and the Lua is still what binds. |
 | `requires` | list | no | Bare unit names of units this one does not work without. |
 | `conflicts` | list | no | Bare unit names of units this one cannot be on at the same time as. |
+| `touches` | list | no | What the unit changes that `bo` cannot see by reading the folder. See below. |
 
 `requires` and `conflicts` name bare unit names, not `marketplace/unit` refs,
 because a unit author cannot know which marketplace a user got the other one
@@ -96,6 +107,33 @@ from. Both are resolved against whatever is available on the machine.
   installing.
 - `conflicts`: `bo add` refuses while the other one is on, and names the `bo
   remove` that clears the way.
+
+## touches
+
+`bo add` reads every path it is about to link before it links it, so a unit that
+only links files is reversible without declaring anything. `touches` covers what
+`bo` cannot see by looking at the folder: a key you rebind, a bar widget you
+stand in for, a value in `shell.json`, a command on `PATH` you shadow.
+
+Each entry is `class:kind:key`. An entry with fewer than two colons is skipped.
+
+```toml
+touches = ["rebound:key:SUPER+K", "keeps:file:~/.config/omarchy/omacast.json"]
+```
+
+`kind` is one of `file`, `key`, `barwidget`, `shelljson` and `command`. An
+unknown kind is skipped.
+
+`class` is what the author knows and `bo` must not guess: `keeps` marks your own
+data, which `bo remove` leaves alone and says so; the others record what the unit
+took over, so removal can offer it back. A snapshot is read again after the
+install, so removal can tell a thing the unit still owns from a thing you have
+changed since, and leave the second alone.
+
+`bo diff <unit>` shows that comparison. `bo snapshots` lists what has been
+recorded, and `bo restore <unit>` replays one. A unit whose changes will not fit
+this shape ships `snapshot.sh` and `restore.sh` instead, and `bo info` says
+which of the three a unit uses.
 
 ## What each kind adds
 
@@ -182,25 +220,36 @@ then every directory that only existed for this unit is removed, up to
 
 | Path | What |
 |---|---|
-| `~/.local/share/better-omarchy/marketplaces/<name>/` | each marketplace checkout |
+| `~/.local/share/better-omarchy/marketplaces/<name>/` | each cloned marketplace |
+| `~/.local/share/better-omarchy/local` | the paths of the marketplaces you linked |
 | `~/.local/state/better-omarchy/linked` | which units are on |
 | `~/.local/state/better-omarchy/installed.json` | the version and hash each was at |
+| `~/.config/hypr/modules.lua` | the loader `bo` writes once |
 | `~/.config/hypr/modules.d/` | symlinks to unit Lua files |
 | `~/.config/omarchy/plugins/<id>/` | symlinks to unit plugin folders |
 | `~/.local/bin/` | symlinks to unit scripts |
 | `~/.config/...` | whatever the unit's `config/` mirrors |
 | `<anything>.before-bo.<timestamp>` | a file of yours that a link displaced, put back on remove |
 
-Your `~/.config/hypr/hyprland.lua` gets exactly one added line,
-`require("hypr.modules")`. After that, adding a unit never edits a config file.
+The first `hypr` unit you add writes `~/.config/hypr/modules.lua` and appends a
+blank line, a comment and `require("hypr.modules")` to
+`~/.config/hypr/hyprland.lua`. After that, adding a unit never edits a config
+file. The loader uses `find -L` and `dofile` because `require_all` runs
+`find -type f`, which does not match a symlink.
 
 Linked Lua names carry the marketplace and the unit, `<market>-<unit>-<file>`,
 so two units can both ship a `bindings.lua` without colliding and `ls modules.d`
 says who owns what.
 
-`monitors.lua` is machine-specific and is not tracked. `shell.json` is copied
-rather than symlinked, because Omarchy replaces that file instead of editing it:
-run `bo sync` after changing the bar to pull your version into the checkout.
+`monitors.lua` is the one filename `bo` treats specially. A unit shipping
+`hypr/monitors.lua` gets a second symlink at `~/.config/hypr/monitors.lua`,
+because `omarchy-hyprland-monitor-clamshell` reads that path by name on every
+wake to learn the scale to restore. `bo remove` takes both links out.
+
+`shell.json` is copied rather than symlinked, because Omarchy replaces that file
+instead of editing it: run `bo sync` after changing the bar to pull your version
+into the checkout. `bo` writes a `shell.json.before-bo.<timestamp>` copy beside
+it before it edits `plugins[]`.
 
 ## Three things that will bite you
 
@@ -264,7 +313,7 @@ mirrors to `~/.config/omarchy/omacast/extensions/<name>.json` on add.
 | Field | Default | What it does |
 |---|---|---|
 | `id` | required | Identifies the extension. An extension with no `id` is ignored entirely, with no error. |
-| `search` | required | The command template. No `search`, and the extension is ignored the same way. |
+| `search` | required | The command template. No `search`, and the extension is ignored the same way. The launcher accepts a `socket` instead, but `bo test` does not, so declare `search` either way. |
 | `keyword` | the `id` | What the user types before the colon, lowercased. |
 | `aliases` | `[]` | Other keywords that reach the same extension, lowercased. `spotify` also answers to `music`, `song`, `track` and `play`. |
 | `title` | the `id` | The group heading over its rows. |
@@ -278,6 +327,15 @@ mirrors to `~/.config/omarchy/omacast/extensions/<name>.json` on add.
 | `tier` | `substring` | Which band the rows sort into. See below. |
 | `view` | `list` | The layout. See below. |
 | `always` | `false` | Whether the extension answers an unscoped query, one with no keyword. |
+| `accent` | `""` | One colour for this extension's rows, walked to something legible on the card. |
+| `cacheMs` | `0` | How long an answer is held in memory. Off by default: what is playing or what is on the clipboard is wrong the moment you act on it. |
+| `refreshMs` | `0` | How often to re-run while these rows are on screen. No spinner, no flicker, the selection stays put. Off by default. |
+| `socket` | `""` | A unix socket to ask instead of starting a process per keystroke. `~` is expanded. See `units/omacast/EXTENSIONS.md` for the protocol. |
+| `settings` | `[]` | Fields `settings:` asks for, each `{ key, label, value, placeholder, secret }`. The answers reach your command as environment: `cacheDays` arrives as `$OMACAST_CACHEDAYS`. |
+| `testQuery` | `""` | What `bo test` types at this extension for the `actions` check. Use one when a bare query returns rows with no actions on them. |
+
+An extension file may also carry an `actions` array meant to add `/` commands.
+The launcher does not read it today, so nothing comes of it.
 
 `always` is off because a launcher that shells out to six services on every
 keystroke is a launcher nobody keeps. `date:` is the one built-in that opts in,
@@ -340,13 +398,21 @@ through for its own use.
 
 ## Actions
 
-An action is `{ title, shortcut, exec }`. `Enter` runs the row's primary action,
+An action is `{ title, exec }`. `Enter` runs the row's primary action,
 `Shift+Enter` the second, and `Ctrl+K` shows the rest.
 
 Give an action a `query` as well and running it lands you on that query instead
 of closing the launcher. That is what makes pressing play on a search result
 show the player rather than throwing you into Spotify's own window: the thing
-you started is the thing you want to look at next.
+you started is the thing you want to look at next. A `query` on the first action
+also takes over `Enter` on the row itself.
+
+Give it `keepOpen: true` when all it does is change something the launcher will
+show next. Without it an action closes the launcher, which is right for anything
+that starts a program and wrong for anything that does not.
+
+`shortcut` is a string the action panel prints beside the title. Nothing binds
+it. `confirm` is read on the launcher's own `/` actions and ignored here.
 
 ## Tiers
 
@@ -369,6 +435,10 @@ matches too easily to sit level with a named thing.
 
 ## Views
 
+A view is a `Result<Name>.qml` in `units/omacast/plugin/`, and the name you
+write here is that file's name in lower case. `bo test` reads the set off disk,
+so a view that exists is a view you may name. These are the general ones:
+
 | view | Use it for |
 |---|---|
 | `list` | a choice between named things |
@@ -379,6 +449,23 @@ matches too easily to sit level with a named thing.
 | `dashboard` | readings, some of which are proportions |
 | `calendar` | a month |
 | `player` | what is playing |
+| `slider` | a number you drag, written back with `setExec` |
+| `form` | fields to fill in before anything happens |
+
+The rest are built for one keyword each: `agent`, `docker`, `emoji`, `files`,
+`ghpr`, `ghrepo`, `gitbranches`, `gitrepo`, `gitstashes`, `herdr`, `hosts`,
+`marketplace`, `marketplacehome`, `marketplaceunit`, `menutree`, `notes`,
+`processes`, `radioplayer`, `radios`, `repos`, `shortcuts`, `snippets`,
+`themes`, `timegrid`, `vault`, `windows` and `zones`. Read the one that draws
+what you want before you borrow it: each reads fields of its own.
+
+`loading` is the skeleton the launcher draws itself while a slow answer is still
+coming, so no extension needs to name it. `answer` is what `Ctrl+Enter` streams
+into and is not a view an extension may name at all: `bo test` accepts the name,
+because it reads the set off disk, and the launcher then falls back to `list`.
+
+A view name that no `Result*.qml` provides also falls back to `list`, and fails
+in `bo test`. The full list is in `units/omacast/README.md`.
 
 ## Testing it
 
@@ -412,10 +499,11 @@ under a second. A narrowed run says what it left out on the last line, because
 a fast pass that reads like a full one is how a skipped check goes unrun for a
 week.
 
-Extensions are checked at once, `nproc` of them at a time, and each one's lines
-are held until its turn to print, so a parallel run reads exactly like the
-serial one it replaces. `--jobs 1` puts it back to one at a time. Nothing is
-remembered between runs: every check runs every time.
+Extensions are checked at once, `nproc` of them at a time and never more than
+16, and each one's lines are held until its turn to print, so a parallel run
+reads exactly like the serial one it replaces. `--jobs 1` puts it back to one at
+a time. `timeout` has to be installed, because a check that cannot give up would
+hang. Nothing is remembered between runs: every check runs every time.
 
 For a hook or CI: `--quiet` prints nothing at all when everything holds and the
 failures when it does not. Exit is 0 when everything held, 1 when something
@@ -428,6 +516,19 @@ way the launcher would: every row parsed, every `title` there, `exec` a string,
 `score` a number, `progress` a fraction, every action carrying a title. It also
 checks every `unit.toml`, and that a plugin unit's `manifest.json` carries the
 same `id`.
+
+The manifest check reads more than the JSON syntax. `view` has to name a
+`Result*.qml` that exists, `tier` has to be one of the seven, and `minChars`,
+`debounceMs`, `timeoutMs` and `maxRows` have to be numbers rather than
+booleans.
+
+The `actions` check does not go through the command template. It runs the first
+word of `search` with `testQuery` as its only argument, then takes every row
+action's `exec` apart and fails when the program is not on `PATH`. It follows
+`sh -c` and the wrappers that take the real program as an argument:
+`omarchy-launch-tui`, `omarchy-launch-browser`, `omarchy-launch-editor`,
+`uwsm-app`, `setsid`, `timeout`, `env` and `nohup`. An extension whose `search`
+carries literal arguments has to name a `testQuery` that works without them.
 
 ```
 ok      theme                  0 rows, 22 bare
@@ -461,9 +562,11 @@ ok      unit                   0 rows
 ok      unit cases             8 held
 ```
 
-`bo new extension` writes one that already passes. What the cases can assert,
-when one is worth writing, and how to make a failure say what it was
-protecting: `units/omacast/EXTENSIONS.md`.
+`bo new extension` writes three that already pass. A case runs the first word of
+`search` with the case's `query` as its only argument, the same way the
+`actions` check does, so a script that needs a subcommand cannot be reached by
+one. What the cases can assert, when one is worth writing, and how to make a
+failure say what it was protecting: `units/omacast/EXTENSIONS.md`.
 
 Editing the QML wants a full `omarchy restart shell` to be certain. After each
 reload, check `journalctl --user -n 50 | grep -iE "TypeError|error"`: a

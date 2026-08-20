@@ -9,9 +9,38 @@ That is the whole distribution mechanism. There is no server, no account and no
 index to publish to: a user runs `bo market add <git-url>` and your units appear
 in their `bo list` next to everyone else's.
 
-This repo is one, and the only thing `bo` treats specially about it is that the
-checkout `bo` runs from is listed first, so it can find itself and refuse to
-remove itself.
+This repo is one. The checkout `bo` runs from is listed first and cannot be
+removed or unlinked, and it is where `bo new`, `bo registry` and `bo sync`
+write.
+
+## Local and remote
+
+`bo` sorts marketplaces into two kinds, and it derives the kind from where the
+tree sits rather than recording it.
+
+A **remote** marketplace is one `bo market add <git-url>` cloned into
+`~/.local/share/better-omarchy/marketplaces/`. `bo market update` fetches it,
+and `bo market list` says how far behind the last fetch left it.
+
+A **local** marketplace is any other tree on this machine. There is nothing to
+fetch and nothing was copied, so an edit to the tree is what the marketplace
+offers from that moment. That is the kind you want while you write units.
+
+```bash
+bo market link ~/code/my-units      # point at a tree, do not copy it
+bo market unlink my-units           # stop pointing at it
+```
+
+`bo market link` wants a `registry.json` at the path, and takes the name out of
+that file unless you pass one. It records an absolute path in
+`~/.local/share/better-omarchy/local` and copies nothing.
+
+`bo market unlink` deletes nothing and refuses while a unit from that
+marketplace is on. `bo market remove` is the other one: it deletes a cloned
+tree, and it sends you back to `unlink` for a tree `bo` never copied.
+
+`bo market list` prints the kind in its second column, and marks the checkout
+`bo` itself runs from.
 
 ## What this adds, and what it builds on
 
@@ -100,7 +129,8 @@ What you do not gain is any of the rest. A plugin repo has no `needs`, no
 
 `name` is what users type: `bo add acme/thing`. Pick it once and leave it
 alone, because it is half of every unit reference anyone writes down. The other
-four fields are copied into the registry and shown by `bo market info`.
+four fields are copied into the registry. Of those four, `bo market info` reads
+back only `homepage`; the rest are there for a client to read.
 
 Two marketplaces cannot share a name on one machine, and `bo market add` refuses
 the second. A user can override the name at add time, so a collision is
@@ -146,6 +176,9 @@ And per unit:
 | `commit` | the last commit that touched the unit folder |
 | `updated` | that commit's date, ISO 8601 |
 | `author_last` | that commit's author |
+
+`requires` and `conflicts` are not in the registry. `bo` reads those two off
+`unit.toml` in the checkout, so it needs the clone to answer them.
 
 The build refuses a unit whose `unit.toml` says a `name` other than its folder,
 because `bo add <name>` would then look in the wrong place.
@@ -213,54 +246,70 @@ git push --follow-tags
 
 Versions follow SemVer, and for the repo tag that means a breaking change to the
 unit format or the `bo` interface is a major, a new unit or command is a minor,
-and a fix is a patch. `cliff.toml` matches tags against `v[0-9]*`, groups
-commits by type, and skips `chore` and `style` entirely.
+and a fix is a patch. `cliff.toml` matches tags against `v[0-9]*` and groups
+commits by type. A plain `chore` or `style` subject is skipped; the breaking
+forms, `chore!` and `style!`, are kept and land under Breaking changes.
 
 Bumping the unit version is the step that is easy to forget and the one that
 matters most to a client. Without it `bo update` still notices, because the
-content hash moved, but it says so as `(content changed, version did not)`,
+content hash moved, and it says so as `0.1.0 unchanged, but its files are not`,
 which tells your users you forgot.
 
 ## What a client sees
 
-`bo update` fetches every marketplace, prints what changed, then applies it.
+`bo update` fetches every marketplace, prints what changed, asks, then applies
+it.
 
 ```
-better-omarchy
-  changed  on better-workspaces      0.1.0 -> 0.2.0
-  new         clipboard            0.1.0  Clipboard history in the bar
-  changed     cpu-meter            0.1.0 (content changed, version did not)
-  updated d5d89fe4451b -> 8c0f1a92be40
+better-omarchy d5d89fe4451b -> 8c0f1a92be40, 7 commit(s)
+  changed  ●! better-workspaces    0.1.0 -> 0.2.0
+  new      ○  clipboard            0.1.0  Clipboard history in the bar
+  changed  ○  cpu-meter            0.1.0 unchanged, but its files are not
+  3 unit(s) change, 1 of them on, 1 of those runs code.
+  every line of it: git -C <root> diff HEAD origin/master
+Update better-omarchy? [y/N]
 ```
 
 Each line is one unit whose registry entry differs between the commit the client
 has and the one they are about to get. `new` and `removed` are units that
 appeared or went. `changed` means the hash moved, and the detail says whether
-the version moved with it. The `on` column marks the units that client actually
-has linked, so the report is about their machine and not just about your repo.
+the version moved with it. A filled dot is a unit that client has on, so the
+report is about their machine and not only about your repo. A `!` beside the dot
+is a unit that runs something.
 
 Then it fast-forwards and relinks. A unit that gained a `hypr/` file, a `bin/`
 script or a `config/` file needs new symlinks; everything already linked needs
 nothing, because a symlink into the checkout is already the new content.
 
-Two ways your users see nothing:
+Three ways your users see nothing:
 
 - **You did not rebuild the registry.** The diff reads `registry.json` at both
-  commits, so a unit change with a stale registry prints `no unit changed; the
-  update touches only docs or tooling`, and nothing relinks.
-- **They have local commits.** `bo` only ever fast-forwards, and warns rather
-  than merging. Someone who edited a unit in place has to rebase or stash first.
+  commits, so a unit change with a stale registry prints `no unit changed. Only
+  docs or tooling moved:` followed by up to ten commit subjects, and nothing
+  relinks.
+- **They are ahead of you.** A checkout somebody develops in prints `N
+  commit(s) ahead of origin, nothing to pull` and stops there.
+- **Their history diverged.** `bo` only ever fast-forwards, so it warns
+  `cannot fast-forward, you have local commits` rather than merging.
 
 ## Before you publish
 
-Add your own repo as a local marketplace and try the round trip: `bo add
-your/unit`, then `bo remove your/unit`, then check `~/.config/hypr/modules.d`,
-`~/.local/bin`, `~/.config/omarchy/plugins` and `~/.config` for anything of
-yours still sitting there. A unit that leaves something behind on remove is the
-bug users report and you never see.
+Point `bo` at your own tree and try the round trip:
+
+```bash
+bo market link .
+bo add your/unit
+bo remove your/unit
+```
+
+Then check `~/.config/hypr/modules.d`, `~/.local/bin`,
+`~/.config/omarchy/plugins` and `~/.config` for anything of yours still sitting
+there. A unit that leaves something behind on remove is the bug users report and
+you never see.
 
 ```bash
 bo test            every extension answers its cases, and every unit.toml is sound
+bo test --fast     the checks that run nothing, for a pre-commit hook
 bo validate        omarchy plugin validate over every plugin unit
 bo doctor          every linked unit's dependencies are on PATH
 ```

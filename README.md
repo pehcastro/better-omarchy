@@ -60,6 +60,15 @@ command and the note that "automatic installation is unavailable because this
 plugin is stored inside a multi-plugin repository without a transactional
 Omarchy update path."
 
+There is one way through, and it is worth naming because it is real and it does
+not help. A `manifest.json` at the root of a monorepo, with its entry point
+pointing down into a subfolder, validates and installs: the whole checkout lands
+in `~/.config/omarchy/plugins/<id>/` and the shell loads the one file the
+manifest named. What it buys is exactly one plugin. `manifest.json` carries a
+single `id`, so the second plugin in the repo has no way to be named, no switch
+of its own, and no settings of its own. Anything that is not QML, such as a
+Hyprland module, has no route at all.
+
 So three small customizations are three repos, three `omarchy plugin add`
 commands, and no way to hand somebody your set. That is the pain this repo
 started from.
@@ -109,6 +118,44 @@ also the cost. Nobody vets a marketplace before you add it. What the model buys:
   line per unit whose registry entry moved, with a column marking the ones you
   actually have on.
 - **Machine readable**, so a tool can drive it.
+
+### Local and remote
+
+A marketplace is one of two kinds, and `bo market list` prints which in its
+second column.
+
+A **remote** marketplace is one `bo market add <git-url>` cloned into
+`~/.local/share/better-omarchy/marketplaces/`. `bo market update` fetches it,
+and `bo market list` says how many commits behind the last fetch left it.
+
+A **local** marketplace is a tree on this machine that `bo` only points at.
+Nothing is copied and there is nothing to fetch, so an edit to the tree changes
+what the marketplace offers at once. That is the kind you want while you write
+a unit.
+
+```bash
+bo market link ~/code/my-units      # point at a tree, do not copy it
+bo market unlink my-units           # stop pointing at it
+```
+
+`bo market link` needs a `registry.json` at the path, and takes the name from
+that file unless you pass one. `bo market unlink` deletes nothing and refuses
+while a unit from that marketplace is on. `bo market remove` is the other one:
+it deletes a cloned tree, and it refuses for a tree `bo` never copied.
+
+### Browse it from the launcher
+
+With `omacast` on, type `bo:` into the launcher to walk the same marketplaces
+in a window. It has three levels: the marketplaces and what you have, one
+marketplace as tiles, and one unit's own page with the switch on it. `Enter`
+goes in, `Escape` comes back, and typing narrows the level you are on.
+
+Turning a plugin unit on or off closes the launcher, applies the change, and
+reopens it on the page you were on. The shell watches
+`~/.config/omarchy/plugins`, and a change there unloads every panel, overlay and
+menu plugin. The launcher is an overlay, so the window cannot survive its own
+toggle. A `hypr` or a `setting` unit touches no plugin directory, so its switch
+moves with the window still up.
 
 ## What a unit can hold
 
@@ -184,24 +231,28 @@ into your `PATH`, and a `setting` unit runs its `apply.sh` there and then. That
 is what buys the extra reach described above, and it is a real trade, not a
 free one.
 
-Two smaller differences worth knowing. `omarchy plugin update` shows a full
-diff and asks per plugin before it fast-forwards; `bo update` prints its
-per-unit summary and then fast-forwards without asking, so run `bo outdated`
-first if you want the decision. And nobody reviews a marketplace before you add
-it. A readable registry is what lets you look first.
+Two smaller differences worth knowing. `omarchy plugin update` shows a full diff
+and asks per plugin before it fast-forwards; `bo update` prints a per-unit
+summary and asks per marketplace, and names the `git diff` that shows you the
+rest. And nobody reviews a marketplace before you add it. A readable registry is
+what lets you look first.
 
 ## The units in this marketplace
 
 Five. `bo list` shows what is on, and every unit has a README beside it.
 
 **[omacast](units/omacast/README.md)** is the launcher, and most of what this
-repo is. Apps, arithmetic, files, images, windows, music, radio, clipboard,
-notes, reminders, themes, a calendar, a system dashboard and the web, in one
-box. Everything it answers ships inside it, including which key opens it:
-`units/omacast/hypr/keys.lua` has three presets and one line to switch.
+repo is. Forty-one keywords in one box: apps, arithmetic, files, images,
+windows, processes, git, GitHub, containers, music, radio, clipboard, notes,
+reminders, themes, keybindings, timezones, a calendar, a system dashboard and
+the web. `bo:` is one of them, so this marketplace is a screen in the launcher
+as well as a command. Everything it answers ships inside it, including which
+key opens it: `units/omacast/hypr/keys.lua` has three presets and one line to
+switch.
 
-**[better-workspaces](units/better-workspaces/README.md)** puts workspace names in
-the bar instead of numbers, with `Super+F2` to rename the one you are on.
+**[better-workspaces](units/better-workspaces/README.md)** puts workspace names
+in the bar instead of numbers. `Super+F2` renames the one you are on, `Super+=`
+goes to the first free one, and a workspace nobody is using leaves the bar.
 
 **[undo-close](units/undo-close/README.md)** reopens the window you closed last,
 on `Super+Z`. Exactly one: press twice and the second press does nothing.
@@ -218,12 +269,17 @@ add it.
 
 ```
 bo list                 every unit available, and whether it is on
+bo list --json          the same, for a program
 bo search <term>        find a unit by name, summary, category or tag
 bo info <unit>          everything known about one unit
 bo status               what is on, plus keybinding conflicts
+bo diff <unit>          what it changed, against the snapshot from install
+bo snapshots            every snapshot here, including orphaned ones
+bo restore <unit>       replay a snapshot, even if the unit is gone
 
 bo add [unit...]        turn units on (no argument opens a picker)
 bo remove [unit...]     turn units off (no argument opens a picker)
+bo remove --purge ...   also delete a widget's bar position and settings
 
 bo new unit <name>      start a unit here, filled in and ready to add
 bo new extension <name> start a unit whose job is one launcher keyword
@@ -232,10 +288,11 @@ bo update               fetch every marketplace, show what changed, apply
 bo outdated             linked units whose marketplace moved on
 bo relink               apply those changes
 
-bo market ...           add, remove and inspect marketplaces
+bo market ...           add, link, remove and inspect marketplaces
 bo doctor               check every linked unit's dependencies exist
-bo test [unit]          run each launcher extension, check what it prints,
-                        and run the cases it ships
+bo uninstall            turn everything off and take bo off this machine
+bo test [target...]     run launcher extensions and check what they print
+bo test --fast          only the checks that run nothing
 bo validate             run omarchy plugin validate on every plugin unit
 bo registry [name]      rebuild a marketplace's registry.json (authors)
 bo sync                 copy the live shell.json into this checkout
@@ -243,6 +300,22 @@ bo version              what this is and where it lives
 ```
 
 Run `bo` with no arguments for the interactive version of all of this.
+
+`bo test` takes a unit, a keyword, or `marketplace/unit`, and with no target it
+checks everything. It runs four kinds of check, and `--only` picks them:
+`manifest` reads `unit.toml` and each extension's own JSON, `answer` runs each
+extension and reads the rows it prints, `actions` proves every action names a
+program that exists, and `cases` runs the assertions in
+`<extension>.cases.json`. `--fast` is `--only manifest`.
+
+`bo uninstall` is the way out. It turns every unit off one at a time, so each
+one puts back whatever it displaced, then deletes `bo`'s state directory, its
+clones and its `~/.local/bin/bo` link. It names anything it moved aside and
+could not put back. It never deletes a tree you linked, and it never deletes
+this checkout.
+
+Nothing that runs code or pulls a change in happens without being asked first.
+`--yes` answers yes to every question, for scripts.
 
 ## Further
 

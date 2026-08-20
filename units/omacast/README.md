@@ -35,7 +35,7 @@ With no keyword at all, four things answer:
 | `theme`, `lock`, `screenshot` | Omarchy's own commands (24 of them, listed under `>` below) |
 | `wiki`, `dl` | your own quicklinks, matched by title or tag |
 | `2+2*10`, `40 miles in km` | the answer, large |
-| `27 november 2027`, `next friday` | the day of the week, the week number, how far away |
+| `27 november 2027`, `next friday`, `christmas` | the day, and how far away it is |
 | anything with no match | search the web |
 
 The calculator answers unscoped only when the text passes a gate: it must
@@ -91,8 +91,8 @@ tilde. `/~/Documents`, `//home/nkz` and `/report.pdf` all become file searches.
 | `Down`, `Ctrl+N`, `Tab` | next |
 | `Up`, `Ctrl+Shift+P`, `Shift+Tab` | previous |
 | `PageDown` / `PageUp` | a screenful at a time |
-| `Left` / `Right` | move a cell, in the grid, dashboard and calendar views |
-| `Left` / `Right` | adjust, in the slider and timegrid views |
+| `Left` / `Right` | move a cell, in the grid, dashboard, calendar, docker and marketplace views |
+| `Left` / `Right` | adjust, in the slider, timegrid, emoji, themes, windows, menutree and radioplayer views |
 | `Escape` | four stages, in order |
 
 Escape unwinds one stage per press: leave a streamed answer, then step back one
@@ -101,7 +101,7 @@ everything comes off in that order. A row that is still working is told to stop
 first. With the action panel open, Escape closes only that.
 
 `Left`, `Right`, `Home`, `End`, `Backspace` and the usual editing chords belong
-to the text cursor and are not taken, except in the four views named above.
+to the text cursor and are not taken, except in the views named above.
 
 A pin lifts a row the way frecency does and by more, and neither ever crosses a
 tier: a name that starts with what you typed still beats a pinned substring.
@@ -125,12 +125,16 @@ appears in neither `?` nor your results.
 | `img:` | `image`, `images`, `pic`, `photo` | image thumbnails, newest first, with size and dimensions | `fd`; dimensions need ImageMagick |
 | `recent:` | `recents`, `last`, `opened` | files you opened lately in any app, minus what has since been deleted | `~/.local/share/recently-used.xbel` |
 | `win:` | `window`, `windows`, `w` | every open window by class or title; focus it or close it | Hyprland |
-| `kill:` | `ps`, `proc`, `process`, `quit` | find a running process and end it | nothing extra |
+| `kill:` | `ps`, `proc`, `process`, `top`, `quit` | find a running process and end it | nothing extra |
 | `ssh:` | `host`, `hosts` | a host from your ssh config, connected in a terminal | `~/.ssh/config` |
 | `repo:` | `repos`, `project`, `projects` | your local git repos, most recently touched first, filterable with `branch:main` | `git`, `fd` |
+| `herdr:` | `agents`, `herd` | your coding agents, the ones waiting on you first; Enter focuses one and raises its terminal | `herdr` |
 
 `kill:` answers nothing for a bare `kill:` and wants two characters, so you
 cannot fat-finger your way into the process list.
+
+`herdr:` asks every running herdr session, and reading never marks a pane seen,
+so a keystroke here cannot erase the state it exists to report.
 
 ### Git, on disk
 
@@ -168,7 +172,7 @@ rows are on screen.
 | `calc:` | `math`, `=` | the sums you have already accepted, newest first; typing an expression puts the live answer on top | qalc, and a non-empty history |
 | `unit:` | `units`, `convert`, `conv` | unit conversion, with the phrasing fixed up so `40 miles in km` and `180f in c` mean what you said | `qalc` |
 | `def:` | `define`, `dict`, `syn`, `word` | every sense of a word by part of speech, with synonyms | `curl` and the network |
-| `date:` | `when`, `day` | a plain-words date resolved: "next friday", "in 3 weeks", "2026-12-25" | GNU `date` |
+| `date:` | `when`, `day`, `days` | a date, a duration, a named day or the gap between two dates | GNU `date` |
 | `cal:` | `calendar`, `month` | a month drawn as a month. `cal:december`, `cal:november 2027`, `cal:2027` for all twelve | `cal` |
 | `tz:` | `time`, `timezone`, `zone`, `clock` | what time it is elsewhere, and what your time is there | `jq`, `python3` |
 | `sys:` | `system`, `status`, `battery`, `info` | battery, uptime, memory, disk, address, temperature | nothing extra |
@@ -179,6 +183,26 @@ next to a temperature, and a word that is not a unit answers nothing rather than
 qalc's `0 B`.
 
 `def:` keeps what it fetched under `~/.cache/omacast/define` for 30 days.
+
+`date:` answers five shapes of question:
+
+| Type | Get |
+|---|---|
+| `27 november 2027`, `25/12/2026` | the weekday, written out |
+| `in 90 days`, `3 weeks ago` | the day that lands on |
+| `christmas`, `easter 2028` | the day it falls on that year |
+| `from 1 jan to today` | the gap, in days and in weekdays |
+| `week 34 2027` | the days that week covers |
+
+Easter is computed rather than looked up, so the four days that hang off it stay
+right in any year. Every answer is a day and never an instant, and the day
+arithmetic runs at noon, so a clock change cannot move a count by one.
+
+`calc:` and `=` decide how a number is written per call rather than reading
+`~/.config/qalculate/qalc.cfg`. Exponent notation starts at 10^21 in both
+directions, so `2^32` is `4294967296` and not `4.29497E9`. An answer never
+carries fewer significant digits than the number you typed into it. Money is
+cut to two decimals, and `12% of 250` is read as the multiplication you meant.
 
 `repo:` looks in `$OMACAST_REPO_ROOTS` (colon separated) when that is set, and
 otherwise in whichever of `~/localhost`, `~/Projects`, `~/Work`, `~/src`,
@@ -219,26 +243,40 @@ which is loaded; `sp:` and `music:` are the two names that are never ambiguous.
 | `bt:` | `bluetooth` | paired bluetooth devices, connected first; connect, disconnect, toggle the radio | `bluetoothctl`, and something paired |
 | `docker:` | `container`, `containers` | your containers, running first, with logs, a shell, and start/stop | a docker daemon actually answering |
 | `alarm:` | `timer`, `remind`, `reminder` | a reminder said the way you would say it: `alarm:25m tea is ready` | Omarchy |
+| `shortcuts:` | `keys`, `keybindings`, `binds`, `hotkeys`, `keymap`, `kb` | every key bound on this machine, as a keymap. Search the action or the combination | `hyprctl` |
 
 `docker:` is gated on the daemon answering rather than on the binary existing,
 so a stopped daemon hides the keyword instead of giving you an empty list.
+
+`shortcuts:` reads `omarchy-menu-keybindings --print` when it is there, because
+Hyprland reports an Omarchy Lua bind as dispatcher `__lua` with a number and
+reports a `code:` bind with no key at all. `hyprctl binds -j` is the fallback,
+and it can only report the binds that still carry a key. The launcher's own keys
+are in neither source, so they are listed too and marked OmaCast. Enter copies
+the combination and never fires it.
 
 ### The launcher itself
 
 | Keyword | Aliases | What |
 |---|---|---|
 | `?` | `:`, `h:`, `help:` | every keyword loaded right now, in three groups: built in, extensions, quicklinks |
-| `settings:` | — | the extensions that declare settings; picking one opens its form |
+| `settings:` | none | the extensions that declare settings; picking one opens its form |
 | `apps:` | `app`, `launch` | applications only |
 | `run:` | `commands`, `>` | Omarchy commands only |
 | `web:` | `search`, `google`, `ddg`, `?` | search the web with the default engine |
 | `do:` | `agent`, `ai` | hand a local coding agent an instruction, and watch what it does |
+| `bo:` | `market`, `marketplace` | browse your marketplaces and switch a unit on or off. Needs `bo` |
 
 Three extensions declare settings today: `def:` (how long to keep definitions),
 `repo:` (where your repos live) and `tz:` (which zones to show). The form saves
-them to `extensionSettings` in your config, but **nothing reads them back yet**:
-all three scripts take their configuration from somewhere else, listed with each
-keyword above. Treat `settings:` as half built until they do.
+them to `extensionSettings` in your config, under each extension's id. The
+launcher hands them to the script as environment: a key `cacheDays` arrives as
+`$OMACAST_CACHEDAYS`. Environment rather than an argument, because an argument
+is visible in every process listing on the machine.
+
+Two of the three read it. `def:` reads `$OMACAST_CACHEDAYS` and `repo:` reads
+`$OMACAST_ROOTS`. `tz:` still takes its zones from `timezones` in
+`omacast.json` and ignores the setting it declares.
 
 ### `/` actions
 
@@ -254,7 +292,67 @@ uninvited beside your search results is a way to clear your history by accident.
 | `/settings` | types `settings:` for you |
 | `/config` | open `~/.config/omarchy/omacast.json` in your editor |
 
-An extension can add its own, shown as `/spotify auth`.
+Those six are the whole list. An extension file may carry an `actions` block,
+but the launcher does not read it, so no keyword adds a `/` action of its own
+today.
+
+---
+
+## The marketplace: `bo:`
+
+`bo:` is better-omarchy inside the launcher. It has three levels. You walk them
+with `Enter` and leave them with `Escape`.
+
+| Level | What is on it |
+|---|---|
+| home | your marketplaces, and the units you have on |
+| a marketplace | its units, as tiles |
+| a unit | its own page: what it does, what it needs, and the switch |
+
+Typing narrows the level you are on and nothing else. On home a search reaches
+every unit and not only the ones you have, and the section takes the search as
+its label to say so. The reserved words are the kinds (`plugin`, `hypr`,
+`setting`), the states (`on`, `off`, `unavailable`) and the categories units
+declare. They are matched exactly, and a query that matches none of them is
+retried as plain text.
+
+The level is an address written into the box: `bo:@<marketplace>` is one
+marketplace and `bo:#<market>/<unit>` is one unit. Nobody types those. The
+launcher writes them when you press `Enter`, which is what keeps the level alive
+while you type.
+
+A unit page carries two rows: the way out, and the switch. Arriving selects the
+way out, so the first key you can press undoes the navigation rather than
+changing a system component. One `Down` lands on the switch and `Enter` commits.
+
+Turning a plugin unit on or off closes the launcher, runs `bo add` or
+`bo remove`, and summons the launcher back on the page you were on. It has to.
+The shell watches `~/.config/omarchy/plugins`, and a change in that directory
+unloads every panel, overlay and menu plugin. This launcher is an overlay.
+Nothing in the sequence is a timed sleep: the script waits for the surface to
+go, then for its own next invocation to come back carrying the address it asked
+for. A `hypr` or a `setting` unit changes nothing the shell watches, so its
+switch moves with the window still up.
+
+The unit that ships this launcher is the one that does not come back. Its page
+says so.
+
+A unit whose `needs` are not all on this machine cannot be turned on. `bo:`
+draws it faintest of the three states, with the reason where its summary would
+be, so you learn it before you press anything.
+
+### The deeplink
+
+That summon is a public entry point. Any payload with a `query` key opens the
+launcher on that query:
+
+```bash
+omarchy-shell shell summon bo.omacast '{"query":"bo:"}'
+```
+
+A payload that will not parse opens the launcher empty rather than not at all.
+With no payload the launcher opens empty, or on your last query when
+`resetOnOpen` is `false`.
 
 ---
 
@@ -412,8 +510,10 @@ rather than Lisbon, because the question was never really about Lisbon. Zones
 are the IANA names `timedatectl list-timezones` prints, and a zone that is not
 in that list is dropped rather than silently read as UTC.
 
-Without the key you still get a working `tz:`: Los Angeles, New York, London,
-Berlin and Tokyo, which is most of a working day.
+Without the key you still get a working `tz:`: San Francisco, New York, London,
+Berlin and Tokyo, which is most of a working day. UTC is not among them, because
+it is a reference for machines and not a place anybody is. `tz:utc` still
+answers.
 
 Zone names match loosely, so `tokyo` finds `Asia/Tokyo`, `sp` finds
 `America/Sao_Paulo` and `ny` finds `America/New_York`. Initials beat substrings,
@@ -522,6 +622,9 @@ they are the working examples to copy when writing your own.
 | `vol:` | `omacast-volume` | sliders; output resolved through any DSP sink to the real one |
 | `bri:` | `omacast-brightness` | a slider, through `omarchy-brightness-display`, which knows DDC from backlight |
 | `do:` | `omacast-agent` | answers over a unix socket rather than a process per keystroke |
+| `shortcuts:` | `omacast-shortcuts` | `omarchy-menu-keybindings --print` first, `hyprctl binds -j` as the fallback |
+| `herdr:` | `omacast-herdr` | one snapshot per running herdr session, and reading marks nothing seen |
+| `bo:` | `omacast-bo` | three levels of marketplace, and the toggle that closes the window |
 
 ---
 
@@ -558,9 +661,13 @@ themselves the first time a shimmed binary runs.
 | `id` | required | how it is addressed everywhere else, including settings |
 | `keyword` | the id | what you type before the colon |
 | `aliases` | `[]` | other names for the same thing |
-| `search` | — | the command. `{query}` is the shell-quoted search text, `{anything}` is another filter's value, so `music:blue year:1959` arrives as two arguments |
-| `socket` | — | a unix socket to ask instead of running a command. One of `search` or `socket` is required; with neither, the extension is dropped rather than sitting in the keyword list doing nothing |
-| `when` | — | a shell test, run **once** at load. An extension for software you do not have costs nothing |
+| `title` | the id | the name in the `?` list, and the default group above its rows |
+| `subtitle` | the title | the fallback subtitle on every row it returns |
+| `glyph` | `""` | the fallback icon on every row it returns |
+| `accent` | `""` | one colour for this extension's rows, walked to something legible on the card |
+| `search` | required | the command. `{query}` is the shell-quoted search text, `{anything}` is another filter's value, so `music:blue year:1959` arrives as two arguments |
+| `socket` | `""` | a unix socket to ask instead of running a command. The launcher wants one of `search` or `socket`; with neither, the extension is dropped rather than sitting in the keyword list doing nothing. `bo test` is stricter and fails a file with no `search`, so declare both |
+| `when` | `""` | a shell test, run **once** at load. An extension for software you do not have costs nothing |
 | `always` | `false` | answer unscoped queries too. Off, because a launcher that shells out to six services per keystroke is one nobody keeps |
 | `view` | `"list"` | the layout, see below |
 | `tier` | `"substring"` | where its rows sort against everything else: `calc`, `forced`, `prefix`, `substring`, `weak`, `file`, `web` |
@@ -570,29 +677,50 @@ themselves the first time a shimmed binary runs.
 | `maxRows` | `8` | how many rows to keep |
 | `cacheMs` | `0` | keep an answer this long. Off by default on purpose: what is playing, which containers are up and what is on the clipboard are all wrong the moment you act on them, and nothing here can tell those from a dictionary lookup. The key is the exact command, so a cached answer can never reach a different question |
 | `refreshMs` | `0` | re-run this often while these rows are on screen: no spinner, no flicker, the selection stays put. Only while the launcher is open, and it stops the moment the query changes |
-| `settings` | — | fields `settings:` will ask for and write to `extensionSettings.<id>` in `omacast.json`, each `{ key, label, value, placeholder, secret }`. Your script must read that file itself: they are deliberately never passed on a command line, because a token on a command line is a token in everyone's process list. No shipped extension does this yet |
-| `actions` | — | extra `/` actions, shown as `/weather refresh`, each `{ id, title, subtitle, keywords, exec, confirm }` |
+| `settings` | `[]` | fields `settings:` will ask for and write to `extensionSettings.<id>` in `omacast.json`, each `{ key, label, value, placeholder, secret }`. The launcher puts them in front of your command as environment, so `cacheDays` arrives as `$OMACAST_CACHEDAYS`. Never an argument: an argument is in everyone's process list |
+| `testQuery` | `""` | what `bo test` types at this extension when it checks that every action names a program that exists |
+
+`bo test` reads two more things off this file. `view` has to name a
+`Result*.qml` that exists, and `tier` has to be one of the seven above.
 
 ### What a row can say
 
-The minimum is `{ id, title, subtitle, exec }`. Beyond that: `detail`,
-`accessory`, `icon`, `glyph`, `art`, `preview`, `group`, `mono`, `score`,
-`progress`, `view`, and its own `actions`.
+The minimum is `{ id, title, subtitle, exec }`. A row with an empty `title` is
+dropped, and it is dropped after `maxRows` has counted it. Beyond the minimum:
+`detail`, `accessory`, `icon`, `glyph`, `art`, `preview`, `group`, `mono`,
+`score`, `progress`, `view`, and its own `actions`.
+
+Four more decide what `Enter` does to the row:
+
+- `fill` types that text into the box and runs nothing. It wins over everything
+  else on the row.
+- `keepOpen: true` keeps the launcher up.
+- `clearTo` empties the box to that text afterwards, which is what makes `do:`
+  a chat rather than one sentence you cannot get out of.
+- `escExec` is the command `Escape` runs on this row, so a row that is still
+  working is stopped by the key that looks like it stopped it.
 
 Only the **first** row's `view` is read, so put the row that decides the layout
 first. A row's own `score` orders it against its siblings and never crosses a
 tier, so an extension cannot outrank the calculator by returning a big number.
 
-An action is `{ title, shortcut, exec }`. Add `query` and running it lands you
-on that query instead of closing the launcher, which is how playing a track
-returns you to the player. Add `keepOpen: true` when all the action does is
-change something the launcher will show next; without it the launcher closes,
-which is right for anything that starts a program and wrong for anything that
-does not.
+An action is `{ title, exec }`. Add `query` and running it lands you on that
+query instead of closing the launcher, which is how playing a track returns you
+to the player. A `query` on the **first** action also takes over `Enter` on the
+row itself. Add `keepOpen: true` when all the action does is change something
+the launcher will show next; without it the launcher closes, which is right for
+anything that starts a program and wrong for anything that does not.
+
+`shortcut` is a string the action panel prints beside the title. Nothing binds
+it. `confirm` works on the launcher's own `/` actions and is ignored on a row's
+action.
 
 **Any field the launcher has not already named is passed through untouched.** A
 view can therefore read fields nobody has heard of yet, which is how new views
-get built without editing the row builder.
+get built without editing the row builder. Nine names are the launcher's own and
+are dropped: `key`, `providerId`, `tier`, `local`, `score`, `run`, `pending`,
+`icon` and `glyph`. The last two are still read, as `iconSource` and
+`iconGlyph`.
 
 ### `view` picks the layout
 
@@ -616,8 +744,34 @@ get built without editing the row builder.
 | `ghrepo` | one GitHub repo: open PRs, checks, head commit, newest release |
 | `ghpr` | one pull request, its status drawn once and large |
 | `agent` | a chat with something that acts |
-| `answer` | a model's answer, growing as it arrives |
+| `docker` | containers, as a panel of machines |
+| `notes` | your notes, drawn as notes |
+| `processes` | what is running, and what it is costing |
+| `emoji` | a wall of emoji, with the name of the one under the cursor |
+| `themes` | themes drawn in their own colours |
+| `windows` | the session, drawn as the desktop it describes |
+| `hosts` | hosts, drawn as machines rather than as config lines |
+| `files` | files, drawn as files. Serves `file:` and `recent:` |
+| `repos` | local checkouts, drawn as checkouts |
+| `radios` | what is on the air around you, and which one you are joined to |
+| `radioplayer` | a stream playing, and the stations under it |
+| `menutree` | a menu, drawn as a menu |
+| `snippets` | your snippets, drawn as the text they are |
+| `vault` | your password store, drawn as a store |
+| `shortcuts` | this machine's keymap, drawn as keys |
+| `herdr` | agents, sorted by what they need from you |
+| `marketplacehome` | marketplaces, and the units you have |
+| `marketplace` | one marketplace's units, as tiles |
+| `marketplaceunit` | one unit, and the switch for it |
 | `loading` | a skeleton in the shape of the answer, so the card never says "nothing matches" before it has looked |
+
+The launcher draws `loading` itself while a slow answer is still coming, so no
+extension needs to name it. `ResultAnswer.qml` is a view in the folder and not
+one on this list: `Ctrl+Enter` streams into it, and an extension that names
+`answer` gets `list`.
+
+A view name that no `Result*.qml` provides also falls back to `list`, and fails
+in `bo test`.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for the socket protocol and the longer
 version of all of this.
@@ -631,6 +785,11 @@ plugin/          the QML: Launcher.qml, one Result*.qml per view, the .js logic
 bin/             one script per built-in extension
 config/          the extension JSON, mirrored into ~/.config on add
 ```
+
+A `<name>.cases.json` sits beside `<name>.json` in the same directory and holds
+the assertions `bo test` runs against that keyword. Thirteen keywords ship one.
+The launcher globs the whole directory and a cases file survives only because
+it is an array rather than an object, so keep the two names in step.
 
 Editing QML wants a full `omarchy restart shell` to be certain. After each
 reload, check `journalctl --user -n 50 | grep -iE "TypeError|error"`: a

@@ -30,9 +30,13 @@ line.
 | field | default | what it does |
 | --- | --- | --- |
 | `id` | required | unique; also the default keyword |
-| `search` | required unless `socket` | the command that answers |
+| `search` | required | the command that answers. The launcher takes a `socket` instead, but `bo test` fails a file with no `search`, so declare both |
 | `keyword` | `id` | what you type before the colon |
 | `aliases` | `[]` | other keywords that reach it |
+| `title` | `id` | the name in the `?` list, and the default `group` on every row |
+| `subtitle` | `title` | the second line on any row that does not set its own |
+| `glyph` | `""` | the icon on any row that does not set its own |
+| `accent` | `""` | one colour for this extension's rows, walked to something legible on the card |
 | `when` | `""` | shell test; a nonzero exit hides the keyword |
 | `minChars` | `1` | do not run until the query is this long |
 | `debounceMs` | `200` | wait this long after the last keystroke |
@@ -44,6 +48,34 @@ line.
 | `cacheMs` | `0` | keep an answer this long |
 | `refreshMs` | `0` | re-ask this often while the rows are on screen |
 | `socket` | `""` | a unix socket to ask instead of running a command |
+| `settings` | `[]` | fields `settings:` asks for, each `{ key, label, value, placeholder, secret }` |
+| `testQuery` | `""` | what `bo test` types at this extension for the `actions` check |
+
+`tier` is one of `calc`, `forced`, `prefix`, `substring`, `weak`, `file` and
+`web`. `view` is a `Result*.qml` in `plugin/`, named in lower case without the
+`Result`. The launcher silently falls back to `substring` and to `list` on a
+name it does not know; `bo test` fails on either.
+
+An extension file may also carry an `actions` array meant to add `/` commands.
+The launcher does not read it today, so nothing comes of it.
+
+## settings
+
+`settings:` shows every extension that declares a `settings` list and writes the
+answers to `extensionSettings.<id>` in `~/.config/omarchy/omacast.json`.
+
+The launcher puts them in front of your command as environment, upper-cased and
+prefixed: a key `cacheDays` arrives as `$OMACAST_CACHEDAYS`. A key that is not a
+legal environment name is dropped, so a hand-edited config cannot inject a
+second command through one.
+
+Environment rather than an argument, because an argument is visible in every
+process listing on the machine, and a token is the first thing anybody will put
+in here. Read yours the way a shell script wants to be configured:
+
+```bash
+cache_days="${OMACAST_CACHEDAYS:-30}"
+```
 
 ## cacheMs
 
@@ -52,6 +84,9 @@ answer is held in memory, keyed by the exact command that would have run, so a
 different query or a different filter can never be served someone else's answer.
 A hit skips the debounce as well as the process: reopening the launcher on a
 query you just ran redraws with no shell-out at all.
+
+A socket extension has no command, so its key is the socket path, the query text
+and the filters instead.
 
 Do not set it on anything that reflects live state the user is about to change.
 What is playing, which containers are up, what is on the clipboard, what your
@@ -155,12 +190,25 @@ row would be the same object a dozen times; putting it in a second kind of row
 would mean a header that can be selected and pressed.
 
 Anything else you put on a row is carried through untouched, so a view can read
-a field this file has never heard of. The exceptions are the names the launcher
-owns for itself and will not let a script set: `key`, `providerId`, `tier`,
-`local`, `score`, `run`, `pending`.
+a field this file has never heard of. The exceptions are the nine names the
+launcher owns for itself and will not let a script set: `key`, `providerId`,
+`tier`, `local`, `score`, `run`, `pending`, `icon` and `glyph`. The last two are
+still read, as `iconSource` and `iconGlyph`, so a view reads those names and not
+the ones you wrote.
 
-`score` orders your rows against each other. It never crosses tiers, so a big
-number cannot lift an extension above a calculator answer.
+`score` orders your rows against each other, clamped to 0 to 99999. Without one
+a row scores by its position. It never crosses tiers, so a big number cannot
+lift an extension above a calculator answer.
+
+A row with an empty `title` is dropped, and `maxRows` counts it before it goes.
+
+An action is `{ title, exec }`, plus `query` to land on another query,
+`keepOpen` to stay open, and `shortcut`, which the action panel prints and
+nothing binds. `confirm` is read on the launcher's own `/` actions and ignored
+here. A `query` on the first action takes over `Enter` on the row itself.
+
+A row may also carry `fill`: `Enter` types that text into the box and runs
+nothing. It wins over everything else on the row.
 
 ### Rows that keep the launcher open
 
@@ -206,6 +254,14 @@ bo test weather
   a `title` on each, `exec` a string, `score` a number, `progress` between 0
   and 1, every action named
 - an extension whose `when` is false here is skipped, not failed
+- every action on every row names a program that is on `PATH`. This check runs
+  the first word of `search` with `testQuery` as its only argument, so name a
+  `testQuery` when a bare query comes back with no actions on it
+
+Those are the four kinds of check, and `--only` picks them: `manifest`,
+`answer`, `actions` and `cases`. `--fast` is `--only manifest` and runs nothing.
+`--jobs n` sets how many extensions are checked at once, and `--quiet` prints
+only failures, for a hook.
 
 That is the whole of it. It proves your extension answers. It cannot prove the
 answer is right.
@@ -225,8 +281,13 @@ config/omarchy/omacast/extensions/weather.json
 config/omarchy/omacast/extensions/weather.cases.json
 ```
 
-`bo test` finds it on its own and runs it after the extension itself, calling
-the command named in `search` with one argument, the case's `query`:
+The name is the extension file's name, not its `id`: `timezone.json` has
+`"id": "tz"` and its cases live in `timezone.cases.json`.
+
+`bo test` finds it on its own and runs it after the extension itself. It calls
+the **first word** of `search` with one argument, the case's `query`. Every
+literal argument in `search` is dropped, so a script that needs a subcommand
+cannot be reached by a case:
 
 ```
 ok      weather                1 row, 4 bare
@@ -288,15 +349,22 @@ A case is a query and a set of assertions about one row of the answer.
 | `view` | that row's `view` |
 | `fields` | must be present and non-empty |
 | `absent` | must be missing or empty |
+| `atMost` | a length cap per field, for a list or an object |
 | `matches` | a regex per field, Python's `re.search`, so unanchored unless you anchor it |
 
-Two things to know about the shape:
+Three things to know about the shape:
 
 - an assertion on a row is only checked when there is a row. Set `minRows`
   whenever you assert on one, or an extension that has gone completely silent
   passes every case you wrote.
 - `matches` takes a negative lookahead, which is how you say a field must not
   be something: `{ "zoneid": "^(?!UTC$)" }`.
+- `fields` and `absent` turn on emptiness, not on truth. A field is absent when
+  it is missing, an empty string, an empty list or an empty object. `0` and
+  `false` are present.
+
+A failed `minRows`, `maxRows` or `view` stops that case there. The rest run
+together, and each can add a line of its own.
 
 ### `why`, which is the field that matters
 
