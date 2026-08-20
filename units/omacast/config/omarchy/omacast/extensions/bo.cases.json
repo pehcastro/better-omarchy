@@ -1,0 +1,286 @@
+[
+  {
+    "why": "a bare bo: is home, and home opens with the marketplaces",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "view": "marketplacehome",
+    "fields": [
+      "title",
+      "subtitle",
+      "meta",
+      "actions",
+      "counts",
+      "markets"
+    ],
+    "matches": {
+      "tile": "^market$"
+    },
+    "absent": [
+      "state"
+    ]
+  },
+  {
+    "why": "under them are the installed units, as the same tiles the other screens draw",
+    "query": "",
+    "minRows": 2,
+    "row": -1,
+    "matches": {
+      "tile": "^unit$",
+      "state": "^(on|off|unavailable)$"
+    }
+  },
+  {
+    "why": "home is the one screen with no way out, so its first row is a marketplace",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "absent": [
+      "part"
+    ]
+  },
+  {
+    "why": "every other screen leads with the way out, named for where it goes",
+    "query": "@better-omarchy",
+    "minRows": 2,
+    "row": 0,
+    "view": "marketplace",
+    "matches": {
+      "part": "^back$",
+      "backLabel": "^bo$",
+      "heading": "^better-omarchy$"
+    }
+  },
+  {
+    "why": "a tile carries which screen it was opened from, so the page knows its way back",
+    "query": "@better-omarchy",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "tile": "^unit$"
+    }
+  },
+  {
+    "why": "typing inside a level narrows that level and keeps the way out",
+    "query": "@better-omarchy zen",
+    "minRows": 2,
+    "maxRows": 2,
+    "row": 1,
+    "matches": {
+      "title": "^zen-mode$"
+    }
+  },
+  {
+    "why": "a unit page is the way out and the switch, and nothing else is selectable",
+    "query": "@better-omarchy#better-omarchy/zen-mode",
+    "minRows": 2,
+    "maxRows": 2,
+    "row": 0,
+    "view": "marketplaceunit",
+    "matches": {
+      "part": "^back$",
+      "backLabel": "^better-omarchy$"
+    },
+    "fields": [
+      "title",
+      "subtitle",
+      "state",
+      "consequence",
+      "facts",
+      "path"
+    ]
+  },
+  {
+    "why": "the switch is the second row, so enter on arrival cannot change anything",
+    "query": "@better-omarchy#better-omarchy/zen-mode",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "part": "^switch$",
+      "title": "^Turn "
+    }
+  },
+  {
+    "why": "the same unit opened from home points its way out at home instead",
+    "query": "#better-omarchy/zen-mode",
+    "minRows": 2,
+    "row": 0,
+    "matches": {
+      "part": "^back$",
+      "backLabel": "^bo$"
+    }
+  },
+  {
+    "why": "and then the marketplace is a fact on the page, because nothing above names it",
+    "query": "#better-omarchy/zen-mode",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "facts": "marketplace"
+    }
+  },
+  {
+    "why": "provenance is cells in the same grid, so the page has no grey block to end in",
+    "query": "@better-omarchy#better-omarchy/better-workspaces",
+    "minRows": 2,
+    "row": 0,
+    "fields": [
+      "claims",
+      "runsLines"
+    ],
+    "matches": {
+      "facts": "commit"
+    }
+  },
+  {
+    "why": "and for a unit that touches nothing, it says the opposite rather than nothing",
+    "query": "#better-omarchy/zen-mode",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "consequence": "stays open"
+    }
+  },
+  {
+    "why": "an address naming no unit is silent rather than falling back to a search",
+    "query": "#better-omarchy/no-such-unit",
+    "maxRows": 0
+  },
+  {
+    "why": "an address naming no marketplace is silent too",
+    "query": "@nosuchmarket",
+    "maxRows": 0
+  },
+  {
+    "why": "a narrowing that matches nothing leaves you standing on the level, way out and all",
+    "query": "@better-omarchy zzzznope",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "part": "^back$",
+      "heading": "^better-omarchy$"
+    }
+  },
+  {
+    "why": "on home a search that matches nothing still leaves the marketplaces on screen",
+    "query": "zzzznope",
+    "minRows": 1,
+    "row": -1,
+    "matches": {
+      "tile": "^market$"
+    }
+  },
+  {
+    "why": "plugins narrows by kind and is matched exactly, never as a substring",
+    "query": "plugins",
+    "minRows": 2,
+    "row": -1,
+    "matches": {
+      "tile": "^unit$",
+      "kind": "^plugin$"
+    }
+  },
+  {
+    "why": "a tile offers opening it and reading it, and nothing else",
+    "query": "",
+    "minRows": 2,
+    "row": -1,
+    "atMost": {
+      "actions": 2
+    }
+  },
+  {
+    "why": "apply is the applier own word, and as a query it narrows to nothing",
+    "query": "apply",
+    "minRows": 1,
+    "row": -1,
+    "matches": {
+      "tile": "^market$"
+    }
+  },
+  {
+    "why": "the launcher own unit is the one plugin that applies at once, because it has to end the window",
+    "query": "#better-omarchy/omacast",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "consequence": "ends the window"
+    }
+  },
+  {
+    "why": "a marketplace row says whether it is a tree here or a clone, without a legend",
+    "query": "",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "tile": "^market$",
+      "kindWord": "^(local|remote)$"
+    }
+  },
+  {
+    "why": "and the unit page carries the same word as a fact rather than a badge",
+    "query": "#better-omarchy/zen-mode",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "facts": "source"
+    }
+  },
+  {
+    "why": "a plugin toggle carries the address to come back to, so the window returns where it was",
+    "query": "@better-omarchy#better-omarchy/better-workspaces",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "exec": "apply .* (on|off) .bo:@better-omarchy#better-omarchy/better-workspaces.$"
+    }
+  },
+  {
+    "why": "a unit the shell is not watching needs no round trip, so it keeps the window and carries no address",
+    "query": "#better-omarchy/zen-mode",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "exec": "apply better-omarchy/zen-mode (on|off)$"
+    }
+  },
+  {
+    "why": "and the page says which of the two it is before the switch is pressed",
+    "query": "@better-omarchy#better-omarchy/better-workspaces",
+    "minRows": 1,
+    "row": 0,
+    "matches": {
+      "consequence": "closes this window.*opens it back here"
+    }
+  },
+  {
+    "why": "the unit shipping this launcher is the one toggle with nowhere to come back to",
+    "query": "#better-omarchy/omacast",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "part": "^switch$",
+      "exec": "apply better-omarchy/omacast (on|off)$"
+    }
+  },
+  {
+    "why": "the way out sits at the score ceiling so a frecency boost cannot lift the switch above it",
+    "query": "@better-omarchy#better-omarchy/better-workspaces",
+    "minRows": 2,
+    "row": 0,
+    "matches": {
+      "part": "^back$",
+      "score": "^99999$"
+    }
+  },
+  {
+    "why": "and the switch sits far enough below that the 9000 Frecency.js can add never closes the gap",
+    "query": "@better-omarchy#better-omarchy/better-workspaces",
+    "minRows": 2,
+    "row": 1,
+    "matches": {
+      "part": "^switch$",
+      "score": "^1000$"
+    }
+  }
+]

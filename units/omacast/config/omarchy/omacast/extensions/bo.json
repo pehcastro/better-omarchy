@@ -1,0 +1,21 @@
+{
+  "id": "bo",
+  "title": "Marketplace",
+  "keyword": "bo",
+  "aliases": [
+    "market",
+    "marketplace"
+  ],
+  "subtitle": "Marketplace",
+  "glyph": "󰏗",
+  "search": "omacast-bo {query}",
+  "when": "command -v bo",
+  "minChars": 0,
+  "debounceMs": 120,
+  "timeoutMs": 8000,
+  "maxRows": 60,
+  "tier": "prefix",
+  "view": "marketplace",
+  "cacheMs": 0,
+  "refreshMs": 0
+}

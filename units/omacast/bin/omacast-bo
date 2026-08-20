@@ -1,0 +1,888 @@
+#!/bin/bash
+# Emits JSON rows for OmaCast's `bo:` keyword: the better-omarchy marketplace,
+# browsable and switchable from inside the launcher.
+#
+#   bo:                  home: the marketplaces, and the units you have
+#   ↵ on a marketplace   its units, as tiles
+#   ↵ on a unit          that unit's own page, and the switch for it
+#   ⎋                    back out, one level at a time
+#   typing               narrows the level you are on, and nothing else
+#
+# ---------------------------------------------------------- three levels
+#
+# Navigation is a hierarchy you walk with Enter and back out of with Escape,
+# the same shape as `bo list` then `bo info <unit>` in a terminal. It is not a
+# filter grammar. An earlier version made filters the way you moved around,
+# which meant the opening screen was a wall of words and there was no way to
+# look inside anything.
+#
+# The launcher already has the mechanism: an action carrying a `query` pushes
+# the query you were on onto `root.flowStack` and goes to the new one, and
+# Escape pops it. So a level is an address written into the box:
+#
+#   bo:                  home
+#   bo:@<marketplace>    inside that marketplace
+#   bo:#<market>/<unit>  that unit's page
+#
+# Nobody types those; the launcher writes them when Enter is pressed. `@` and
+# `#` are the address, and anything after it on the line is the narrowing, so
+# `bo:@better-omarchy zen` is this level with a search in it. That is why the
+# address survives typing even though typing clears the launcher's step stack:
+# the level lives in the text, not only in the stack.
+#
+# ------------------------------------------------------------- narrowing
+#
+# The reserved words are still here, and they are now only a convenience:
+# kinds (`plugin`, `hypr`, `setting`), states (`on`, `off`, `unavailable`), and
+# whatever categories the units declare. They are matched exactly rather than as
+# substrings, because `on` inside a summary is the letters of "ones" and a
+# filter that answers with those looks broken. If the reserved reading matches
+# nothing, the whole query is retried as plain text, so a unit named `plugins`
+# is still reachable and a narrowing is never a dead end.
+#
+# On home, narrowing searches every unit rather than only the installed ones,
+# and the section says so by taking the search as its label. A search box that
+# can only find what you already have is a search box that cannot find
+# anything.
+#
+# ---------------------------------------------------------------- the restart
+#
+# Turning a plugin unit on or off cannot happen while this window is on screen,
+# and not because of anything bo does. The shell watches the plugin directory:
+#
+#   ~/.local/share/omarchy/shell/services/PluginRegistry.qml:636
+#     inotifywait -m -r -e close_write,create,delete,move  ~/.config/omarchy/plugins
+#   ...:701  a bare create or delete in that directory counts as a plugin change
+#   ~/.local/share/omarchy/shell/shell.qml:63   a 150ms timer, then
+#   ...:739  reloadPlugins -> unloadPanels -> every panel plugin is destroyed
+#
+# This launcher is a panel plugin. So the answer is not to hold the change back
+# until the window closes, it is to close the window, make the change, and put
+# the window back where it was:
+#
+#   1  the launcher dismisses itself, because the action carries no keepOpen,
+#      and this script waits for the layer surface to actually go
+#   2  bo add or bo remove, with no window up for the reload to destroy
+#   3  summon it back at the address it was on, once the shell has the plugin
+#      registered again
+#
+# The user sees the window blink and come back where they were, which is an
+# honest picture of what happened to the shell underneath.
+#
+# Everything is confirmed rather than timed. Step 1 counts the omacast surfaces
+# before the hide and waits for the count to drop, so a surface left over from
+# an earlier session cannot make it wait forever. Step 3 polls for the plugin to
+# be registered and then retries the summon until a surface appears, so no part
+# of this is a guessed sleep.
+#
+# hypr and setting units never touch the plugin directory, so none of this
+# applies to them: their toggle carries keepOpen and the switch moves in place
+# with the window still up.
+#
+# The unit shipping this launcher is the one that does not come back, because
+# there is nothing left to come back to. It says so on its page.
+#
+# --------------------------------------------------------------- unavailable
+#
+# A unit whose `needs` are not all installed cannot be turned on: `bo add`
+# checks, fails, and the failure is the first thing the user learns about it.
+# So `bo list --json` reports `missing` for every unit rather than only for the
+# linked ones `bo doctor` walks, and a unit with anything missing is drawn
+# faintest of the three states with the reason where its summary would be.
+#
+# ------------------------------------------------------------------- caching
+#
+# `bo list --json` costs about 450ms: it walks every marketplace through python.
+# That is too slow for every keystroke and fine once, so the answer is cached in
+# the runtime directory beside a copy of bo`s `linked` state file.
+#
+# The copy is the invalidation, and it is a copy rather than an mtime because bo
+# line 35 runs `touch "$LINKED_FILE"` on every invocation, `bo info` included.
+# An mtime test therefore reported the cache stale after any bo command at all,
+# which is why opening a unit page used to cost 868ms: 390 of them were a second
+# bo process and 450 more were the cache miss that process caused.
+#
+# The unit page reads what it needs from the marketplace registry.json in the
+# same pass, so nothing here starts a second bo. See registry_unit below.
+#
+# The extension keeps `cacheMs: 0`. Navigation is now a cache hit either way,
+# and a launcher-side cache is keyed by the command, which after a toggle is the
+# same command as before it: it would serve the pre-toggle answer back as the
+# result of the toggle.
+
+set -uo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/better-omarchy"
+RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+CACHE="$RUN_DIR/omacast-bo.json"
+CACHE_STATE="$RUN_DIR/omacast-bo.linked"
+LOG="$STATE_DIR/omacast-bo.log"
+SEEN="$RUN_DIR/omacast-bo.seen"
+PLUGIN_ID="bo.omacast"
+
+command -v bo >/dev/null 2>&1 || exit 0
+
+# ---------------------------------------------------------------- the units
+
+cache_fresh() {
+  [[ -s $CACHE ]] || return 1
+
+  local now age
+  now=$(printf '%(%s)T' -1)
+  age=$((now - $(stat -c %Y "$CACHE" 2>/dev/null || echo 0)))
+  ((age < 300)) || return 1
+
+  # The content of bo state file, not its mtime. bo touches that file on every
+  # invocation (bo line 35), so an mtime test called the cache stale after any
+  # bo command at all.
+  cmp -s "$STATE_DIR/linked" "$CACHE_STATE" || return 1
+  return 0
+}
+
+units_json() {
+  cache_fresh && {
+    cat "$CACHE"
+    return 0
+  }
+
+  local out
+  out=$(bo list --json 2>/dev/null) || return 1
+  [[ ${out:0:1} == "[" ]] || return 1
+
+  mkdir -p "$RUN_DIR" 2>/dev/null
+  printf '%s' "$out" >"$CACHE.$$" 2>/dev/null && mv "$CACHE.$$" "$CACHE" 2>/dev/null
+  cp -f "$STATE_DIR/linked" "$CACHE_STATE" 2>/dev/null || : >"$CACHE_STATE"
+  printf '%s' "$out"
+}
+
+drop_cache() { rm -f "$CACHE" "$CACHE_STATE" 2>/dev/null; }
+
+# The unit this script belongs to, so the page for it can be told apart from
+# every other page. A copy rather than a symlink resolves somewhere no unit
+# claims, and then no page is marked, which is the right way for this to
+# degrade.
+self_dir() {
+  local here
+  here=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null) || return 0
+  printf '%s' "$(dirname "$(dirname "$here")")"
+}
+
+note() {
+  command -v notify-send >/dev/null 2>&1 || return 0
+  notify-send -a "bo" "$@" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- the window
+
+# How many launcher surfaces the compositor is showing. A count rather than a
+# yes or no: a surface left behind by an earlier session has the same namespace,
+# and waiting for "none" would wait forever. Waiting for "one fewer" is exactly
+# the question being asked.
+omacast_layers() {
+  local n=0
+  command -v hyprctl >/dev/null 2>&1 &&
+    n=$(hyprctl layers 2>/dev/null | grep -c 'namespace: omacast')
+  # grep -c prints its count and still exits 1 when that count is zero, so a
+  # `|| printf 0` fallback fired on top of it and this returned two lines. Every
+  # arithmetic test on the result then failed, which is where 2.4 seconds of
+  # every toggle went.
+  printf '%s' "${n:-0}"
+}
+
+# Waits for the window to be off screen. The action carries no keepOpen, so the
+# launcher already called dismiss() on its way here and the usual answer is that
+# there is nothing to wait for; this confirms that rather than assuming it, and
+# asks the shell directly if half a second goes by with the surface still up.
+#
+# Zero surfaces is done. Otherwise it waits for the count to drop rather than
+# for it to reach zero, because a surface left behind by an earlier session
+# carries the same namespace and waiting for none would wait forever.
+wait_gone() {
+  local before now waited=0
+  before=$(omacast_layers)
+  ((before == 0)) && return 0
+
+  # Ten seconds, because the ceiling is only ever reached when something is
+  # wrong and a slow machine is not wrong. The fact being waited on is the
+  # surface count dropping, checked every 50ms; it is never a fixed sleep.
+  while ((waited < 200)); do
+    now=$(omacast_layers)
+    ((now == 0 || now < before)) && return 0
+    ((waited == 10)) && omarchy-shell shell hide "$PLUGIN_ID" >/dev/null 2>&1
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# Puts it back on the address it was on. The shell has to finish reloading
+# plugins first, so this polls for the plugin to be registered and then keeps
+# asking until a surface appears: a summon sent into the middle of a reload is
+# dropped with no error.
+# Puts the window back on the address it was on, and waits for proof that it is
+# there rather than for a surface to exist.
+#
+# A surface is not the answer. open() calls loadExtensions(), which reads the
+# extension files through FileView asynchronously, and a shell that has just
+# reloaded every plugin takes longer over that than the 100ms the old version
+# slept. The window was up and could not answer yet, so the page drew with
+# whatever the query returned in the meantime.
+#
+# The fact worth waiting on is this script being run again by the launcher with
+# the address that was asked for. Every query invocation writes what it was
+# asked into a file, so a match there means the extension is loaded, the query
+# landed and the right page is what came back. Nothing about that is a guess.
+summon_back() {
+  local query="$1" want="${1#bo:}" waited=0 payload
+  payload=$(python3 -c 'import json,sys; print(json.dumps({"query": sys.argv[1]}))' "$query" 2>/dev/null) \
+    || payload='{}'
+
+  : >"$SEEN" 2>/dev/null
+
+  # `listPlugins` is not a readiness check: it names bo.omacast throughout the
+  # reload, so gating on it proved nothing. The summon is simply re-sent once a
+  # second while the fact has not arrived, because one sent into the middle of a
+  # reload is dropped with no error.
+  #
+  # Twenty seconds. A machine at half this speed takes twice as long over the
+  # plugin reload, and the ceiling exists so a shell that never comes back says
+  # so rather than hanging.
+  while ((waited < 400)); do
+    ((waited % 20 == 0)) && omarchy-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null 2>&1
+    [[ $(cat "$SEEN" 2>/dev/null) == "$want" ]] && return 0
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------- applying
+
+log_result() {
+  mkdir -p "$STATE_DIR" 2>/dev/null
+  {
+    printf '%s  bo %s %s -> %s\n' "$(date '+%F %T')" \
+      "$([[ $1 == on ]] && printf add || printf remove)" "$2" "$3"
+    printf '%s\n\n' "$4"
+  } >>"$LOG" 2>/dev/null
+
+  # Append-only with nothing that ever shortened it. Every add and every remove
+  # writes the whole of what `bo` said, a failed apply.sh writes its whole
+  # error, and none of it was ever read back except by somebody looking at the
+  # last few. Half a megabyte is thousands of entries; the newest half survives
+  # the trim, which is the half anybody would open the file for.
+  local size
+  size=$(stat -c %s "$LOG" 2>/dev/null) || return 0
+  ((size > 524288)) || return 0
+  tail -c 262144 "$LOG" > "$LOG.new" 2>/dev/null && mv -f "$LOG.new" "$LOG" 2>/dev/null
+  rm -f "$LOG.new" 2>/dev/null
+}
+
+# The last line bo said, which for the common failures is the whole answer: an
+# unmet require, a conflict, or an apply.sh that exited non-zero.
+why_failed() {
+  printf '%s\n' "$1" | sed 's/\x1b\[[0-9;]*m//g' | grep -v '^[[:space:]]*$' | tail -1
+}
+
+run_bo() {
+  local want="$1" ref="$2" out rc
+  if [[ $want == on ]]; then
+    out=$(bo add --yes "$ref" 2>&1)
+  else
+    out=$(bo remove --yes "$ref" 2>&1)
+  fi
+  rc=$?
+  log_result "$want" "$ref" "$rc" "$out"
+  drop_cache
+  BO_OUT="$out"
+  return $rc
+}
+
+# apply <ref> <on|off> [return-query]
+#
+# With a return query this is the plugin path: wait for the window to go, make
+# the change, bring the window back. Without one it is the immediate path, for
+# units that touch nothing the shell is watching.
+apply() {
+  local ref="$1" want="$2" back="${3:-}" unit="${1##*/}" rc verb before
+
+  # Off this shell process tree, so nothing here depends on the launcher that
+  # started it still existing a second from now.
+  if [[ -z ${OMACAST_BO_DETACHED:-} ]] && command -v setsid >/dev/null 2>&1; then
+    OMACAST_BO_DETACHED=1 setsid "${BASH_SOURCE[0]}" apply "$ref" "$want" "$back" \
+      >/dev/null 2>&1 &
+    return 0
+  fi
+
+  [[ $want == on ]] && verb="Turning on" || verb="Turning off"
+
+  if [[ -z $back ]]; then
+    note -u low "$verb $unit" "better-omarchy"
+    run_bo "$want" "$ref" && {
+      note -u low "$unit is $want" "better-omarchy"
+      return 0
+    }
+    note -u critical "Could not turn $want $unit" "$(why_failed "$BO_OUT")"
+    return 1
+  fi
+
+  wait_gone || note -u low "$verb $unit" "the launcher would not close, changing it anyway"
+
+  run_bo "$want" "$ref"
+  rc=$?
+
+  # Warm the cache while nothing is waiting on it. run_bo drops it, so without
+  # this the first thing the returning window does is pay 500ms rebuilding it,
+  # which is the pause between the launcher coming back and the page appearing.
+  units_json >/dev/null 2>&1
+
+  # The window comes back either way. A failed toggle that also loses the window
+  # is two things going wrong where one did, and the switch it comes back to is
+  # where the machine really is.
+  if ! summon_back "$back"; then
+    note -u critical "$unit is $([[ $rc == 0 ]] && printf "$want" || printf 'unchanged')" \
+      "the launcher did not come back. Press your launcher key, or run: omarchy-restart-shell"
+    return $rc
+  fi
+
+  ((rc == 0)) || note -u critical "Could not turn $want $unit" "$(why_failed "$BO_OUT")"
+  return $rc
+}
+
+# ---------------------------------------------------------------- the rows
+
+ROWS_PY='
+import json, os, shlex, sys
+
+arg = sys.argv[1]
+me = sys.argv[2]
+home = os.path.expanduser("~")
+bin_dir = home + "/.local/bin"
+
+try:
+    units = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+
+if not units:
+    sys.exit(0)
+
+# How many tiles are worth drawing at once. Three hundred units is a wall nobody
+# scrolls to the end of, and typing is the way through a large collection; the
+# view says how much of the answer it is showing.
+CAP = 60
+
+# ----------------------------------------------------------------- the data
+
+def shorten(path):
+    return ("~" + path[len(home):]) if home and path.startswith(home) else path
+
+# Where a marketplace lives, from the unit path bo reports. ref_dir builds it as
+# <root>/units/<unit> or <root>/.bo/units/<unit>, so this is a strip and not a
+# guess.
+def market_root(unit):
+    path, name = unit["path"], unit["unit"]
+    for tail in ("/.bo/units/" + name, "/units/" + name):
+        if path.endswith(tail):
+            return path[: -len(tail)]
+    return path
+
+# A marketplace registry, read once per root. This is where the commit, the
+# date and the file count live, and reading the file is what `bo info` does too:
+# it costs one open instead of the 390ms a second bo invocation costs, and the
+# numbers are the same numbers because they are the same file.
+_registries = {}
+
+def registry_unit(u):
+    root = market_root(u)
+    if root not in _registries:
+        try:
+            with open(root + "/registry.json", encoding="utf-8") as fh:
+                _registries[root] = json.load(fh)
+        except Exception:
+            _registries[root] = {}
+    reg = _registries[root]
+    entry = reg.get("units", {}) if isinstance(reg, dict) else {}
+    found = entry.get(u["unit"]) if isinstance(entry, dict) else None
+    return found if isinstance(found, dict) else {}
+
+# What a unit will run on this machine, in the words `bo info` uses for it.
+#
+# Kept in step with unit_runs() in bo, around line 805. It is derived here
+# rather than read back from `bo info` because that call cost 390ms of the
+# 868ms an Enter into this page used to take, and it is the same directory
+# listing either way.
+def runs_lines(u):
+    out = []
+    try:
+        names = sorted(os.listdir(u["path"] + "/bin"))
+    except OSError:
+        names = []
+    if len(names) > 6:
+        out.append("%d commands in %s, including %s, and %d more"
+                   % (len(names), bin_dir, ", ".join(names[:5]), len(names) - 5))
+    elif names:
+        out.append(", ".join(names) + " in " + bin_dir)
+    if u["kind"] == "setting" and os.path.exists(u["path"] + "/apply.sh"):
+        out.append("apply.sh, now, as you; revert.sh when you remove it")
+    elif u["kind"] == "plugin" and u["id"]:
+        out.append(u["id"] + " inside omarchy-shell, unsandboxed, "
+                   + "for as long as the shell lives")
+    return out
+
+markets = {}
+for u in units:
+    m = markets.setdefault(u["marketplace"], {
+        "name": u["marketplace"], "root": shorten(market_root(u)),
+        # local is a tree on this machine that bo was pointed at; remote is one
+        # bo cloned and can fetch. bo decides it, this only carries it.
+        "kind": u.get("marketplaceKind", ""),
+        "source": u.get("marketplaceSource", "") or shorten(market_root(u)),
+        "behind": int(u.get("marketplaceBehind", 0) or 0),
+        "units": 0, "on": 0, "off": 0, "unavailable": 0,
+    })
+    m["units"] += 1
+    if not u["available"]:
+        m["unavailable"] += 1
+    elif u["on"]:
+        m["on"] += 1
+    else:
+        m["off"] += 1
+
+categories = {}
+for u in units:
+    if u["category"]:
+        categories[u["category"]] = categories.get(u["category"], 0) + 1
+
+counts = {
+    "total": len(units),
+    "on": sum(1 for u in units if u["on"]),
+    "off": sum(1 for u in units if u["available"] and not u["on"]),
+    "unavailable": sum(1 for u in units if not u["available"]),
+    "markets": len(markets),
+}
+
+def state_of(u):
+    if not u["available"]:
+        return "unavailable"
+    return "on" if u["on"] else "off"
+
+def is_self(u):
+    return bool(me) and u["path"] == me and u["on"]
+
+def copy(text):
+    return "printf %s " + shlex.quote(text) + " | wl-copy"
+
+
+
+# ------------------------------------------------------------ the narrowing
+
+KIND_WORDS = {"plugin": "plugin", "plugins": "plugin",
+              "hypr": "hypr", "hyprland": "hypr",
+              "setting": "setting", "settings": "setting"}
+STATE_WORDS = {"on": "on", "installed": "on", "enabled": "on",
+               "off": "off", "new": "off",
+               "unavailable": "unavailable", "missing": "unavailable"}
+ALL_WORDS = {"all", "everything"}
+
+lower_categories = {c.lower(): c for c in categories}
+
+# Whatever level is on screen, cut down. Reserved words are matched exactly; the
+# rest is a substring across everything a unit says about itself.
+def narrow(pool, tokens):
+    if not tokens:
+        return pool
+
+    kinds, states, cats, terms = [], [], [], []
+    reserved = False
+    for token in tokens:
+        low = token.lower()
+        if low in ALL_WORDS:
+            reserved = True
+        elif low in KIND_WORDS:
+            kinds.append(KIND_WORDS[low])
+            reserved = True
+        elif low in STATE_WORDS:
+            states.append(STATE_WORDS[low])
+            reserved = True
+        elif low in lower_categories:
+            cats.append(lower_categories[low])
+            reserved = True
+        else:
+            terms.append(low)
+
+    def hay(u):
+        return " ".join([u["unit"], u["ref"], u["summary"], u["category"], u["kind"]]
+                        + u["tags"] + u["keys"]).lower()
+
+    def keep(u, kinds_, states_, cats_, words):
+        if kinds_ and u["kind"] not in kinds_:
+            return False
+        if states_ and state_of(u) not in states_:
+            return False
+        if cats_ and u["category"] not in cats_:
+            return False
+        if words:
+            h = hay(u)
+            if not all(w in h for w in words):
+                return False
+        return True
+
+    out = [u for u in pool if keep(u, kinds, states, cats, terms)]
+
+    # A reserved word that hides everything is worse than no reserved word at
+    # all, so the whole query is retried as plain text.
+    if not out and reserved:
+        words = [t.lower() for t in tokens]
+        out = [u for u in pool if keep(u, [], [], [], words)]
+    return out
+
+# ------------------------------------------------------------------ the rows
+
+# One tile. Enter opens the unit page; the switch itself lives there, so that a
+# toggle which closes the launcher is never one keypress away from a grid.
+def unit_row(u, i, view_name, back, home_addr):
+    state = state_of(u)
+    mine = is_self(u)
+
+    bits = []
+    keys = u["keys"]
+    if keys:
+        bits.extend(keys[:3])
+        if len(keys) > 3:
+            bits.append("+" + str(len(keys) - 3))
+    if mine:
+        bits.append("this launcher")
+    elif u["restarts"]:
+        bits.append("reopens the launcher")
+
+    reason = ""
+    if state == "unavailable":
+        reason = ("needs " + ", ".join(u["missing"])) if u["missing"] \
+            else ("conflicts with " + ", ".join(x.split("/")[-1] for x in u["blockedBy"]))
+        bits = []
+
+    return {
+        "id": u["ref"],
+        "title": u["unit"],
+        "subtitle": u["summary"],
+        "view": view_name,
+        "score": max(0, 80000 - i * 100),
+        "actions": [
+            {"title": "Open " + u["unit"], "shortcut": "↵",
+             "query": home_addr + "#" + u["ref"]},
+            {"title": "Copy bo info " + u["unit"], "exec": copy("bo info " + u["ref"]),
+             "keepOpen": True, "query": back},
+        ],
+        "tile": "unit",
+        "ref": u["ref"],
+        "marketplace": u["marketplace"],
+        "state": state,
+        "kind": u["kind"],
+        "category": u["category"],
+        "version": u["version"],
+        "restarts": u["restarts"],
+        "self": mine,
+        "meta": " · ".join(bits),
+        "reason": reason,
+    }
+
+def market_row(name, i, view_name):
+    m = markets[name]
+    bits = [str(m["units"]) + (" unit" if m["units"] == 1 else " units"),
+            str(m["on"]) + " on"]
+    if m["off"]:
+        bits.append(str(m["off"]) + " to install")
+    if m["unavailable"]:
+        bits.append(str(m["unavailable"]) + " unavailable")
+    # The word and where it points are two fields, because the view draws the
+    # word a step brighter than the path: a marketplace you are editing and one
+    # you pulled are different things to be running against, and the row used to
+    # show a path either way.
+    origin = m["source"] or m["root"]
+    if m["kind"] == "remote" and m["behind"] > 0:
+        origin += "   ·   " + str(m["behind"]) + " behind"
+
+    return {
+        "id": "market:" + name,
+        "title": name,
+        "subtitle": origin,
+        "kindWord": m["kind"],
+        "behind": m["behind"],
+        "view": view_name,
+        "score": max(0, 90000 - i * 100),
+        "tile": "market",
+        "meta": ", ".join(bits),
+        "actions": [{"title": "Open " + name, "shortcut": "↵",
+                     "query": "bo:@" + name}],
+    }
+
+# ------------------------------------------------------------- the address
+
+# The address is the first token, and it carries where the screen came from as
+# well as what it points at. `@name#ref` is a unit opened from its marketplace
+# and `#ref` is one opened from home, so the way-out row can name where Escape
+# actually goes rather than guessing at a hierarchy. Nobody types these; the
+# launcher writes them when Enter is pressed.
+tokens = arg.split()
+level, address, parent, rest = "home", "", "", tokens
+
+if tokens and tokens[0].startswith("@"):
+    head = tokens[0][1:]
+    rest = tokens[1:]
+    if "#" in head:
+        level, parent = "unit", head.split("#", 1)[0]
+        address = head.split("#", 1)[1]
+    else:
+        level, address = "market", head
+elif tokens and tokens[0].startswith("#"):
+    level, address, rest = "unit", tokens[0][1:], tokens[1:]
+
+rows = []
+
+# ------------------------------------------------------------ level three
+#
+# Two rows and no more: the way out, and the switch. The page itself hangs off
+# row zero, because the view needs one place to read it from and the way out is
+# always there.
+#
+# The order is the interaction. Arriving selects row zero, so the first key that
+# can be pressed on a new page undoes the navigation instead of changing a
+# system component; one Down lands on the switch, which fills with the accent to
+# say the next key is its; Enter commits. Two keys once you know it, and no
+# arrangement of one key that turns something off by accident.
+if level == "unit":
+    found = [u for u in units if u["ref"] == address]
+    if not found:
+        sys.exit(0)
+    u = found[0]
+    state = state_of(u)
+    mine = is_self(u)
+    back_addr = ("bo:@" + parent) if parent else "bo:"
+    back_label = parent if parent else "bo"
+    here = ("bo:@" + parent + "#" + u["ref"]) if parent else ("bo:#" + u["ref"])
+
+    # Narrow cells, four to a row: where it came from. The marketplace is left
+    # out when the way-out row above already names it, so no fact is on the page
+    # twice.
+    facts = [{"label": "version", "value": u["version"]}]
+    if not parent:
+        facts.append({"label": "marketplace", "value": u["marketplace"]})
+    facts.append({"label": "kind", "value": u["kind"]})
+    if u["category"]:
+        facts.append({"label": "category", "value": u["category"]})
+    if u["author"]:
+        facts.append({"label": "author", "value": u["author"]})
+    if u.get("marketplaceKind"):
+        behind = int(u.get("marketplaceBehind", 0) or 0)
+        facts.append({"label": "source",
+                      "value": u["marketplaceKind"]
+                      + ((", " + str(behind) + " behind") if behind else "")})
+
+    # Wide cells, two to a row: what it will claim and what it wants. Tags are
+    # gone from the page; they are how a unit is found by typing, not anything
+    # anyone decides on.
+    claims = []
+    if u["keys"]:
+        claims.append({"label": "keys", "value": "   ".join(u["keys"])})
+    if u["needs"]:
+        claims.append({"label": "needs", "value": "   ".join(u["needs"]),
+                       "urgent": bool(u["missing"])})
+    if u["requires"]:
+        claims.append({"label": "requires", "value": ", ".join(u["requires"])})
+    if u["conflicts"]:
+        claims.append({"label": "conflicts", "value": ", ".join(u["conflicts"]),
+                       "urgent": bool(u["blockedBy"])})
+
+    # What bo info knows and bo list --json does not: when the unit last moved,
+    # which commit it is at, and the exact things it will run. Parsed from the
+    # CLI rather than re-derived, so this page and the terminal cannot disagree.
+    # Missing it costs two lines, not the page.
+    reg = registry_unit(u)
+    runs = runs_lines(u)
+
+    if mine:
+        consequence = "turning this off ends the window you are in, and it is the one unit that has to"
+    elif state == "unavailable":
+        consequence = ("install " + ", ".join(u["missing"]) + " to turn this on") \
+            if u["missing"] else \
+            ("turn off " + ", ".join(x.split("/")[-1] for x in u["blockedBy"]) + " first")
+    elif u["restarts"]:
+        consequence = "turning it " + ("off" if u["on"] else "on") \
+            + " closes this window, changes the plugin, and opens it back here"
+    else:
+        consequence = "turning it " + ("off" if u["on"] else "on") \
+            + " takes effect at once and this stays open"
+
+    if state == "unavailable":
+        if u["missing"]:
+            first = {"title": "Copy Missing Commands", "shortcut": "↵",
+                     "exec": copy(" ".join(u["missing"])),
+                     "keepOpen": True, "query": here}
+        else:
+            blocker = u["blockedBy"][0]
+            first = {"title": "Copy bo remove " + blocker.split("/")[-1],
+                     "shortcut": "↵", "exec": copy("bo remove " + blocker),
+                     "keepOpen": True, "query": here}
+    else:
+        # Whichever way the switch is standing, pressing it asks for the
+        # other one.
+        want = "off" if state == "on" else "on"
+        verb = "Turn Off" if state == "on" else "Turn On"
+        toggle = "omacast-bo apply " + shlex.quote(u["ref"]) + " " + want
+
+        # A plugin unit is linked into ~/.config/omarchy/plugins, and the shell
+        # reloads every plugin when that directory changes. So the toggle is
+        # given the address to come back to, and it closes the window, makes the
+        # change, and summons it here again. No keepOpen: the launcher dismisses
+        # itself on the way out, which is the clean unmap the script then waits
+        # for.
+        if u["restarts"] and not mine:
+            first = {"title": verb, "shortcut": "↵",
+                     "exec": toggle + " " + shlex.quote(here)}
+        elif mine:
+            first = {"title": verb, "shortcut": "↵", "exec": toggle}
+        else:
+            first = {"title": verb, "shortcut": "↵", "exec": toggle,
+                     "keepOpen": True, "query": here}
+
+    # Provenance is three more cells in the same grid rather than a grey line
+    # under everything else. It goes last in the list because the grid drops
+    # rows from the bottom when the card runs out of room, which makes the drop
+    # order and the reading order the same thing.
+    if reg.get("updated"):
+        facts.append({"label": "updated", "value": str(reg["updated"])[:10]})
+    if reg.get("commit"):
+        facts.append({"label": "commit", "value": str(reg["commit"])[:12]})
+    if reg.get("files"):
+        facts.append({"label": "files", "value": str(reg["files"])})
+
+    rows.append({
+        "id": "back:" + u["ref"],
+        "title": u["unit"],
+        "subtitle": u["summary"],
+        "view": "marketplaceunit",
+        # The ceiling, and the switch below sits at 1000. Frecency adds up to
+        # 9000 to a row the user has activated (Frecency.js MAX_BOOST), and with
+        # a gap of 1000 one press of the switch was enough to lift it above the
+        # way-out row. The view then read the switch as the page: the header
+        # said "Turn On" over the unit name and the arrow lost its label, and
+        # the switch could no longer be selected because it was no longer where
+        # the view looked for it.
+        "score": 99999,
+        "part": "back",
+        "backLabel": back_label,
+        "actions": [{"title": "Back to " + back_label, "shortcut": "↵",
+                     "query": back_addr}],
+        "ref": u["ref"],
+        "state": state,
+        "version": u["version"],
+        "consequence": consequence,
+        "facts": facts,
+        "claims": claims,
+        "runsLines": runs,
+        "path": shorten(u["path"]),
+        "self": mine,
+        "restarts": u["restarts"],
+    })
+
+    rows.append({
+        "id": "switch:" + u["ref"],
+        "title": first["title"],
+        "subtitle": u["unit"],
+        "view": "marketplaceunit",
+        "score": 1000,
+        "part": "switch",
+        "state": state,
+        "self": mine,
+        "restarts": u["restarts"],
+        "exec": first.get("exec", ""),
+        "actions": [first,
+                    {"title": ("Copy bo remove " + u["unit"]) if mine
+                              else ("Copy bo info " + u["unit"]),
+                     "exec": copy(("bo remove " if mine else "bo info ") + u["ref"]),
+                     "keepOpen": True, "query": here}],
+    })
+
+    json.dump(rows, sys.stdout)
+    sys.stdout.write("\n")
+    sys.exit(0)
+
+# -------------------------------------------------------------- level two
+if level == "market":
+    if address not in markets:
+        sys.exit(0)
+    back = "bo:" + arg
+    pool = [u for u in units if u["marketplace"] == address]
+    shown = narrow(pool, rest)
+    shown.sort(key=lambda u: (not u["available"], u["unit"].lower()))
+    matched = len(shown)
+    shown = shown[:CAP]
+
+    # The way out is the first row here too, so the arrow keys reach it and the
+    # screens teach the same move. The heading and the counts ride on it because
+    # the view reads the page off row zero whatever row zero happens to be.
+    rows.append({
+        "id": "back:home",
+        "title": address,
+        "subtitle": "",
+        "view": "marketplace",
+        "score": 95000,
+        "part": "back",
+        "backLabel": "bo",
+        "heading": address,
+        "counts": {"total": len(pool), "matched": matched,
+                   "shown": len(shown), "sources": False},
+        "actions": [{"title": "Back to bo", "shortcut": "↵", "query": "bo:"}],
+    })
+
+    for i, u in enumerate(shown):
+        rows.append(unit_row(u, i, "marketplace", back, "bo:@" + address))
+
+    json.dump(rows, sys.stdout)
+    sys.stdout.write("\n")
+    sys.exit(0)
+
+# -------------------------------------------------------------- level one
+back = "bo:" + arg
+
+for i, name in enumerate(sorted(markets, key=str.lower)):
+    rows.append(market_row(name, i, "marketplacehome"))
+
+# Unnarrowed, the section is what you have. Narrowed, it is what matched, which
+# includes things you do not have: a search that can only find the installed
+# ones is a search that cannot find anything.
+if rest:
+    pool = narrow(units, rest)
+    section = " ".join(rest)
+else:
+    pool = [u for u in units if state_of(u) == "on"]
+    section = "installed"
+
+pool.sort(key=lambda u: (not u["available"], u["unit"].lower()))
+matched = len(pool)
+pool = pool[:CAP]
+
+for i, u in enumerate(pool):
+    rows.append(unit_row(u, i, "marketplacehome", back, "bo:"))
+
+if rows:
+    rows[0]["counts"] = dict(counts, matched=matched, shown=len(pool), section=section)
+    rows[0]["markets"] = [markets[n] for n in sorted(markets, key=str.lower)]
+
+json.dump(rows, sys.stdout)
+sys.stdout.write("\n")
+'
+
+# `apply <ref> on|off [return-query]` is the only side effect this script has. A
+# search is always exactly one argument, because the launcher shell-quotes
+# {query} into a single one, so the count tells them apart.
+if [[ ${1:-} == apply && $# -ge 3 ]]; then
+  apply "$2" "$3" "${4:-}"
+else
+  # Written after the rows, so the mark means "answered" rather than "asked".
+  units_json | python3 -c "$ROWS_PY" "${1:-}" "$(self_dir)"
+  printf '%s' "${1:-}" >"$SEEN" 2>/dev/null
+fi
+
+exit 0

@@ -5,12 +5,12 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "4fe50bbd14ef7c6d67b948de76a7e233d8bdcc0d",
+  "generated_at_commit": "3e92ad36d0e9fc1d90a9f407db96d9ea4c4d2344",
   "units": {
     "better-workspaces": {
       "name": "better-workspaces",
       "summary": "Named workspaces in the bar, a rename panel, and the empty ones out of the way",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "plugin",
       "category": "Compositor",
       "tags": [
@@ -29,7 +29,7 @@
       "pluginId": "bo.better-workspaces",
       "path": "units/better-workspaces",
       "files": 6,
-      "hash": "301e043b4d3ca39e1d563fff6b0e18d97887179c1ab84fca779ab6fe5c51fa0a",
+      "hash": "64c13bad0462fb4092162417a0ac9de16fed2dcae2d3b70b6c685b4eb5503580",
       "commit": "3f87ceb9513fa2a8da0b74808b4932bcca61a72d",
       "updated": "2026-08-19T03:57:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -37,7 +37,7 @@
     "nkz-keys": {
       "name": "nkz-keys",
       "summary": "My keys: Alt+F4 closes, Super+E files, Super+B browser",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "hypr",
       "category": "Productivity",
       "tags": [
@@ -56,15 +56,15 @@
       "pluginId": "",
       "path": "units/nkz-keys",
       "files": 5,
-      "hash": "90af185233b2019f7a327ab9843010e7a35f5635b48537726c5a688d8c4a18b4",
+      "hash": "47fe8d45320e3c65bf4d25a6f9b0f8b17a8e5ba7faa3215bd1ac86b36718ca33",
       "commit": "ffdcdb9e113952882e67ff5f1c6995b12db21834",
       "updated": "2026-08-19T05:19:08-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "omacast": {
       "name": "omacast",
-      "summary": "A launcher: apps, maths, files, music, notes and the web in one box",
-      "version": "0.3.0",
+      "summary": "A launcher with 41 keywords: repos, containers, processes, timezones, music, files and the web",
+      "version": "0.4.0",
       "kind": "plugin",
       "category": "Productivity",
       "tags": [
@@ -88,16 +88,16 @@
       ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 154,
-      "hash": "89d8768138f4806602b544b65f5b8c42d871fbe168284891fdd97df545e4921c",
-      "commit": "4fe50bbd14ef7c6d67b948de76a7e233d8bdcc0d",
-      "updated": "2026-08-19T17:50:58-03:00",
+      "files": 163,
+      "hash": "b2d297eacabe894d77adb55166ca2f9e477e847319a581b0c4bf807c0604afad",
+      "commit": "3e92ad36d0e9fc1d90a9f407db96d9ea4c4d2344",
+      "updated": "2026-08-19T18:02:54-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
       "name": "undo-close",
       "summary": "Reopen the window you closed last",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "hypr",
       "category": "Productivity",
       "tags": [
@@ -116,7 +116,7 @@
       "pluginId": "",
       "path": "units/undo-close",
       "files": 5,
-      "hash": "5740d2f8736f9ae61b2551990f8e95482c70acc043c30f01ed72706159eaaf84",
+      "hash": "6d29e875ca8f6f763267e3fc06e454f7f7b75c9893320bc808bd1a5408414091",
       "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
       "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
@@ -124,7 +124,7 @@
     "zen-mode": {
       "name": "zen-mode",
       "summary": "A lone window fills the screen, no gaps or border",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "hypr",
       "category": "Appearance",
       "tags": [
@@ -137,7 +137,7 @@
       "pluginId": "",
       "path": "units/zen-mode",
       "files": 3,
-      "hash": "bfa2daa109ab5480b2ea32d489602a9e802cdc22d64e1add8b33d193dc6e8a95",
+      "hash": "f7dfd2989efd0dedb786e373605342d24d607abecc767e8a62418e2c27d72a14",
       "commit": "eeb94959ee2d692c2d87844522943e5ec4e33ae9",
       "updated": "2026-08-18T19:50:40-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
