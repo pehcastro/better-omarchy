@@ -54,7 +54,13 @@ var DEFAULTS = {
   askProvider: "",
 
   askProviders: [
-    { id: "claude", title: "Claude", command: "claude -p {query}", when: "command -v claude" },
+    // Sonnet at medium effort. The default model thinks for longer than anyone
+    // waiting in a launcher will tolerate: a question that took twelve seconds
+    // to start answering is a question the user has already given up on, and
+    // one recording caught it never answering at all.
+    { id: "claude", title: "Claude", model: "sonnet",
+      command: "claude -p --model {model} --effort medium {query}",
+      when: "command -v claude" },
     { id: "codex", title: "Codex", command: "codex exec --skip-git-repo-check {query}", when: "command -v codex" },
     { id: "gemini", title: "Gemini", command: "gemini -p {query}", when: "command -v gemini" },
     { id: "ollama", title: "Ollama", model: "llama3.2", command: "ollama run {model} {query}", when: "command -v ollama" },

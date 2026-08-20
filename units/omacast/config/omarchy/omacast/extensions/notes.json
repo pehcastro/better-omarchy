@@ -12,7 +12,7 @@
   "search": "omacast-note {query}",
   "minChars": 0,
   "debounceMs": 120,
-  "maxRows": 8,
+  "maxRows": 14,
   "tier": "substring",
   "view": "notes"
 }

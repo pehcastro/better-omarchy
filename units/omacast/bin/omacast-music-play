@@ -19,23 +19,21 @@ BUS=org.mpris.MediaPlayer2.spotify
 BUS_PATH=/org/mpris/MediaPlayer2
 PLAYER=org.mpris.MediaPlayer2.Player
 
-busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS " || {
-  notify-send -u low "OmaCast" "Spotify is not running." 2>/dev/null
-  exit 0
+# Spotify answers OpenUri over MPRIS, and MPRIS only exists while Spotify is
+# running. This used to refuse outright when it was closed, which made "search a
+# song and play it" something you could only do once you had already opened the
+# thing you were searching from. The launch below was written for exactly that
+# case and was unreachable behind the refusal.
+player_up() {
+  busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS "
 }
 
 # With shuffle on, OpenUri plays a random track from the same context instead of
 # the one asked for. Verified: the same call with shuffle off plays the right
-# track. Turn it off first, and leave it off, since silently restoring it would
-# race the playback that is about to start.
-busctl --user set-property "$BUS" "$BUS_PATH" "$PLAYER" Shuffle b false 2>/dev/null || true
-
-# Spotify answers OpenUri over MPRIS, and MPRIS only exists while Spotify is
-# running. Requiring it to be open first made "search a song and play it" a
-# thing you could only do once you had already opened the thing, so a closed
-# Spotify is started here and the URI waits for the bus.
-player_up() {
-  busctl --user list --no-legend 2>/dev/null | grep -q "^$BUS "
+# track. It has to happen after the player exists, so it lives with the launch
+# rather than at the top where there was nothing to set it on.
+shuffle_off() {
+  busctl --user set-property "$BUS" "$BUS_PATH" "$PLAYER" Shuffle b false 2>/dev/null || true
 }
 
 open_uri() {
@@ -49,7 +47,14 @@ open_uri() {
     done
     # The bus appears before the player will accept a URI.
     sleep 1.5
+
+    player_up || {
+      notify-send -u low "OmaCast" "Spotify did not start." 2>/dev/null
+      return 1
+    }
   fi
+
+  shuffle_off
   busctl --user call "$BUS" "$BUS_PATH" "$PLAYER" OpenUri s "$1" >/dev/null 2>&1
 }
 

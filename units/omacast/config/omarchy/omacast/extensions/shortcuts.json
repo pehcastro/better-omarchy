@@ -14,13 +14,13 @@
     "kb"
   ],
   "subtitle": "Shortcut",
-  "glyph": "󰌌",
+  "glyph": "\udb80\udf0c",
   "search": "omacast-shortcuts {query}",
   "when": "command -v hyprctl",
   "minChars": 0,
   "debounceMs": 120,
   "timeoutMs": 5000,
-  "maxRows": 400,
+  "maxRows": 60,
   "tier": "prefix",
   "view": "shortcuts"
 }

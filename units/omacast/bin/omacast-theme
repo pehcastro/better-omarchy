@@ -1,8 +1,9 @@
 #!/bin/bash
 # Emits JSON rows for OmaCast's `theme:` keyword: switch theme by name.
 #
-#   theme:            every theme, the current one first
+#   theme:            the current theme first, then the rest, one screenful
 #   theme:tokyo       the ones that match
+#   theme:light       the light ones (and anything named "light"); theme:dark too
 #
 # Moving the selection applies the theme as you go, and leaving without choosing
 # puts back the one you started on. A list of theme names tells you nothing
@@ -29,19 +30,58 @@
 # `omarchy theme set` lowercases whatever it is given and turns spaces into
 # dashes, so the prettified names `omarchy theme list` prints go straight back
 # in with no translation here.
+#
+# ---------------------------------------------------------------- how many
+#
+# This machine has twenty-two themes and Omarchy users install their own, so
+# the number here is whatever someone has collected: three hundred is a
+# reasonable ceiling and nothing stops more.
+#
+# Every row costs about 2.2KB, nearly all of it the base64 of two colour files
+# in `previewExec` and `revertExec`, and the launcher holds every row it is
+# given and re-sorts them on every keystroke. Three hundred and twenty-two
+# themes was 387KB and 2.1 seconds per bare `theme:`, and the launcher then
+# threw 282 of those rows away, because it keeps the first `maxRows` in the
+# order they arrive. That truncation is the reason the cap belongs here: sorted
+# in this script, the rows that survive are the ones worth keeping, and at
+# 322 themes the current one was cut off the end and the grid opened on
+# "Alpha Ash".
+#
+# So the answer is ordered before it is cut, and cut before jq is ever run:
+# the current theme first, then the list alphabetically, one launcher-full of
+# cards. `total` and `shown` ride on every row so the view can say what it is
+# not showing, which is the only honest way to cap an answer. Someone with
+# three hundred themes types a name; someone with twenty-two sees all of them.
 
 set -uo pipefail
 
 query="${1:-}"
 command -v omarchy >/dev/null || exit 0
 
+# One launcher-full of compact cards at the default card width: four columns by
+# twelve rows. Past that the grid is scrolling through an answer nobody reads
+# to the end, and typing two letters is faster than any of it.
+limit=${OMACAST_THEME_LIMIT:-48}
+
 current=$(omarchy theme current 2>/dev/null)
 
 # A theme's directory is its name lowercased with spaces as dashes, the same
 # translation `omarchy theme set` does.
+#
+# A user's own themes live in ~/.config/omarchy/themes and win over the shipped
+# ones, which is what `omarchy theme dir` does and what `omarchy theme set`
+# reads. Looking only in /usr/share meant that on a machine where the themes
+# are the user's own -- which is every machine with more than the twenty-two
+# that ship -- every card was unpainted and nothing could be previewed, which
+# is exactly the case this keyword is for.
 theme_dir() {
   local name="${1,,}"
-  printf '%s' "/usr/share/omarchy/themes/${name// /-}"
+  local slug="${name// /-}"
+  if [[ -d "$HOME/.config/omarchy/themes/$slug" ]]; then
+    printf '%s' "$HOME/.config/omarchy/themes/$slug"
+  else
+    printf '%s' "${OMARCHY_PATH:-/usr/share/omarchy}/themes/$slug"
+  fi
 }
 
 # The retint call for one theme, or nothing when its files are missing: a
@@ -60,20 +100,83 @@ retint_cmd() {
   printf 'omarchy-shell shell applyTheme %q %q; omacast-theme-preview %q' \
     "$colors" "$shell" "$dir"
 }
+
+# dark or light, read with the shell rather than a fork. Only the `theme:light`
+# and `theme:dark` queries ask for this, so it costs nothing on any other one.
+theme_mode() {
+  local line file
+  file="$(theme_dir "$1")/colors.toml"
+  if [[ -f $file ]]; then
+    while IFS= read -r line; do
+      if [[ $line =~ ^mode[[:space:]]*=[[:space:]]*\"([a-z]+)\" ]]; then
+        printf '%s' "${BASH_REMATCH[1]}"
+        return 0
+      fi
+    done < "$file"
+  fi
+  printf 'dark'
+}
+
 needle=${query,,}
 # "tokyo night", "tokyonight" and "tokyo-night" should all find the same theme,
 # because nobody remembers which spelling a theme shipped with.
 squashed_needle=${needle//[ -]/}
-rank=90000
 
+# Light and dark are the one split worth having when there are hundreds, and a
+# filter is cheaper than grouping: grouping reorders the alphabet for everyone
+# to answer a question only some people are asking, and the card is painted in
+# the theme's own background, so which half a theme is in is already the first
+# thing you see. Names still match, so `theme:light` keeps "Flexoki Light".
+mode_filter=""
+[[ $needle == "light" || $needle == "dark" ]] && mode_filter=$needle
+
+# Every theme that matches, in the order `omarchy theme list` gives them, which
+# is alphabetical.
+matches=()
 while IFS= read -r theme; do
   [[ -z $theme ]] && continue
 
   lower=${theme,,}
   squashed=${lower//[ -]/}
   if [[ -n $needle ]]; then
-    [[ $lower == *"$needle"* || $squashed == *"$squashed_needle"* ]] || continue
+    if [[ $lower == *"$needle"* || $squashed == *"$squashed_needle"* ]]; then
+      : # named
+    elif [[ -n $mode_filter && $(theme_mode "$theme") == "$mode_filter" ]]; then
+      : # the right half of the collection
+    else
+      continue
+    fi
   fi
+
+  matches+=("$theme")
+done < <(omarchy theme list 2>/dev/null)
+
+total=${#matches[@]}
+[[ $total -eq 0 ]] && exit 0
+
+# The current theme leads, wherever the alphabet put it. The launcher scores
+# rows too, but it only ever sees the ones that survive the cap below, so the
+# order has to be right here first.
+ordered=()
+for theme in "${matches[@]}"; do
+  [[ $theme == "$current" ]] && ordered+=("$theme")
+done
+for theme in "${matches[@]}"; do
+  [[ $theme == "$current" ]] || ordered+=("$theme")
+done
+
+shown=$total
+[[ $shown -gt $limit ]] && shown=$limit
+
+# Once, not once per row. This is the same string on all of them, and building
+# it in the loop meant base64 ran twice per theme for an answer that never
+# changed.
+back=$(retint_cmd "$current")
+
+rank=90000
+
+for ((i = 0; i < shown; i++)); do
+  theme=${ordered[$i]}
 
   if [[ $theme == "$current" ]]; then
     subtitle="Current theme"
@@ -93,9 +196,11 @@ while IFS= read -r theme; do
   jq -cn --arg id "$theme" --arg t "$theme" --arg s "$subtitle" \
     --arg e "omarchy theme set $(printf '%q' "$theme")" \
     --arg pv "$(retint_cmd "$theme")" \
-    --arg back "$(retint_cmd "$current")" \
+    --arg back "$back" \
     --argjson sc "$score" \
     --argjson cur "$([[ $theme == "$current" ]] && echo true || echo false)" \
+    --argjson total "$total" \
+    --argjson shown "$shown" \
     --rawfile toml "$colors_toml" \
     '
      # colors.toml is flat and every line is `key = "value"`, so it is read here
@@ -106,6 +211,10 @@ while IFS= read -r theme; do
      | { id: $id, title: $t, subtitle: $s, exec: $e, score: $sc, glyph: "󰸌",
          previewExec: $pv, revertExec: $back,
          current: $cur,
+         # How much of the collection this answer is. Every row carries both,
+         # because the view reads them off whichever row it has and the
+         # launcher is free to reorder them.
+         total: $total, shown: $shown,
          mode: ($c.mode // "dark"),
          bg: ($c.background // ""),
          fg: ($c.foreground // ""),
@@ -120,4 +229,4 @@ while IFS= read -r theme; do
                     | map(select(. != null and . != ""))) }'
 
   rank=$((rank - 100))
-done < <(omarchy theme list 2>/dev/null)
+done

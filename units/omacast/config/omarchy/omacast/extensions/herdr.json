@@ -1,0 +1,21 @@
+{
+  "id": "herdr",
+  "title": "Agents",
+  "keyword": "herdr",
+  "aliases": [
+    "agents",
+    "herd"
+  ],
+  "subtitle": "Agent",
+  "glyph": "󰚩",
+  "search": "omacast-herdr {query}",
+  "when": "command -v herdr >/dev/null",
+  "minChars": 0,
+  "debounceMs": 60,
+  "timeoutMs": 4000,
+  "maxRows": 24,
+  "tier": "substring",
+  "view": "herdr",
+  "cacheMs": 0,
+  "refreshMs": 2000
+}

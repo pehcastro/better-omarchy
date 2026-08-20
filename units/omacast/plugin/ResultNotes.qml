@@ -17,10 +17,12 @@ import qs.Ui
 // without a single keypress, which is what the preview pane was for.
 //
 // The row carries, beyond the usual title and subtitle:
-//   kind      "note" for one that exists, "new" or "open" for the top row
+//   kind      "note" for one that exists, "new"/"open"/"empty" for the top row
 //   excerpt   the body, heading stripped
 //   words     how long the body is, in words
 //   detail    the date in full, under the relative one
+//   fresh     this is the note that was just saved
+//   tally     on the first row only: how many notes the mode is showing
 ListView {
   // The card cannot hold a view that draws past its own height, and every view
   // here computes that height from its content. Clipping at the root is the one
@@ -43,9 +45,27 @@ ListView {
   readonly property int actionHeight: Style.space(56)
   readonly property int noteHeight: Style.space(86)
 
-  function heightOf(row) {
-    return (row && String(row.kind || "note") !== "note")
+  // What the mode is showing, counted: "7 notes", "3 of 7 notes", "7 notes · 1
+  // new". `note:` with nothing typed and `note:` that found nothing used to
+  // look the same, and six results gave no hint whether that was six notes or
+  // six of sixty. The script composes the sentence and only puts it on the
+  // first row, so this is the only place that has to look for it.
+  readonly property string tally: {
+    var rows = view.launcher.rows
+    return rows.length > 0 ? String(rows[0].tally || "") : ""
+  }
+
+  readonly property int bannerHeight: view.tally !== "" ? Style.space(22) : 0
+
+  // The banner is drawn inside the first delegate rather than as the ListView's
+  // own header, which is how ResultList does its group labels: a header item
+  // sits outside every measurement this view makes of its own content, so the
+  // card would grow by a line that `fitted` never counted and the last row
+  // would be cut through.
+  function heightOf(row, index) {
+    var base = (row && String(row.kind || "note") !== "note")
       ? view.actionHeight : view.noteHeight
+    return index === 0 ? base + view.bannerHeight : base
   }
 
   // Whole cards only, from the top. A card cut through the middle at the bottom
@@ -58,14 +78,14 @@ ListView {
     var used = 0
 
     for (var i = 0; i < rows.length && i < view.launcher.maxRows; i++) {
-      var next = used + view.heightOf(rows[i])
+      var next = used + view.heightOf(rows[i], i)
       if (room >= 0 && next > room) break
       used = next
     }
 
     // Room for less than one card still draws one, cut off. An empty card is a
     // blank box with a cursor in it, which reads as broken.
-    if (used === 0 && rows.length > 0) used = Math.min(view.heightOf(rows[0]), Math.max(0, room))
+    if (used === 0 && rows.length > 0) used = Math.min(view.heightOf(rows[0], 0), Math.max(0, room))
     return used
   }
 
@@ -92,6 +112,14 @@ ListView {
     readonly property string excerpt: String(modelData.excerpt || "")
     readonly property int words: Number(modelData.words || 0)
 
+    // The note that was just written. Newest first already puts it here; this
+    // is what makes it read as the thing that just happened rather than as
+    // whichever note happens to be first today.
+    readonly property bool fresh: modelData.fresh === true
+
+    // Only the first card carries the count line, and only when there is one.
+    readonly property bool leads: card.index === 0 && view.bannerHeight > 0
+
     // The write row centres its one line; a note starts its three at the top.
     // Both are anchored to the same edge with a different margin rather than to
     // different edges: an item with both `top` and `verticalCenter` set has two
@@ -103,14 +131,34 @@ ListView {
       ? Math.max(0, (face.height - stamp.implicitHeight) / 2) : Style.space(12)
 
     width: view.width
-    height: view.heightOf(modelData)
+    height: view.heightOf(modelData, index)
+
+    // How many notes this mode is showing, above the first card. Anchored to
+    // the card rather than to `face`, whose own top margin depends on this
+    // line: two items each waiting on the other's geometry is a binding loop,
+    // and QML answers one of those by picking a value and warning, which shows
+    // up as a banner drawn on top of the first note.
+    Text {
+      visible: card.leads
+      anchors.left: card.left
+      anchors.leftMargin: Style.space(10) + view.gutter
+      anchors.top: card.top
+      height: view.bannerHeight
+      verticalAlignment: Text.AlignVCenter
+      text: view.tally.toUpperCase()
+      color: Qt.darker(view.launcher.foreground, 2.1)
+      font.family: view.launcher.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      font.letterSpacing: 0.8
+    }
 
     Rectangle {
       id: face
       anchors.fill: parent
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
-      anchors.topMargin: Style.space(3)
+      anchors.topMargin: Style.space(3) + (card.leads ? view.bannerHeight : 0)
       anchors.bottomMargin: Style.space(3)
       radius: Style.cornerRadius
 
@@ -122,9 +170,11 @@ ListView {
         : Qt.rgba(view.launcher.foreground.r, view.launcher.foreground.g,
                   view.launcher.foreground.b, 0.045)
 
-      // The write row is the only one on this card that changes anything on
-      // disk, so it is the only one wearing the accent.
-      border.width: card.isAction ? Math.max(1, Style.space(1)) : 0
+      // The write row is the only one on this list that changes anything on
+      // disk, so it wears the accent; and so does the note it just wrote, for
+      // the moment it takes to see that it is there. Those two never appear at
+      // once: once a note exists the row above it says "Open", not "Save".
+      border.width: (card.isAction || card.fresh) ? Math.max(1, Style.space(1)) : 0
       border.color: Color.accent
     }
 
@@ -163,8 +213,13 @@ ListView {
       anchors.top: face.top
       anchors.topMargin: card.stampTop
       text: String(card.modelData.subtitle || "")
-      color: card.selected
-        ? view.launcher.selectedText : Qt.darker(view.launcher.foreground, 1.8)
+      // "Saved just now" is the confirmation the keyword never gave: pressing
+      // Enter used to close the launcher, so the only evidence anything had
+      // been written was going to look for the file.
+      color: card.fresh
+        ? Color.accent
+        : (card.selected
+          ? view.launcher.selectedText : Qt.darker(view.launcher.foreground, 1.8))
       font.family: view.launcher.fontFamily
       font.pixelSize: Style.font.caption
       horizontalAlignment: Text.AlignRight

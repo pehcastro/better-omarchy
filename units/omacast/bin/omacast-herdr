@@ -1,0 +1,368 @@
+#!/bin/bash
+# Emits one JSON row per coding agent for OmaCast's `herdr:` keyword, drawn by
+# the `herdr` view rather than by the list.
+#
+#   herdr:           every agent, the ones waiting on you first
+#   herdr:blocked    by state, name, kind, workspace, session or path
+#   herdr:omacast    by anything else in the row
+#
+# The question this answers is "which of my agents is stuck asking me
+# something, and take me there". Herdr classifies a pane's agent as `blocked`
+# when it recognises an approval or question UI, and as `done` when background
+# work finished in a tab you have not looked at since. Those two are the whole
+# reason to type this keyword: an agent that is working needs nothing from you
+# and an idle one has already been seen. The `band` field is that order, and
+# the view spends it on the colour and the size of each row rather than on a
+# column of status words.
+#
+# Reading is genuinely read-only here, which matters more than usual: herdr
+# marks a tab seen when it is focused or targeted by a focus command, and
+# demotes `done` to `idle` when that happens. Its own docs say CLI reads do not
+# mark anything seen, so running this on every keystroke cannot quietly erase
+# the `done` state it exists to report.
+#
+# Cost, measured on this machine: `herdr api snapshot` is 1.5ms per session
+# including the process spawn, and one snapshot carries agents, panes, tabs and
+# workspaces together, so there is no reason to call the narrower `agent list`
+# as well. `herdr session list` is another spawn and the single jq at the end
+# is about 20ms, which is the whole budget: ~25ms per keystroke for two
+# sessions, nearly all of it jq.
+#
+# Sessions, plural, because herdr keeps one server per named session and a user
+# who has a session per project has agents this keyword would otherwise not be
+# able to see. Only sessions the CLI reports as `running` are asked: naming a
+# stopped one on the command line starts a server, and a launcher must never
+# start something nobody asked for.
+
+set -uo pipefail
+
+command -v herdr >/dev/null 2>&1 || exit 0
+
+# ------------------------------------------------------------------- focusing
+#
+# Two things have to happen to land on an agent, and only one of them is
+# herdr's. The API moves the focus inside the session; the session itself is
+# drawn by a terminal emulator somewhere in Hyprland, and that window still has
+# to be raised or the launcher closes onto whatever was already in front.
+#
+# Its own argv shape rather than a flag on the query, so `herdr:--focus` typed
+# into the launcher is a search for the string and not an action.
+if [[ ${1:-} == "--focus" && $# -eq 4 ]]; then
+  session=$2
+  kind=$3
+  target=$4
+
+  args=()
+  [[ $session == "default" ]] || args=(--session "$session")
+
+  case $kind in
+    agent)     herdr "${args[@]}" agent focus "$target" >/dev/null 2>&1 ;;
+    workspace) herdr "${args[@]}" workspace focus "$target" >/dev/null 2>&1 ;;
+  esac
+
+  # Which window is showing this session. There is no API for it: the server is
+  # headless and has no window at all, so the only link between a session and a
+  # window is that some terminal is an ancestor of a `herdr` client process
+  # attached to that session. Walk up from each client to the pids Hyprland
+  # knows about and raise the first one that matches.
+  clients=""
+  command -v hyprctl >/dev/null 2>&1 && clients=$(hyprctl clients -j 2>/dev/null)
+
+  chain=()
+  if [[ -n $clients ]]; then
+    for pid in $(pgrep -x herdr 2>/dev/null); do
+      cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+      # `herdr server` is the thing the API talks to, never the thing on screen.
+      [[ $cmd == *"herdr server "* ]] && continue
+      if [[ $session == "default" ]]; then
+        [[ $cmd == *"--session"* ]] && continue
+      else
+        [[ $cmd == *"--session $session"* ]] || continue
+      fi
+      # /proc/PID/stat cannot be split on whitespace: the second field is the
+      # command name in parentheses and can contain spaces. Everything after
+      # the last ") " is state, then ppid.
+      up=$pid
+      while [[ -n $up && $up -gt 1 ]]; do
+        chain+=("$up")
+        line=$(< "/proc/$up/stat") || break
+        line=${line##*') '}
+        read -r _ up _ <<< "$line"
+      done
+    done
+  fi
+
+  if ((${#chain[@]})); then
+    addr=$(jq -r --arg chain "${chain[*]}" '
+      ($chain | split(" ") | map(select(length > 0) | tonumber)) as $pids
+      | map(select(.pid as $p | $pids | index($p) != null))
+      | first | .address // empty' <<< "$clients" 2>/dev/null)
+    if [[ -n ${addr:-} ]]; then
+      hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1
+      exit 0
+    fi
+  fi
+
+  # No window is showing this session, so the focus that was just set would
+  # land nowhere. Attaching a client is the only way for Enter to mean anything
+  # here, and the focus is already where it should be when it opens.
+  if [[ $session == "default" ]]; then
+    setsid --fork omarchy-launch-tui --app-id=org.omarchy.herdr herdr >/dev/null 2>&1
+  else
+    setsid --fork omarchy-launch-tui --app-id=org.omarchy.herdr herdr --session "$session" >/dev/null 2>&1
+  fi
+  exit 0
+fi
+
+query="${1:-}"
+needle="${query,,}"
+
+now=$(printf '%(%s)T' -1)
+
+# ------------------------------------------------------------------ the state
+#
+# Nothing in the API says how long an agent has been blocked. AgentInfo carries
+# `state_change_seq`, a counter, and no timestamp anywhere, so the only honest
+# duration is one measured here: the first run that sees a pane change state
+# stamps the clock, and later runs subtract. A pane whose state was already set
+# the first time this ever ran has no start to subtract from and is sent with
+# since = -1, which the view draws as no number rather than as zero. Guessing
+# would put "0m" next to an agent that has been waiting since breakfast.
+#
+# In the runtime dir, because it describes a herdr server that does not outlive
+# the boot either. Two concurrent runs can race the rename; the loser costs one
+# agent its start time and nothing else.
+seen_file="${XDG_RUNTIME_DIR:-/tmp}/omacast-herdr-seen.json"
+# `$(< file)` rather than a `cat`, so the common path costs no process at all.
+# It is guarded rather than silenced: the redirection's own error message is
+# written by the shell before the substitution runs and no redirect inside can
+# catch it, which put a line of stderr in front of the first ever answer.
+seen=""
+[[ -r $seen_file ]] && seen=$(< "$seen_file")
+[[ $seen == \{* ]] || seen='{}'
+
+mapfile -t names < <(herdr session list 2>/dev/null | awk '$1 != "name" && $2 == "running" { print $1 }')
+# An older herdr without `session list`, or one that answered with nothing
+# useful, still has a default session worth asking. If it is not there either,
+# the snapshot below fails and the offline answer is the right one anyway.
+((${#names[@]})) || names=(default)
+
+lines=()
+for name in "${names[@]}"; do
+  if [[ $name == "default" ]]; then
+    snap=$(herdr api snapshot 2>/dev/null)
+  else
+    snap=$(herdr --session "$name" api snapshot 2>/dev/null)
+  fi
+  # An error answer is JSON too, so the test is for the payload and not for the
+  # shape: a session listed as running whose socket has gone stale answers with
+  # `{"error":...}` and is skipped rather than counted.
+  [[ $snap == *'"snapshot"'* ]] || continue
+  # One session per line, so newlines cannot be part of one. herdr answers on a
+  # single line today and a pretty-printed answer would otherwise be read as
+  # several broken sessions; a raw newline cannot appear inside a JSON string,
+  # so flattening one costs nothing.
+  lines+=("$name"$'\t'"${snap//$'\n'/ }")
+done
+
+# The server is not running, or every session's socket is dead. Say so as the
+# whole answer: showing nothing here is indistinguishable from having no agents
+# and from the keyword being broken.
+if ((${#lines[@]} == 0)); then
+  printf '%s\n' '{"id":"herdr:offline","view":"herdr","offline":true,"title":"herdr is not running","subtitle":"No session has a server. Press ↵ to start one.","exec":"omarchy-launch-tui --app-id=org.omarchy.herdr herdr","score":90000}'
+  exit 0
+fi
+
+# ------------------------------------------------------------------- the rows
+#
+# One jq for everything, and it prints the new state file as its first line and
+# the rows after it. Splitting that into two passes would double the only
+# expensive part of this script, and jq cannot write the file itself.
+rows_from() {
+  printf '%s\n' "${lines[@]}" | jq -Rn -c \
+  --arg needle "$needle" \
+  --arg home "$HOME" \
+  --argjson seen "$1" \
+  --argjson now "$now" '
+
+  def pick: map(select(. != null and . != "")) | first // "";
+
+  def tilde: if . != "" and ($home != "") and startswith($home)
+             then "~" + .[($home | length):] else . end;
+
+  # Waiting on you, then finished behind your back, then running, then seen and
+  # idle, then present but unclassified, then a workspace with no agent in it
+  # at all. This is the sort order and the row order and the only place the
+  # priority is written down.
+  def band:
+    if   . == "blocked" then 0
+    elif . == "done"    then 1
+    elif . == "working" then 2
+    elif . == "idle"    then 3
+    else 4 end;
+
+  [ inputs
+    | (index("\t")) as $i
+    | select($i != null)
+    | { session: .[0:$i], snap: (.[$i + 1:] | fromjson | .result.snapshot) }
+    | select(.snap != null)
+  ] as $sessions
+
+  | [ $sessions[] | .session as $s | .snap.agents[]? | . + { session: $s } ] as $agents
+
+  | ([ $sessions[] | .session as $s | .snap.workspaces[]?
+       | { key: ($s + "|" + .workspace_id), value: . } ] | from_entries) as $ws
+  | ([ $sessions[] | .session as $s | .snap.tabs[]?
+       | { key: ($s + "|" + .tab_id), value: . } ] | from_entries) as $tabs
+
+  # The state file, rebuilt from the agents that exist now, which is also what
+  # prunes it: a pane that closed is simply not written back.
+  #
+  # Keyed on the status and the counter together. The status alone would miss
+  # an agent that went blocked, was answered, and blocked again on the next
+  # question, and would draw that second wait as if it had lasted all morning.
+  | ([ $agents[]
+       | (.session + "|" + .pane_id) as $k
+       | ($seen[$k] // null) as $prev
+       | { key: $k,
+           value: (if $prev != null and $prev.st == .agent_status
+                        and $prev.sq == (.state_change_seq // 0)
+                   then $prev
+                   else { st: .agent_status, sq: (.state_change_seq // 0),
+                          at: $now, known: ($prev != null) }
+                   end) } ]
+     | from_entries) as $state
+
+  | ([ $agents[] | .session + "|" + .workspace_id ] | unique) as $busy
+
+  | [ $agents[]
+      | . as $a
+      | ($ws[$a.session + "|" + $a.workspace_id] // {}) as $w
+      | ($tabs[$a.session + "|" + $a.tab_id] // {}) as $t
+      | ($state[$a.session + "|" + $a.pane_id] // {}) as $s
+      | ([$a.foreground_cwd, $a.cwd] | pick | tilde) as $path
+      # `name` is the handle the user gave this agent and the one they would
+      # type; everything after it is a fallback so a row is never nameless.
+      | ([$a.name, $a.title, $a.display_agent, $a.agent] | pick) as $label
+      | ([$a.display_agent, $a.agent] | pick) as $kind
+      # The API does not say which key of state_labels belongs to the current
+      # state, so the status is tried as a key first and any label second. This
+      # is where the actual question a blocked agent is asking arrives.
+      | ((($a.state_labels // {})[$a.agent_status]
+          // ((($a.state_labels // {}) | to_entries | map(.value)) | pick)) // "") as $note
+      | { session: $a.session,
+          band: ($a.agent_status | band),
+          status: $a.agent_status,
+          name: (if $label == "" then "agent" else $label end),
+          kind: $kind,
+          note: $note,
+          what: ([$a.terminal_title_stripped, $a.terminal_title] | pick),
+          path: $path,
+          paneId: $a.pane_id,
+          wsLabel: ([$w.label, ("w" + ($w.number // 0 | tostring))] | pick),
+          tabLabel: ([$t.label, (($t.number // 0) | tostring)] | pick),
+          tabCount: ($w.tab_count // 1),
+          here: ($a.focused == true),
+          since: (if ($s.known == true) then ($now - $s.at) else -1 end) }
+    ] as $rows
+
+  # A workspace with nothing running in it is still somewhere you want to go:
+  # `herdr:` is how you move between projects as well as between agents, and a
+  # project you have not started work in yet would otherwise be unreachable.
+  | [ $sessions[] | .session as $s | .snap.workspaces[]?
+      | select((($s + "|" + .workspace_id) | IN($busy[])) | not)
+      | { session: $s,
+          band: 5,
+          status: "",
+          name: ([.label, ("w" + (.number | tostring))] | pick),
+          kind: "", note: "", what: "", path: "",
+          paneId: .workspace_id,
+          wsLabel: ([.label, ("w" + (.number | tostring))] | pick),
+          tabLabel: "",
+          tabCount: (.tab_count // 1),
+          here: (.focused == true),
+          since: -1 }
+    ] as $idle
+
+  | ($rows + $idle) as $all
+  | ($sessions | length) as $nsessions
+
+  | { blocked: ([$rows[] | select(.band == 0)] | length),
+      done:    ([$rows[] | select(.band == 1)] | length),
+      working: ([$rows[] | select(.band == 2)] | length),
+      idle:    ([$rows[] | select(.band == 3)] | length),
+      unknown: ([$rows[] | select(.band == 4)] | length),
+      agents:  ($rows | length),
+      spaces:  ($all | length),
+      sessions: $nsessions } as $counts
+
+  | [ $all[]
+      | select($needle == ""
+               or (([.name, .kind, .status, .wsLabel, .tabLabel, .session, .path, .what]
+                    | join(" ") | ascii_downcase) | contains($needle)))
+    ]
+  # Longest wait first inside a band: of two agents asking you a question, the
+  # one that has been asking for twenty minutes is the one to answer. Unknown
+  # durations sort last rather than first, which is what -1 would otherwise do.
+  | sort_by([.band, (if .since < 0 then 0 else -.since end), .session, .wsLabel, .name])
+  | .[0:24] as $shown
+
+  | $state,
+    ( $shown
+      | to_entries[]
+      | .key as $i
+      | .value as $r
+      | ($r.session | @sh) as $sq
+      | ($r.paneId | @sh) as $pq
+      | (if $r.band == 5 then "workspace" else "agent" end) as $kindArg
+      | ("omacast-herdr --focus " + $sq + " " + $kindArg + " " + $pq) as $go
+      | $r + {
+          id: ("herdr:" + $r.session + ":" + $r.paneId),
+          view: "herdr",
+          # The view draws these, but a row still needs a title and a subtitle:
+          # the launcher reads them for recents, for frecency and for the
+          # heading over the action panel.
+          title: $r.name,
+          subtitle: (if $r.status == "" then "workspace" else $r.status end),
+          detail: $r.path,
+          exec: $go,
+          score: (90000 - $i * 100),
+          sessions: $nsessions,
+          counts: (if $i == 0 then ($counts + { matched: ($shown | length) }) else null end),
+          actions: (
+            [ { title: (if $r.band == 5 then "Go To Workspace" else "Go To Agent" end),
+                shortcut: "↵", exec: $go } ]
+            + (if $r.band == 5 then []
+               else [ { title: "Copy Pane ID", exec: ("printf %s " + $pq + " | wl-copy") } ]
+               end)
+          )
+        }
+    )
+'
+}
+
+out=$(rows_from "$seen" 2>/dev/null)
+
+# A state file truncated by a crash is still JSON-shaped enough to get past the
+# test above and is not JSON, and jq refuses the whole program over it. Without
+# this the keyword would answer with nothing on every keystroke, forever, and
+# the only fix would be knowing to delete a file nobody knows about.
+if [[ -z $out && $seen != "{}" ]]; then
+  out=$(rows_from '{}' 2>/dev/null)
+fi
+
+# First line is the state, the rest are rows. A run that matched nothing still
+# writes the state, so typing a query cannot reset every duration on screen.
+state=${out%%$'\n'*}
+[[ $state == \{* ]] || exit 0
+
+tmp="$seen_file.$$"
+if printf '%s\n' "$state" > "$tmp" 2>/dev/null; then
+  mv -f "$tmp" "$seen_file" 2>/dev/null || rm -f "$tmp"
+fi
+
+if [[ $out == *$'\n'* ]]; then
+  printf '%s\n' "${out#*$'\n'}"
+fi
+
+exit 0

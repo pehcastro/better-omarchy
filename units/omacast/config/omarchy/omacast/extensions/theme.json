@@ -14,7 +14,7 @@
   "when": "command -v omarchy",
   "minChars": 0,
   "debounceMs": 80,
-  "maxRows": 40,
+  "maxRows": 48,
   "tier": "prefix",
   "view": "themes"
 }
