@@ -23,11 +23,23 @@ function keywordText(entry) {
   return ""
 }
 
+// Kept on the entry rather than recomputed. `allTermsMatch` asks for this once
+// per term and `fuzzy` asks again straight after, so ranking one list against
+// one word already built the same string three times, and it was built for
+// every command, action and quicklink on every keystroke.
+//
+// The entry is the bound: it lives exactly as long as whatever built it, and
+// the builders hand out one entry per source object rather than a fresh one per
+// call, so nothing here outlives a settings reload.
 function searchText(entry) {
   if (!entry) return ""
-  return [entry.name, entry.genericName, entry.comment, keywordText(entry), entry.id]
+  if (typeof entry._searchText === "string") return entry._searchText
+
+  var text = [entry.name, entry.genericName, entry.comment, keywordText(entry), entry.id]
     .join(" ")
     .toLowerCase()
+  entry._searchText = text
+  return text
 }
 
 function wordText(value) {
@@ -46,10 +58,16 @@ function words(value) {
   return out
 }
 
+// Two regex replacements and a split per entry, for a letter string that only
+// changes when the entry does. Cached for the same reason searchText is.
 function acronym(entry) {
-  var parts = words([entry && entry.name, entry && entry.genericName, keywordText(entry), entry && entry.id].join(" "))
+  if (!entry) return ""
+  if (typeof entry._acronym === "string") return entry._acronym
+
+  var parts = words([entry.name, entry.genericName, keywordText(entry), entry.id].join(" "))
   var out = ""
   for (var i = 0; i < parts.length; i++) out += parts[i].charAt(0)
+  entry._acronym = out
   return out
 }
 
