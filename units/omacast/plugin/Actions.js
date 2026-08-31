@@ -84,11 +84,20 @@ function all(extensions) { return ACTIONS.concat(fromExtensions(extensions)) }
 // Actions are matched on their words rather than fuzzily on the title, because
 // `/clear` should find "Clear Recent Queries" first and the title alone would
 // rank three clears equally.
+//
+// Kept on the action, so Score's caches survive from one term to the next.
+// `all()` concatenates the built-in list with the extensions' actions, and both
+// sides hand back the same objects until the extensions are reloaded, at which
+// point the new objects arrive without a cache and build their own.
 function asEntry(action) {
-  return {
+  if (!action) return null
+  if (action._entry) return action._entry
+
+  action._entry = {
     name: action.title,
     genericName: action.subtitle,
     keywords: action.keywords || [],
     comment: ""
   }
+  return action._entry
 }

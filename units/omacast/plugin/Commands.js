@@ -105,12 +105,22 @@ var COMMANDS = [
 // Shaped as a desktop entry so AppSearch.fuzzyScore can rank a command and an
 // app with one function. Writing a second scorer would make the two sets mean
 // different things at the same number.
+//
+// One entry per command, kept on the command. A fresh object per call threw
+// away Score's own caching, since a memo on an entry that is discarded before
+// the next term is read is a memo nobody reads: the whole list was rebuilt, and
+// rescored from scratch, on every keystroke. COMMANDS is a constant, so this
+// map is built once per session and never grows.
 function asEntry(command) {
-  return {
+  if (!command) return null
+  if (command._entry) return command._entry
+
+  command._entry = {
     id: "cmd." + command.id,
     name: command.title,
     genericName: command.subtitle,
     comment: "",
     keywords: command.keywords || []
   }
+  return command._entry
 }

@@ -75,6 +75,23 @@ Item {
   // Providers that have been asked and have not answered yet. A slow shell-out
   // otherwise looks identical to one that found nothing.
   property var waiting: ({})
+
+  // True for the length of a query pass, and read by the two functions a
+  // provider answers through.
+  //
+  // Most providers answer without leaving the process, so they answer inside
+  // the pass that asked them. Each of those answers used to run a full
+  // rebuild(): parse the query again, merge every bucket, apply frecency and
+  // pins, sort, tag the sources, then measure the chip column across the rows
+  // that came out. Fifty providers meant fifty of those for one typed
+  // character, and only the last one was ever drawn.
+  //
+  // So a pass collects rather than publishes. Buckets are written in place,
+  // `waiting` is staged in a plain object, and setQuery() assigns once and
+  // rebuilds once at the end. An extension that answers later is unaffected: it
+  // arrives outside the pass and takes the ordinary path.
+  property bool querying: false
+  property var stagedWaiting: null
   // Busy for long enough that saying so is information rather than noise.
   property bool slowBusy: false
 
@@ -526,19 +543,35 @@ Item {
     root.queryText = text
     var query = Query.parse(text, ++root.epoch, root.knownKeywords)
 
-    queryHelp(query)
-    queryPaste(query)
-    querySettings(query)
-    queryRecent(query)
-    queryActions(query)
-    queryApps(query)
-    queryCommands(query)
-    queryQuicklinks(query)
-    queryWeb(query)
-    calc.run(query)
+    // Copied rather than mutated: a provider that answers on the spot writes
+    // into this one, and `busy` only notices `waiting` when the object it holds
+    // is a different object.
+    var staged = {}
+    for (var key in root.waiting) staged[key] = root.waiting[key]
+    root.stagedWaiting = staged
+    root.querying = true
 
-    for (var i = 0; i < root.extensionProviders.length; i++) {
-      root.extensionProviders[i].query(query)
+    // A provider that throws would otherwise leave the pass open, and every
+    // answer after it would be collected and never published.
+    try {
+      queryHelp(query)
+      queryPaste(query)
+      querySettings(query)
+      queryRecent(query)
+      queryActions(query)
+      queryApps(query)
+      queryCommands(query)
+      queryQuicklinks(query)
+      queryWeb(query)
+      calc.run(query)
+
+      for (var i = 0; i < root.extensionProviders.length; i++) {
+        root.extensionProviders[i].query(query)
+      }
+    } finally {
+      root.querying = false
+      root.stagedWaiting = null
+      root.waiting = staged
     }
 
     rebuild()
@@ -556,7 +589,19 @@ Item {
     next[providerId] = { epoch: epoch, rows: producedRows }
     root.buckets = next
 
-    var pending = root.waiting
+    // Inside the pass that asked. The bucket above is already written, since
+    // `buckets` holds the same object either way, so all that is left is to
+    // record that this provider is no longer being waited for.
+    if (root.querying && root.stagedWaiting) {
+      root.stagedWaiting[providerId] = false
+      return
+    }
+
+    // A fresh object, for the reason markWaiting() gives below: this used to
+    // mutate the map in place and put it back, which QML reads as no change, so
+    // an extension that finished left `busy` saying it had not.
+    var pending = {}
+    for (var key in root.waiting) pending[key] = root.waiting[key]
     pending[providerId] = false
     root.waiting = pending
 
@@ -564,6 +609,13 @@ Item {
   }
 
   function markWaiting(providerId, yes) {
+    // The staging object is checked as well as the flag, so a refresh that
+    // re-enters a pass through a callback publishes instead of crashing.
+    if (root.querying && root.stagedWaiting) {
+      root.stagedWaiting[providerId] = yes === true
+      return
+    }
+
     // A fresh object, not the same one mutated and put back. QML compares by
     // identity, so reassigning the object it already holds changes nothing and
     // `busy` never re-evaluated: the spinner almost never appeared and the
@@ -955,10 +1007,14 @@ Item {
       return put("commands", query, [])
     }
 
+    // Parsed once. It is the same string for every command in the list, and it
+    // was being parsed again for each of them.
+    var arg = Query.argFor(query, "run", ["commands"])
+
     var out = []
     for (var i = 0; i < Commands.COMMANDS.length; i++) {
       var command = Commands.COMMANDS[i]
-      var fuzzy = Score.fuzzy(Commands.asEntry(command), Query.argFor(query, "run", ["commands"]))
+      var fuzzy = Score.fuzzy(Commands.asEntry(command), arg)
       if (fuzzy < 0) continue
 
       out.push({

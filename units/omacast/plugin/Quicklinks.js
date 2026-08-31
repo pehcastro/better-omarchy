@@ -6,14 +6,26 @@
 // among everything else, and typing its keyword addresses it directly and hands
 // it the rest of the line as an argument.
 
+// Kept on the link, so Score's caches are worth having: a fresh entry per call
+// meant every quicklink had its search text and its acronym rebuilt for every
+// word of every keystroke. Links are parsed out of the settings file, so
+// editing one produces a new object and the old cache goes with the old link.
+//
+// The index is part of the id for a link with no keyword, and a link can move,
+// so the position it was built at is checked as well as its presence.
 function asEntry(link, index) {
-  return {
+  if (!link) return null
+  if (link._entry && link._entryIndex === index) return link._entry
+
+  link._entryIndex = index
+  link._entry = {
     id: "ql." + (link.keyword || index),
     name: String(link.title || ""),
     genericName: String(link.subtitle || ""),
     comment: String(link.url || link.open || ""),
     keywords: (link.tags || []).concat(link.keyword ? [String(link.keyword)] : [])
   }
+  return link._entry
 }
 
 // {} is the argument. A link without one ignores whatever was typed after its
