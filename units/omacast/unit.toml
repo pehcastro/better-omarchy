@@ -1,6 +1,6 @@
 name     = "omacast"
 summary  = "A launcher with 41 keywords: repos, containers, processes, timezones, music, files and the web"
-version  = "0.4.1"
+version  = "0.4.2"
 category = "Productivity"
 tags     = ["launcher", "overlay", "quickshell"]
 author   = "pehcastro"

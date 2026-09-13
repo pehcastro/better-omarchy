@@ -5,7 +5,7 @@
   "description": "Omarchy customizations, one switchable unit at a time",
   "homepage": "https://github.com/pehcastro/better-omarchy",
   "maintainer": "pehcastro",
-  "generated_at_commit": "88196ff068806bb8bd485fc07a373bb9f279ad46",
+  "generated_at_commit": "48c788ff8cf79bb9aac19b916722d958593a1bc0",
   "units": {
     "better-workspaces": {
       "name": "better-workspaces",
@@ -64,7 +64,7 @@
     "omacast": {
       "name": "omacast",
       "summary": "A launcher with 41 keywords: repos, containers, processes, timezones, music, files and the web",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "kind": "plugin",
       "category": "Productivity",
       "tags": [
@@ -88,10 +88,10 @@
       ],
       "pluginId": "bo.omacast",
       "path": "units/omacast",
-      "files": 172,
-      "hash": "b7512e2121ca92f510d1c25a3d619cf12fd501f1871b27741145e6d1d3ea7460",
-      "commit": "88196ff068806bb8bd485fc07a373bb9f279ad46",
-      "updated": "2026-08-30T23:24:16-03:00",
+      "files": 173,
+      "hash": "be6fba22bbce63350132fe180aefcb4c389ade9b1c4e00e874e907d73d148b49",
+      "commit": "48c788ff8cf79bb9aac19b916722d958593a1bc0",
+      "updated": "2026-09-13T14:52:51-03:00",
       "author_last": "Luiz Paulo de Castro Oliveira"
     },
     "undo-close": {
