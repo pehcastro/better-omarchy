@@ -121,7 +121,17 @@ Item {
   // arrives, so typing 1+1 and hitting Enter never launches an app instead.
   property string pendingActivate: ""
 
-  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+  // The host's library when it gives one, and AppLibraryFallback when it does
+  // not. Omarchy 4.0.3 scopes the plugin shell API and drops `appLibrary` for
+  // every third-party plugin, so the `apps` keyword answered with nothing.
+  readonly property var hostAppLibrary: root.shell ? root.shell.appLibrary : null
+  readonly property var appLibrary: root.hostAppLibrary ? root.hostAppLibrary : fallbackApps.item
+
+  Loader {
+    id: fallbackApps
+    active: !root.hostAppLibrary
+    sourceComponent: AppLibraryFallback { omarchyPath: root.omarchyPath }
+  }
 
   // Extensions, loaded from ~/.config/omarchy/omacast/extensions/*.json.
   // A unit drops a file there through its config/ folder, so a new source of
